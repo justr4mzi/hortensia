@@ -75,6 +75,8 @@ private:
 
     void GetBuiltInFontSharedMemory(HLERequestContext& ctx);
     void GetBuiltInFontData(HLERequestContext& ctx);
+    void GetBuiltInFontDataSet(HLERequestContext& ctx);
+    void OpenFont(HLERequestContext& ctx);
 
     struct Impl;
     std::unique_ptr<Impl> impl;
