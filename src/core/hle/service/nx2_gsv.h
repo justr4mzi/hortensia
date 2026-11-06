@@ -1847,6 +1847,10 @@ private:
                 m_stats.frame_us += frame;
                 m_stats.max_frame_us = (std::max)(m_stats.max_frame_us, frame);
                 m_stats.hitches += frame > 100'000 ? 1 : 0;
+                if (m_stats.interval_count < m_stats.intervals.size()) {
+                    m_stats.intervals[m_stats.interval_count++] =
+                        static_cast<u32>((std::min)(frame, 0xffffffffLL));
+                }
             }
             m_stats.last_present = entered;
             if (++m_stats.presents == 600) {
@@ -1857,6 +1861,17 @@ private:
                          m_stats.frame_us / 599, m_stats.max_frame_us, m_stats.hitches,
                          m_stats.fence_us / 600, m_stats.max_fence_us, m_stats.composite_us / 600,
                          m_stats.pace_us / 600, m_stats.ran_ahead);
+                if (const u32 count = m_stats.interval_count; count > 0) {
+                    std::array<u32, 600> sorted = m_stats.intervals;
+                    std::sort(sorted.begin(), sorted.begin() + count);
+                    const auto at = [&](u32 percent) {
+                        return sorted[(std::min)(count - 1, count * percent / 100)];
+                    };
+                    LOG_INFO(Service,
+                             "nx2:vi2 frame time percentiles ({} frames): p50 {} us, p95 {} us, "
+                             "p99 {} us (1% low {:.1f} fps)",
+                             count, at(50), at(95), at(99), 1e6 / (std::max)(at(99), 1U));
+                }
                 m_stats = {.last_present = entered};
             }
         }
@@ -1921,6 +1936,9 @@ private:
         long long max_frame_us{}, hitches{};
         u32 presents{}, ran_ahead{};
         std::chrono::steady_clock::time_point last_present{};
+        /// Each present interval of the window, for its percentiles.
+        std::array<u32, 600> intervals{};
+        u32 interval_count{};
     } m_stats{};
     u32 m_previous_fence_id{~0U}; // none yet (WaitForFrame ignores ids >= 192)
     u32 m_previous_fence_value{};
