@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <limits>
 #include <cstdio>
@@ -65,6 +66,10 @@
 #include "video_core/nx2_debug_control.h"
 #include "video_core/nx2_profile.h"
 
+namespace Tegra::Engines {
+extern std::atomic<u32> g_nx2_suppressed_draws;
+}
+
 namespace Vulkan {
 
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
@@ -73,6 +78,27 @@ using VideoCommon::ImageViewType;
 
 
 namespace {
+
+/// Diagnostic (EDEN_NX2_WATCH_SHADERS=<hash>,...): logs, per presented frame, how many draws ran
+/// with one of these shaders and how many draws the render-enable condition suppressed.
+const std::vector<u64>& WatchedShaders() {
+    static const std::vector<u64> hashes = [] {
+        std::vector<u64> result;
+        const char* value = std::getenv("EDEN_NX2_WATCH_SHADERS");
+        while (value != nullptr && *value != '\0') {
+            char* end = nullptr;
+            const u64 hash = std::strtoull(value, &end, 16);
+            if (end == value) {
+                break;
+            }
+            result.push_back(hash);
+            value = *end == ',' ? end + 1 : end;
+        }
+        return result;
+    }();
+    return hashes;
+}
+std::atomic<u32> g_watched_draws{0};
 
 /// read_gpu_memory: the first address space (the bound channel's first) that maps the whole range,
 /// read as the GPU reads it, without flushing GPU caches.
@@ -431,6 +457,14 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         report_failure("no pipeline");
         TraceRenderState(is_indexed, "no-pipeline", nullptr);
         return;
+    }
+    if (const auto& watched = WatchedShaders(); !watched.empty()) {
+        for (const u64 hash : pipeline->ShaderHashes()) {
+            if (hash != 0 && std::ranges::find(watched, hash) != watched.end()) {
+                g_watched_draws.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+        }
     }
     // Task/mesh pipelines: the draw's vertex count is the number of task workgroups.
     mesh_draw = pipeline->IsMeshPipeline();
@@ -1767,6 +1801,27 @@ void RasterizerVulkan::ReleaseFences(bool force) {
     fence_manager.WaitPendingFences(force);
 }
 
+void RasterizerVulkan::FlushQueryResults(DAddr addr, u64 size) {
+    if (addr == 0 || size == 0 || !query_cache.SemiFlushRegion(addr, size)) {
+        return;
+    }
+    // Below High GPU accuracy a fence runs its own callback at once, so wait for an operation
+    // queued behind the pending report writes instead. On the split's back the fence's
+    // submission may be deferred, and the fencing thread would wait for this thread to submit it.
+    std::mutex wait_mutex;
+    std::condition_variable wait_cv;
+    bool written{};
+    fence_manager.SyncOperation([&] {
+        std::scoped_lock lock{wait_mutex};
+        written = true;
+        wait_cv.notify_all();
+    });
+    fence_manager.SignalFence([] {});
+    scheduler.FlushDeferred();
+    std::unique_lock lock{wait_mutex};
+    wait_cv.wait(lock, [&written] { return written; });
+}
+
 void RasterizerVulkan::FlushAndInvalidateRegion(DAddr addr, u64 size,
                                                 VideoCommon::CacheType which) {
     if (Settings::IsGPULevelHigh()) {
@@ -1976,6 +2031,12 @@ void RasterizerVulkan::FrameDumpPass(const Framebuffer* framebuffer) {
 }
 
 void RasterizerVulkan::TickFrame() {
+    if (!WatchedShaders().empty()) {
+        static u64 watch_frame{};
+        LOG_INFO(Render_Vulkan, "Watch frame {}: {} watched draws, {} draws suppressed",
+                 ++watch_frame, g_watched_draws.exchange(0, std::memory_order_relaxed),
+                 Tegra::Engines::g_nx2_suppressed_draws.exchange(0, std::memory_order_relaxed));
+    }
     if (VideoCore::Nx2Debug::HasRequests()) {
         if (auto capture = VideoCore::Nx2Debug::TakeCapture()) {
             frame_dump.Arm(std::move(capture->directory), capture->sampled, capture->buffers,

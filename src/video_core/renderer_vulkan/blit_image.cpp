@@ -788,6 +788,58 @@ void BlitImageHelper::BlitColor(const Framebuffer* dst_framebuffer, VkImageView 
     };
     const VkPipelineLayout layout = *one_texture_pipeline_layout;
     const VkPipeline pipeline = FindOrEmplaceColorPipeline(key);
+    // Draw texture (guest HUD sprites) runs between the guest's draws. Its own render pass left
+    // the scheduler's tracked pipeline, descriptors and viewport stale, so the next draw could
+    // run with the blit's (Ocarina's minimap and dialogs vanished on some frames), ended
+    // without the end-of-pass barrier, and left the source in SHADER_READ_ONLY_OPTIMAL while
+    // everything else assumes GENERAL. Draw it like BlitImpl does instead.
+    // EDEN_NX2_DRAW_TEXTURE_OLD=1 keeps the previous path, for comparisons.
+    static const bool old_path = [] {
+        const char* const value = std::getenv("EDEN_NX2_DRAW_TEXTURE_OLD");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!old_path) {
+        scheduler.RequestOutsideRenderPassOperationContext();
+        scheduler.Record([src_image](vk::CommandBuffer cmdbuf) {
+            const VkImageMemoryBarrier barrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = src_image,
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = VK_REMAINING_MIP_LEVELS,
+                    .baseArrayLayer = 0,
+                    .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                },
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, barrier);
+        });
+        scheduler.RequestRenderpass(dst_framebuffer);
+        scheduler.Record([this, src_image_view, src_sampler, dst_region, src_region, src_size,
+                          pipeline, layout](vk::CommandBuffer cmdbuf) {
+            const VkDescriptorSet descriptor_set = one_texture_descriptor_allocator.Commit();
+            UpdateOneTextureDescriptorSet(device, descriptor_set, src_sampler, src_image_view);
+            cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, descriptor_set,
+                                      nullptr);
+            BindBlitState(cmdbuf, layout, dst_region, src_region, src_size);
+            cmdbuf.Draw(3, 1, 0, 0);
+        });
+        scheduler.InvalidateState();
+        return;
+    }
     // Read the framebuffer now: the texture cache's framebuffer slots can move before the
     // worker records this.
     const VkRenderPass render_pass = dst_framebuffer->RenderPass();

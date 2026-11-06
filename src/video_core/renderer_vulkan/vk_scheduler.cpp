@@ -38,6 +38,27 @@
 namespace Vulkan {
 
 namespace {
+/// Experiment (EDEN_NX2_RP_BARRIER=1): a full memory barrier before every render pass begins and
+/// after it ends, the serialization the frame dump's per-pass readbacks give.
+bool FullRenderPassBarriers() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_NX2_RP_BARRIER");
+        return value != nullptr && value[0] == '1';
+    }();
+    return enabled;
+}
+
+void RecordFullBarrier(vk::CommandBuffer cmdbuf) {
+    static constexpr VkMemoryBarrier FULL_BARRIER{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+    };
+    cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                           0, FULL_BARRIER);
+}
+
 std::atomic<u64> g_profile_submits{};
 std::atomic<u64> g_profile_renderpasses{};
 std::atomic<u64> g_profile_finishes{};
@@ -322,8 +343,11 @@ void Scheduler::BeginRenderPassImpl(const Framebuffer* framebuffer, VkRenderPass
         values[i] = clear_values[i];
     }
     const bool after_compute = std::exchange(compute_writes_pending, false);
-    Record([renderpass, framebuffer_handle, render_area, values, clear_value_count,
-            after_compute](vk::CommandBuffer cmdbuf) {
+    Record([renderpass, framebuffer_handle, render_area, values, clear_value_count, after_compute,
+            full_barrier = FullRenderPassBarriers()](vk::CommandBuffer cmdbuf) {
+        if (full_barrier) {
+            RecordFullBarrier(cmdbuf);
+        }
         const VkRenderPassBeginInfo renderpass_bi{
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .pNext = nullptr,
@@ -892,7 +916,8 @@ void Scheduler::EndRenderPass()
         Record([num_images = num_renderpass_images,
                        images = renderpass_images,
                        ranges = renderpass_image_ranges,
-                       has_transform_feedback = device.IsExtTransformFeedbackSupported()](
+                       has_transform_feedback = device.IsExtTransformFeedbackSupported(),
+                       full_barrier = FullRenderPassBarriers()](
                           vk::CommandBuffer cmdbuf) {
             std::array<VkImageMemoryBarrier, 9> barriers;
             for (size_t i = 0; i < num_images; ++i) {
@@ -943,6 +968,9 @@ void Scheduler::EndRenderPass()
                 cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT,
                                        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                                        0, XFB_OUTPUT_BARRIER);
+            }
+            if (full_barrier) {
+                RecordFullBarrier(cmdbuf);
             }
         });
 

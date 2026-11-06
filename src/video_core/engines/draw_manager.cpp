@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2022 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <cstring>
 #include <set>
 #include <tuple>
@@ -15,6 +16,10 @@
 #include "video_core/render_trace.h"
 
 namespace Tegra::Engines {
+
+/// Draws the render-enable condition suppressed since the rasterizer last read it
+/// (EDEN_NX2_WATCH_SHADERS diagnostic, RasterizerVulkan::TickFrame).
+std::atomic<u32> g_nx2_suppressed_draws{0};
 namespace {
 
 void TraceSuppressedDraw(const Maxwell3D& maxwell3d, bool indirect) {
@@ -345,6 +350,7 @@ void Maxwell3D::DrawManager::ProcessDraw(Maxwell3D& maxwell3d, bool draw_indexed
     if (maxwell3d.ShouldExecute()) {
         maxwell3d.rasterizer->Draw(draw_indexed, instance_count);
     } else {
+        g_nx2_suppressed_draws.fetch_add(1, std::memory_order_relaxed);
         TraceSuppressedDraw(maxwell3d, false);
     }
 }
@@ -356,6 +362,7 @@ void Maxwell3D::DrawManager::ProcessDrawIndirect(Maxwell3D& maxwell3d) {
     if (maxwell3d.ShouldExecute()) {
         maxwell3d.rasterizer->DrawIndirect();
     } else {
+        g_nx2_suppressed_draws.fetch_add(1, std::memory_order_relaxed);
         TraceSuppressedDraw(maxwell3d, true);
     }
 }

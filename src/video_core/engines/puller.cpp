@@ -11,6 +11,8 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "core/core.h"
+#include <optional>
+
 #include "video_core/nx2_profile.h"
 #include "video_core/control/channel_state.h"
 #include "video_core/dma_pusher.h"
@@ -22,6 +24,8 @@
 #include "video_core/engines/puller.h"
 #include "video_core/gpu.h"
 #include "video_core/gpu_split.h"
+#include "video_core/host1x/host1x.h"
+#include "video_core/host1x/syncpoint_manager.h"
 #include "video_core/memory_manager.h"
 #include "video_core/nx2.h"
 #include "video_core/rasterizer_interface.h"
@@ -92,6 +96,26 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
     // The release may still be queued for the split GPU thread's back half (and the caches
     // ReadSemaphoreWord asks are its state).
     DrainBack();
+    if (pending_acquire->syncpoint) {
+        // Raised when the GPU thread runs the other channel's increment, so its earlier work
+        // is recorded ahead of what this channel runs next.
+        const u32 reached = dma_pusher.system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(
+            *pending_acquire->syncpoint);
+        if (static_cast<s32>(reached - pending_acquire->value) >= 0) {
+            return true;
+        }
+        // Never stall the game on a wait that emulation can't meet: give up after a while.
+        if (std::chrono::steady_clock::now() - pending_acquire->since >
+            std::chrono::milliseconds{250}) {
+            if (static std::atomic<u32> given_up{}; given_up.fetch_add(1) < 16) {
+                LOG_WARNING(HW_GPU, "Channel {} stopped waiting for syncpoint {} >= {} (at {})",
+                            dma_pusher.channel_state.bind_id, *pending_acquire->syncpoint,
+                            pending_acquire->value, reached);
+            }
+            return true;
+        }
+        return false;
+    }
     const u32 current = ReadSemaphoreWord(dma_pusher, pending_acquire->address);
     if (Nx2SemaphoreWaiters::Get().Latched(this)) {
         if (static std::atomic<u32> rescued{};
@@ -194,12 +218,38 @@ void Puller::ProcessBindMethod(DmaPusher& dma_pusher, const MethodCall& method_c
 
 void Puller::ProcessFenceActionMethod(DmaPusher& dma_pusher) {
     switch (regs.fence_action.op) {
-    case Puller::FenceOperation::Acquire:
-        // UNIMPLEMENTED_MSG("Channel Scheduling pending.");
-        // WaitFence(regs.fence_action.syncpoint_id, regs.fence_value);
+    case Puller::FenceOperation::Acquire: {
         OnBack([rasterizer = dma_pusher.rasterizer] { rasterizer->ReleaseFences(); });
         VideoCommon::GpuSplit::Get().NoteSync();
+        // A queue waiting on another queue's sync object (Ocarina's final pass waits for the
+        // channel that draws its HUD). Running on without the wait recorded the final pass
+        // before the HUD draws on some frames, and the minimap, hearts and dialogs vanished.
+        // Suspend the channel until the other channel's work has raised the syncpoint.
+        // EDEN_NX2_FENCE_WAIT=0 runs on as before.
+        static const bool fence_wait = [] {
+            const char* const value = std::getenv("EDEN_NX2_FENCE_WAIT");
+            return value == nullptr || value[0] != '0';
+        }();
+        const u32 id = regs.fence_action.syncpoint_id;
+        if (fence_wait && g_nx2_ampere &&
+            id < Tegra::Host1x::SyncpointManager::NUM_MAX_SYNCPOINTS) {
+            DrainBack();
+            const u32 reached =
+                dma_pusher.system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(id);
+            if (static_cast<s32>(reached - regs.fence_value) < 0) {
+                pending_acquire = PendingAcquire{
+                    .address = 0,
+                    .value = regs.fence_value,
+                    .operation = 0,
+                    .since = std::chrono::steady_clock::now(),
+                    .reported = false,
+                    .syncpoint = id,
+                };
+                dma_pusher.suspensions.fetch_add(1, std::memory_order_release);
+            }
+        }
         break;
+    }
     case Puller::FenceOperation::Increment:
         OnBack([rasterizer = dma_pusher.rasterizer, id = static_cast<u32>(regs.fence_action.syncpoint_id.Value())] {
             rasterizer->SignalSyncPoint(id);
@@ -210,6 +260,7 @@ void Puller::ProcessFenceActionMethod(DmaPusher& dma_pusher) {
         break;
     }
 }
+
 
 void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
     const auto semaphoreOperationMask = 0xF;
@@ -362,6 +413,25 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
     }
 }
 
+// A semaphore release queued for the split's back: the front's macro DMA reads of those bytes
+// wait for it (Maxwell3D::FrontDmaRead).
+// A fence release (`fence_payload`): reads overlay its payload while it is queued.
+static void NoteSemaphoreWrite(DmaPusher& dma_pusher, GPUVAddr address,
+                               std::optional<u32> fence_payload) {
+    auto& split = VideoCommon::GpuSplit::Get();
+    const auto device = dma_pusher.memory_manager.GpuToCpuAddress(address);
+    if (!device) {
+        return; // Queries write nothing at an unmapped address.
+    } else if (fence_payload) {
+        split.NoteMemoryWriteData(*device, &*fence_payload, 1);
+        split.NoteReportWrite(*device, 4);
+    } else {
+        // Written when its fence is signalled: reads wait until the back ran it and it was.
+        split.NoteAsyncWrite(*device, 16);
+        split.NoteMemoryWrite(*device, 16, "semaphore (timed)");
+    }
+}
+
 /// Calls a GPU puller method.
 void Puller::CallPullerMethod(DmaPusher& dma_pusher, const MethodCall& method_call) {
     static const bool nx2_trace = std::getenv("EDEN_NX2_PULLER_TRACE") != nullptr;
@@ -396,6 +466,12 @@ void Puller::CallPullerMethod(DmaPusher& dma_pusher, const MethodCall& method_ca
         break;
     case BufferMethods::SemaphoreOperation: {
         ProcessSemaphoreTriggerMethod(dma_pusher);
+        if (static_cast<GpuSemaphoreOperation>(regs.semaphore_trigger & 0xF) ==
+            GpuSemaphoreOperation::WriteLong) {
+            const bool fence = g_nx2_ampere && (regs.semaphore_trigger & (1U << 24)) != 0;
+            NoteSemaphoreWrite(dma_pusher, regs.semaphore_address.SemaphoreAddress(),
+                               fence ? std::optional<u32>{regs.semaphore_sequence} : std::nullopt);
+        }
         break;
     }
     case BufferMethods::NonStallInterrupt: {
@@ -428,6 +504,15 @@ void Puller::CallPullerMethod(DmaPusher& dma_pusher, const MethodCall& method_ca
             ProcessSemaphoreExecute(dma_pusher, method_call.argument);
         } else {
             ProcessSemaphoreRelease(dma_pusher);
+        }
+        if (g_nx2_ampere && (method_call.argument & 7) == 1) {
+            NoteSemaphoreWrite(dma_pusher,
+                               (GPUVAddr{regs.reg_array[0x18] & 0x1FFFFFF} << 32) |
+                                   (regs.reg_array[0x17] & ~3U),
+                               regs.reg_array[0x19]);
+        } else if (!g_nx2_ampere) {
+            NoteSemaphoreWrite(dma_pusher, regs.semaphore_address.SemaphoreAddress(),
+                               std::nullopt);
         }
         break;
     }
