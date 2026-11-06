@@ -196,6 +196,12 @@ the self, self-and-caller and inclusive counts per function. The report and its 
 to `samples-<session>-<n>.txt` in the dump directory. Windows only; the threads run slower while
 sampled, so read fps from a run without it.
 
+**`rp_barrier`** `{enabled?}`. `EDEN_NX2_RP_BARRIER` at runtime: with `enabled`, the full memory
+barriers around every render pass (`vk_scheduler.cpp`) turn on or off from the next render pass.
+It returns whether they are on. With `EDEN_DKB_FRAME_TRACE=1`, the `DKB gpu_frame` and
+`DKB gpu_sites` lines then show their GPU cost in the same scene. Restore the launch value before
+you finish.
+
 **`reject_shaders`** `{hashes?, reject?, timeout_s?}`. This is `EDEN_NX2_REJECT_HASH` at
 runtime: the same keys (native program key or shader hash) and the same effect. Pipeline
 invalidation turned out to be tractable:

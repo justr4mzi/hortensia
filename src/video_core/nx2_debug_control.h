@@ -94,4 +94,9 @@ void NoteRejectApplied(u64 generation);
 /// Server thread: waits until the rasterizer applied the generation.
 [[nodiscard]] bool WaitRejectApplied(u64 generation, std::chrono::milliseconds timeout);
 
+/// EDEN_NX2_RP_BARRIER, switchable at runtime (rp_barrier): full memory barriers around every
+/// render pass. Starts from the environment; read when each render pass begins and ends.
+[[nodiscard]] bool FullRenderPassBarriers() noexcept;
+void SetFullRenderPassBarriers(bool enabled) noexcept;
+
 } // namespace VideoCore::Nx2Debug

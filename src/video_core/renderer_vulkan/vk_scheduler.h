@@ -176,27 +176,31 @@ public:
         on_submit = std::move(func);
     }
 
-    /// Send work to a separate thread.
+    /// Send work to a separate thread. With EDEN_DKB_FRAME_TRACE, a sampled frame also times each
+    /// command on the GPU and reports the time by the line that recorded it (DKB gpu_sites).
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer, vk::CommandBuffer>
-    void RecordWithUploadBuffer(T&& command) {
-        if (VideoCommon::GpuSplit::check_owner) [[unlikely]] {
-            VideoCommon::GpuSplit::CheckOwner("Scheduler::Record");
-        }
-        if (chunk->Record(command)) {
+    void RecordWithUploadBuffer(T&& command,
+                                std::source_location location = std::source_location::current()) {
+        if (Common::DkbFrameTrace::Enabled()) [[unlikely]] {
+            RecordUntimed([this, inner = std::move(command), file = location.file_name(),
+                           line = location.line()](vk::CommandBuffer cmdbuf,
+                                                   vk::CommandBuffer upload_cmdbuf) {
+                TraceGpuSite(cmdbuf, file, line, [&] { inner(cmdbuf, upload_cmdbuf); });
+            });
             return;
         }
-        DispatchWork();
-        (void)chunk->Record(command);
+        RecordUntimed(command);
     }
 
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer>
-    void Record(T&& c) {
+    void Record(T&& c, std::source_location location = std::source_location::current()) {
         this->RecordWithUploadBuffer(
             [command = std::move(c)](vk::CommandBuffer cmdbuf, vk::CommandBuffer) {
                 command(cmdbuf);
-            });
+            },
+            location);
     }
 
     /// Whether the recording thread submitted `tick` within 20 ms.
@@ -430,7 +434,40 @@ private:
 
     void TraceGpuSubmission();
     void ReportWorkTimes();
+    void ReportSiteTimes();
     void TraceShader(u64 hash, u32 stage);
+
+    /// Records without the per-command timing: the submission itself ends the command buffer.
+    template <typename T>
+    void RecordUntimed(T&& command) {
+        if (VideoCommon::GpuSplit::check_owner) [[unlikely]] {
+            VideoCommon::GpuSplit::CheckOwner("Scheduler::Record");
+        }
+        if (chunk->Record(command)) {
+            return;
+        }
+        DispatchWork();
+        (void)chunk->Record(command);
+    }
+
+    /// Worker thread: timestamps one recorded command of a sampled submission.
+    template <typename Func>
+    void TraceGpuSite(vk::CommandBuffer cmdbuf, const char* file, u32 line, Func&& work) {
+        if (!trace_gpu_recording || !trace_site_pool) {
+            work();
+            return;
+        }
+        if (trace_site_count == TraceMaxSites) {
+            ++trace_site_dropped;
+            work();
+            return;
+        }
+        const u32 query = trace_site_count * 2;
+        trace_site_items[trace_site_count++] = {file, line};
+        cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_site_pool, query);
+        work();
+        cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_site_pool, query + 1);
+    }
 
     u64 SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore);
 
@@ -478,6 +515,15 @@ private:
     vk::QueryPool trace_work_pool;
     std::vector<WorkTrace> trace_work_items;
     u32 trace_work_count{};
+    static constexpr u32 TraceMaxSites = 16384;
+    struct SiteTrace {
+        const char* file{};
+        u32 line{};
+    };
+    vk::QueryPool trace_site_pool;
+    std::vector<SiteTrace> trace_site_items;
+    u32 trace_site_count{};
+    u64 trace_site_dropped{};
     Common::DkbFrameTrace::RateLimit trace_gpu_rate;
     u64 trace_gpu_tick{};
     u64 trace_frame_end{};

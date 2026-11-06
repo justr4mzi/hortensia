@@ -123,6 +123,16 @@ TOOLS = [
         },
     },
     {
+        "name": "rp_barrier",
+        "description": "EDEN_NX2_RP_BARRIER at runtime: with enabled, turns the full memory "
+                       "barriers around every render pass on or off from the next render pass. "
+                       "Returns whether they are on.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"enabled": {"type": "boolean"}},
+        },
+    },
+    {
         "name": "sample",
         "description": "Sampling profiler: pauses the named host threads about 1000 times a second "
                        "for the given seconds and returns where they were (self, self <- caller, "

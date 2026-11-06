@@ -379,6 +379,16 @@ json RejectShaders(ToolState&, const json& params) {
     return result;
 }
 
+json RenderPassBarrier(ToolState&, const json& params) {
+    if (!IsVulkan()) {
+        throw std::runtime_error{"rp_barrier needs the Vulkan renderer"};
+    }
+    if (params.contains("enabled")) {
+        VideoCore::Nx2Debug::SetFullRenderPassBarriers(params.at("enabled").get<bool>());
+    }
+    return {{"enabled", VideoCore::Nx2Debug::FullRenderPassBarriers()}};
+}
+
 json SampleThreads(ToolState& state, const json& params) {
     const std::string threads = params.value("threads", std::string{"GPU,GPUBack"});
     const double seconds = Param<double>(params, "seconds", 10.0, 1.0, 60.0);
@@ -582,6 +592,7 @@ Handlers MakeHandlers(const std::shared_ptr<ToolState>& state) {
         {"log_filter", handler(LogFilter)},
         {"capture_frame", handler(CaptureFrame)},
         {"reject_shaders", handler(RejectShaders)},
+        {"rp_barrier", handler(RenderPassBarrier)},
         {"sample", handler(SampleThreads)},
         {"read_memory", handler(ReadMemory)},
         {"search_memory", handler(SearchMemory)},
