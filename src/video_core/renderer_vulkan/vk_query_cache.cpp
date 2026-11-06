@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <chrono>
 #include <cstddef>
 #include <limits>
 #include <map>
@@ -16,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "common/bit_util.h"
 #include "common/common_types.h"
+#include "common/dkb_frame_trace.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/query_cache/frame_trace.h"
@@ -261,6 +263,34 @@ public:
         size_t resolve_buffer_index = ObtainBuffer<true>(num_slots_used);
         resolve_buffers.push_back(resolve_buffer_index);
         size_t base_offset = 0;
+        size_t copies = 0;
+        size_t copied_slots = 0;
+        size_t max_copy = 0;
+
+        // Every query copied below was ended by an earlier command. On AMD an execution dependency
+        // on all prior commands (VK_PIPELINE_STAGE_ALL_COMMANDS_BIT covers the operation of
+        // vkCmdEndQuery, which makes a query available) replaces VK_QUERY_RESULT_WAIT_BIT: AMD's
+        // Windows driver spends ~22 us per query on that wait, 45 ms of a 61 ms GPU frame at
+        // Ocarina of Time's ~2,000 queries a frame, 0.4 ms this way. Other drivers were not
+        // measured and keep the wait.
+        const bool copy_after_barrier = driver_id == VK_DRIVER_ID_AMD_PROPRIETARY ||
+                                        driver_id == VK_DRIVER_ID_AMD_OPEN_SOURCE;
+        if (copy_after_barrier) {
+            scheduler.RequestOutsideRenderPassOperationContext();
+            scheduler.Record([](vk::CommandBuffer cmdbuf) {
+                static constexpr VkMemoryBarrier PRIOR_COMMANDS{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+                    .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                };
+                cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, PRIOR_COMMANDS);
+            });
+        }
+        const VkQueryResultFlags copy_flags =
+            copy_after_barrier ? VK_QUERY_RESULT_64_BIT
+                               : VK_QUERY_RESULT_WAIT_BIT | VK_QUERY_RESULT_64_BIT;
 
         ApplyBanksWideOp<true>(pending_sync, [&](SamplesQueryBank* bank, size_t start,
                                                  size_t amount) {
@@ -268,7 +298,7 @@ public:
             auto& resolve_buffer = buffers[resolve_buffer_index];
             VkQueryPool query_pool = bank->GetInnerPool();
             scheduler.RequestOutsideRenderPassOperationContext();
-            scheduler.Record([start, amount, base_offset, query_pool,
+            scheduler.Record([start, amount, base_offset, query_pool, copy_flags,
                               buffer = *resolve_buffer](vk::CommandBuffer cmdbuf) {
                 const VkBufferMemoryBarrier copy_query_pool_barrier{
                     .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -284,13 +314,15 @@ public:
 
                 cmdbuf.CopyQueryPoolResults(
                     query_pool, static_cast<u32>(start), static_cast<u32>(amount), buffer,
-                    static_cast<u32>(base_offset), SamplesQueryBank::QUERY_SIZE,
-                    VK_QUERY_RESULT_WAIT_BIT | VK_QUERY_RESULT_64_BIT);
+                    static_cast<u32>(base_offset), SamplesQueryBank::QUERY_SIZE, copy_flags);
                 cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
                                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, copy_query_pool_barrier);
             });
             offsets[bank_id] = {start, base_offset};
             base_offset += amount * SamplesQueryBank::QUERY_SIZE;
+            ++copies;
+            copied_slots += amount;
+            max_copy = (std::max)(max_copy, amount);
         });
 
         // Convert queries
@@ -340,6 +372,9 @@ public:
             });
         }
 
+        if (Common::DkbFrameTrace::Enabled()) {
+            TraceCopies(copies, copied_slots, max_copy, pending_sync.size(), has_multi_queries);
+        }
         ReplicateCurrentQueryIfNeeded();
         std::function<void()> func([this] { amend_value = accumulation_value; });
         rasterizer->SyncOperation(std::move(func));
@@ -442,6 +477,47 @@ private:
             size_slots -= amount;
         }
     }
+
+    /// EDEN_DKB_FRAME_TRACE: what PresyncWrites copied, summed and logged once a second.
+    void TraceCopies(size_t copies, size_t slots, size_t max_copy, size_t queries, bool multi) {
+        CopyStats& stats = copy_stats;
+        ++stats.syncs;
+        stats.copies += copies;
+        stats.slots += slots;
+        stats.queries += queries;
+        stats.multi += multi ? 1 : 0;
+        stats.max_copy = (std::max)(stats.max_copy, max_copy);
+        const auto now = std::chrono::steady_clock::now();
+        if (stats.start == std::chrono::steady_clock::time_point{}) {
+            stats.start = now;
+            return;
+        }
+        const double seconds = std::chrono::duration<double>(now - stats.start).count();
+        if (seconds < 1.0) {
+            return;
+        }
+        LOG_INFO(Render_Vulkan,
+                 "DKB query_copies per_s: syncs={:.0f} copies={:.0f} slots={:.0f} "
+                 "queries={:.0f} multi={:.0f} max_slots_per_copy={}",
+                 static_cast<double>(stats.syncs) / seconds,
+                 static_cast<double>(stats.copies) / seconds,
+                 static_cast<double>(stats.slots) / seconds,
+                 static_cast<double>(stats.queries) / seconds,
+                 static_cast<double>(stats.multi) / seconds, stats.max_copy);
+        stats = CopyStats{.start = now};
+    }
+
+    struct CopyStats {
+        std::chrono::steady_clock::time_point start{};
+        u64 syncs{};
+        u64 copies{};
+        u64 slots{};
+        u64 queries{};
+        u64 multi{};
+        size_t max_copy{};
+    };
+    CopyStats copy_stats;
+
     TextureCache& texture_cache;
     template <bool is_ordered, typename Func>
     void ApplyBanksWideOp(std::vector<size_t>& queries, Func&& func) {
