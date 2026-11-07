@@ -62,6 +62,7 @@
 #include "common/free_region_manager.h"
 #include "common/host_memory.h"
 #include "common/logging.h"
+#include "common/settings.h"
 
 #if defined(__ANDROID__) && __ANDROID_API__ < 30
 #include <sys/syscall.h>
@@ -538,6 +539,8 @@ public:
         : backing_size{backing_size_}
         , virtual_size{virtual_size_}
     {}
+
+    size_t host_page_size{PageAlignment};
 
 #ifdef __linux__
     bool PunchHole(size_t offset, size_t length) {

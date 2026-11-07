@@ -353,4 +353,15 @@ ResultStatus AppLoader_NUP::ReadNSOModules(Modules& modules) {
     return secondary_loader->ReadNSOModules(modules);
 }
 
+ResultStatus AppLoader_NUP::ReadDisplayVersion(std::string& version) {
+    if (!display_version.empty()) {
+        version = display_version;
+        return ResultStatus::Success;
+    }
+    if (secondary_loader != nullptr) {
+        return secondary_loader->ReadDisplayVersion(version);
+    }
+    return ResultStatus::ErrorNoControl;
+}
+
 } // namespace Loader

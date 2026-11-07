@@ -50,6 +50,7 @@ public:
     ResultStatus ReadTitle(std::string& title) override;
     ResultStatus ReadControlData(FileSys::NACP& control) override;
     ResultStatus ReadNSOModules(Modules& modules) override;
+    ResultStatus ReadDisplayVersion(std::string& version) override;
 
 private:
     std::unique_ptr<FileSys::NupContainer> nup;

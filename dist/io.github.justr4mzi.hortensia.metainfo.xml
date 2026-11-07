@@ -10,8 +10,8 @@
   <launchable type="desktop-id">io.github.justr4mzi.hortensia.desktop</launchable>
   <provides><binary>hortensia</binary></provides>
   <categories><category>Game</category><category>Emulator</category></categories>
-  <url type="homepage">https://github.com/zortos293/Eglantine</url>
-  <url type="bugtracker">https://github.com/zortos293/Eglantine/issues</url>
+  <url type="homepage">https://github.com/justr4mzi/hortensia</url>
+  <url type="bugtracker">https://github.com/justr4mzi/hortensia/issues</url>
   <project_license>GPL-3.0-or-later</project_license>
   <developer_name>Hortensia contributors</developer_name>
   <content_rating type="oars-1.0"/>

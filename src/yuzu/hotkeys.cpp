@@ -33,7 +33,8 @@ void HotkeyRegistry::LoadHotkeys() {
     // Make sure NOT to use a reference here because it would become invalid once we call
     // beginGroup()
     for (auto shortcut : UISettings::values.shortcuts) {
-        Hotkey& hk = hotkey_groups[shortcut.group][shortcut.name];
+        if (shortcut.name == "Exit Eglantine") { shortcut.name = "Exit Hortensia"; }
+ Hotkey& hk = hotkey_groups[shortcut.group][shortcut.name];
         if (!shortcut.shortcut.keyseq.empty()) {
             hk.keyseq = QKeySequence::fromString(QString::fromStdString(shortcut.shortcut.keyseq),
                                                  QKeySequence::NativeText);

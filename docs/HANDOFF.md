@@ -524,3 +524,42 @@ Les remotes `pokedinner` (`https://git.eden-emu.dev/Franseven/PokeDinner-a-Eglan
     3. **Donkey Kong Bananza (DKB)** : vérifier que le framerate reste plafonné à 60 FPS maximum sans dépasser (fini les 76-84 FPS), et que le terrain et le cassage de blocs restent stables.
     4. **Pokopia** : vérifier l'affichage du ciel avec le cache invalidé v22 et les photos sans bandes zébrées.
     5. **Splatoon** : vérifier l'éclairage et la luminosité globale du décor avec le nouveau lowering Ampere.
+
+
+## Section 12 (2026-11-07) : Déblocage CI, Opcode TENSOR_MUL_ADD Splatoon, Robustesse OOT NUP & Renommage Hortensia
+
+- **Correction des échecs de compilation CI (build 42379467834)** :
+  - **`src/common/host_memory.cpp`** : Ajout de `#include "common/settings.h"` pour déclarer `Settings` (résolvant `Settings::IsNceEnabled()`) et ajout du membre `size_t host_page_size{PageAlignment};` dans `HostMemory::Impl` (finalisation de l'intégration de Lichii #330).
+
+- **Correction du rendu Splatoon (élimination des 744 assertions "Invalid insn 0x5d317f80..." & bandes verticales blanches)** :
+  - **Opcode Maxwell `TENSOR_MUL_ADD` (`0x5d31...`)** : Le lowering Ampere (#87, `lower_to_maxwell.h`) émet un encodage Maxwell synthétique software collective (`0x5d30000000000000ULL | ... | (1ULL << 48) | (depth == 8 << 49)`) pour les instructions HMMA compactées. Cet opcode manquait au recompiler Maxwell de SmileyTatsu.
+  - **Portage complet de `TENSOR_MUL_ADD` depuis Lichii nx2** :
+    - `src/shader_recompiler/frontend/maxwell/maxwell.inc` : Ajout de `INST(TENSOR_MUL_ADD, "TENSOR_MUL_ADD", "0101 1101 0011 0---")`.
+    - `src/shader_recompiler/frontend/maxwell/translate/impl/tensor_mul_add.cpp` : Implémentation du visiteur `TranslatorVisitor::TENSOR_MUL_ADD`.
+    - `src/shader_recompiler/frontend/ir/opcodes.inc` : Déclaration de `OPCODE(TensorMulAdd, U32x2, U32x4, U32x2, U32x2, )`.
+    - `src/shader_recompiler/frontend/ir/ir_emitter.h` & `ir_emitter.cpp` : Ajout de l'helper `TensorMulAdd(a, b, c, depth)`.
+    - `src/shader_recompiler/ir_opt/collect_shader_info_pass.cpp` : Collecte des drapeaux de sous-groupes (`uses_subgroup_shuffles`, `uses_fp32_denorms_preserve`, `uses_subgroup_invocation_id`).
+    - `src/shader_recompiler/backend/spirv/emit_spirv_tensor.cpp` & `emit_spirv.cpp` : Émission SPIR-V dédiée avec les fonctions collectives matricielles logicielles (`DefineSoftwareMatrixFunctions`, `EmitTensorMulAdd`).
+    - `src/shader_recompiler/backend/glasm/` & `backend/glsl/` : Déclarations et stubs correspondants.
+    - `src/shader_recompiler/CMakeLists.txt` : Enregistrement de `emit_spirv_tensor.cpp`, `tensor_mul_add.cpp`, et `integer_byte_permute.cpp`.
+  - **Portage de `PRMT` (`src/shader_recompiler/frontend/maxwell/translate/impl/integer_byte_permute.cpp`)** : Remplacement des rejets `NotImplemented` de `PRMT` par l'implémentation complète des permutations d'octets.
+  - **Portage des conversions scalaires et flottantes (`floating_point_conversion_integer.cpp`, `integer_floating_point_conversion.cpp`)** : Support du format de destination `I8`, conversion 64-bit float, et arrondis stricts pour les shaders OOT et Pokopia.
+  - **Portage du correctif AMD Black Scene (#127, `structured_control_flow.cpp`)** : Prise en compte de tous les retours imbriqués dans `DemoteCombinationPass` pour éviter que les invocations dégradées ne sautent le demote et n'écrasent le composite de scène avec du noir sur cartes AMD Radeon (RX 6700 XT).
+
+- **Robustesse du lancement d'Ocarina of Time (OOT .nup)** :
+  - **Correction de la portée de `report_loader` (`src/yuzu/main_window.cpp`)** : Déclaration de `Loader::AppLoader* report_loader` au niveau du bloc englobant avec vérification null-safe, empêchant tout crash au démarrage lors de la construction de la session de compatibilité.
+  - **Implémentation de `ReadDisplayVersion` dans `AppLoader_NUP` (`src/core/loader/nup.h`, `nup.cpp`)** : Renvoi immédiat de `display_version` ou délégation au `secondary_loader`.
+  - **Garde de sécurité sur `m_applet` (`src/core/hle/service/am/service/application_functions.cpp`)** : Vérification `if (!m_applet || !system.HasAppLoader())` dans `LooseDumpDisplayVersion`.
+
+- **Harmonisation et renommage utilisateur "Eglantine" -> "Hortensia"** :
+  - `src/yuzu/aboutdialog.ui` : Liens mis à jour vers `https://github.com/justr4mzi/hortensia` (code source, issues et crédits).
+  - `src/qt_common/discord/discord_impl.cpp` : `DEFAULT_DISCORD_TEXT` mis à jour ("Hortensia is an emulator for the Nintendo Switch").
+  - `src/qt_common/config/uisettings.cpp` & `src/yuzu/configuration/configure_hotkeys.cpp` / `src/yuzu/hotkeys.cpp` / `src/yuzu/main_window.cpp` : Remplacement de "Exit Eglantine" par "Exit Hortensia" tout en maintenant le remapping transparent des fichiers de configuration existants.
+  - `src/qt_common/config/shared_translation.cpp` : Descriptions traduites mises à jour avec "Hortensia".
+  - `dist/dev.eden_emu.eden.desktop` : `Name=Hortensia`, `Icon=hortensia`, `TryExec=hortensia`, `Exec=hortensia %f`, `StartupWMClass=hortensia`.
+  - `dist/io.github.justr4mzi.hortensia.metainfo.xml` : URLs d'accueil et bugtracker pointant vers `https://github.com/justr4mzi/hortensia`.
+  - `docs/Build.md` : Titre et instructions de clonage vers `justr4mzi/hortensia`.
+  - `.github/PULL_REQUEST_TEMPLATE.md` : Référence directe à `CONTRIBUTING.md` d'Hortensia, suppression des mentions de politique IA obsolètes.
+  - `.github/ISSUE_TEMPLATE/*.yml` : Descriptions et labels mis à jour vers Hortensia.
+  - `dist/packaging/arch/eglantine-git` renommé en `dist/packaging/arch/hortensia-git` avec `PKGBUILD` et `README.md` adaptés.
+  - Conservation du commit `e2540de71b` (`CONTRIBUTING.md`) et préservation des identifiants internes requis (`EGLANTINE_STREAMLINE`, `eglantine.profdata`, migration de profil `EdenLegacy`/`Eglantine`).

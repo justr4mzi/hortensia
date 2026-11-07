@@ -1477,7 +1477,7 @@ void MainWindow::InitializeHotkeys() {
     hotkey_registry.LoadHotkeys();
 
     LinkActionShortcut(ui->action_Load_File, QStringLiteral("Load File"));
-    LinkActionShortcut(ui->action_Exit, QStringLiteral("Exit Eglantine"));
+    LinkActionShortcut(ui->action_Exit, QStringLiteral("Exit Hortensia"));
     LinkActionShortcut(ui->action_Restart, QStringLiteral("Restart Emulation"));
     LinkActionShortcut(ui->action_Pause, QStringLiteral("Continue/Pause Emulation"));
     LinkActionShortcut(ui->action_Stop, QStringLiteral("Stop Emulation"));
@@ -2289,9 +2289,9 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             }
         }
         FileSys::VirtualFile update_raw;
-        if (QtCommon::system->HasAppLoader()) {
-            auto& report_loader = QtCommon::system->GetAppLoader();
-            report_loader.ReadUpdateRaw(update_raw);
+        Loader::AppLoader* report_loader = QtCommon::system->HasAppLoader() ? &QtCommon::system->GetAppLoader() : nullptr;
+        if (report_loader) {
+            report_loader->ReadUpdateRaw(update_raw);
         }
         QList<CompatibilityReporting::Addon> mods;
         QList<CompatibilityReporting::Addon> updates;
@@ -2304,9 +2304,9 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
                                     QString::fromStdString(patch.version), patch.enabled});
             }
         }
-        if (report_loader.GetFileType() == Loader::FileType::NUP) {
+        if (report_loader && report_loader->GetFileType() == Loader::FileType::NUP) {
             std::string version;
-            if (report_loader.ReadDisplayVersion(version) == Loader::ResultStatus::Success &&
+            if (report_loader->ReadDisplayVersion(version) == Loader::ResultStatus::Success &&
                 !version.empty()) {
                 session.game_version = QString::fromStdString(version);
                 updates.push_back(

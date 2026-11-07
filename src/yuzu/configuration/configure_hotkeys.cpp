@@ -25,7 +25,7 @@ constexpr int controller_column = 2;
 
 static QString HotkeyDisplayName(const QString& action) {
     // Keep the stored shortcut key compatible with existing configurations.
-    if (action == QStringLiteral("Exit Eglantine")) {
+    if (action == QStringLiteral("Exit Eglantine") || action == QStringLiteral("Exit Hortensia")) {
         return QCoreApplication::translate("Hotkeys", "Exit Hortensia");
     }
     return QCoreApplication::translate("Hotkeys", qPrintable(action));
