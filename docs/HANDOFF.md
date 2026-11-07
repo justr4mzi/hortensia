@@ -612,3 +612,7 @@ ebase/smileytatsu.
 - **Supervision CI en cours** :
   - Run GitHub Actions `42391714381` déclenché sur la branche `rebase/smileytatsu` (commit `24cfdb7f3a`).
   - Suivi continu des 6 jobs de compilation jusqu'à validation complète.
+  - **Ajustements compilation Clang/libstdc++ (commits `66c42ca0b3` et `e74451301d`)** :
+    - Suppression de la déclaration doublon `void ClearDownload` à la ligne 562 de `buffer_cache_base.h` (rejetée par `-Werror` sur Clang Linux/macOS : `class member cannot be redeclared`).
+    - Ajout de `#include "core/gpu_dirty_memory_manager.h"` dans `src/video_core/gpu.cpp` pour fournir la définition complète de `Core::GPUDirtyMemoryManager` requise lors de l'itération sur `std::span` dans `ForEachPendingCpuWrite`.
+    - Run final en cours de compilation : GitHub Actions `42392516100`.
