@@ -182,6 +182,9 @@ if (MSVC)
     target_compile_options(tests PRIVATE
         /w44062 /w44189 /w44265 /w44388 /w44389 /w44456 /w44457 /w44458 /w44459
         /w44547 /w44549 /w44555 /w44826 /w45038 /w45233 /w45245)
+    # Fixtures such as maxwell_fast_method.cpp's hold a whole system and two Maxwell3D engines on
+    # the stack, past the 1 MiB main thread stack Windows gives by default.
+    target_link_options(tests PRIVATE /STACK:16777216)
 endif()
 
 if (TARGET dynarmic::dynarmic)
