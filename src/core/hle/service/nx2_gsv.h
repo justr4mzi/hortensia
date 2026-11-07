@@ -2707,140 +2707,9 @@ private:
             m_width = w[5];
             m_height = w[6];
             m_clock_offset.reset();
-        }
-        if (!m_worker.joinable()) {
-            m_worker = std::thread{[this] { DecodeLoop(); }};
-        }
-        TipcReplyWords(ctx, {});
-    }
-
-    void GetEvent(HLERequestContext& ctx) {
-        Log(ctx, "event");
-        if (m_event == nullptr) {
-            m_event = m_context.CreateEvent(fmt::format("{}:Ready", GetServiceName()));
-            // The client attaches it auto-clearing, so one signal is consumed by the first wait:
-            // while the input queue has room, re-signal every 4 ms; a spurious wake only makes it
-            // check again.
-            {
-                std::scoped_lock lk{m_ready->mutex};
-                m_ready->event = m_event;
-            }
-            m_ready_timer = Core::Timing::CreateEvent(
-                "nx2:vdec ready",
-                [ready = m_ready, &kernel = system.Kernel()](
-                    s64, std::chrono::nanoseconds) -> std::optional<std::chrono::nanoseconds> {
-                    std::scoped_lock lk{ready->mutex};
-                    if (ready->event != nullptr && ready->room.load(std::memory_order_relaxed)) {
-                        ready->event->Signal(kernel);
-                    }
-                    return std::nullopt;
-                });
-            constexpr std::chrono::nanoseconds ReadyInterval{std::chrono::milliseconds{4}};
-            system.CoreTiming().ScheduleLoopingEvent(ReadyInterval, ReadyInterval, m_ready_timer);
-        }
-        m_event->Signal(system.Kernel());
-        IPC::ResponseBuilder rb{ctx, 2, 1, 0};
-        rb.Push(ResultSuccess);
-        rb.PushCopyObjects(ctx, m_event->GetReadableEvent());
-    }
-
-    // Queues an output image for the next decoded frame; returns the NativeSyncHandle words that
-    // signal once that frame is in it.
-    std::array<u32, 4> HandOut(u32 image, std::optional<Fence> release_fence) {
-        if (m_syncpoint == NoSyncpoint) {
-            m_syncpoint = NvdrvSyncpoints().AllocateSyncpoint(false);
-            m_sync_base = system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(m_syncpoint);
-            LOG_INFO(Service, "{} counts decoded frames on syncpoint {} from {}",
-                     GetServiceName(), m_syncpoint, m_sync_base);
-        }
-        u32 value;
-        {
-            std::scoped_lock lk{m_mutex};
-            m_free.push_back(image);
-            if (release_fence) {
-                m_release_fences[image] = *release_fence;
-            }
-            // After the end of a stream nothing fills an image again, so a release completes at
-            // once: its fence is the syncpoint's current value. Mario Kart World releases its
-            // images after a movie ends and waits for the returned fences; a fence for a frame
-            // that never comes hung the game on a black screen after its title movie.
-            static const bool release_now = [] {
-                const char* env_value = std::getenv("EDEN_NX2_VDEC_EOS_RELEASE_NOW");
-                return env_value != nullptr && env_value[0] != '0';
-            }();
-            if (release_now && release_fence && m_stream_ended && m_inputs.empty() &&
-                m_decoded.empty()) {
-                const u32 reached = static_cast<u32>(
-                    system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(m_syncpoint));
-                m_sync_base = reached;
-                m_handed = 0;
-                value = reached;
-            } else {
-                value = m_sync_base + ++m_handed;
-            }
-        }
-        m_cv.notify_one();
-        return {~m_syncpoint, 0, value, 0};
-    }
-
-    void RegisterBuffer(HLERequestContext& ctx) {
-        Log(ctx, "register output");
-        const auto handle = HandOut(ctx.CommandBuffer()[2], std::nullopt);
-        TipcReplyWords(ctx, {handle[0], handle[1], handle[2], handle[3]});
-    }
-
-    void ReleaseBuffer(HLERequestContext& ctx) {
-        const auto* w = ctx.CommandBuffer();
-        Log(ctx, "release output");
-        const auto handle = HandOut(w[2], Fence{~w[4], w[6]});
-        TipcReplyWords(ctx, {handle[0], handle[1], handle[2], handle[3]});
-    }
-
-    void UnregisterBuffer(HLERequestContext& ctx) {
-        Log(ctx, "unregister output");
-        const u32 image = ctx.CommandBuffer()[2];
-        {
-            std::scoped_lock lk{m_mutex};
-            std::erase(m_free, image);
-            m_release_fences.erase(image);
-        }
-        TipcReplyWords(ctx, {});
-    }
-
-    void SubmitInput(HLERequestContext& ctx) {
-        const auto* w = ctx.CommandBuffer();
-        // Words 2-4 are the A descriptor of the compressed frame (400: 5-7 that of its information
-        // block), the data words follow.
-        const size_t words = 2 + 3 * ctx.BufferDescriptorA().size();
-        const u64 pts = u64{w[words]} | (u64{w[words + 1]} << 32);
-        const bool end = (w[words + 2] & 0xFF) != 0;
-        Log(ctx, "submit");
-        Input input{{}, pts, end};
-        if (!ctx.BufferDescriptorA().empty()) {
-            const auto data = ctx.ReadBufferA(0);
-            input.data.assign(data.begin(), data.end());
-        }
-        {
-            std::scoped_lock lk{m_mutex};
-            m_inputs.push_back(std::move(input));
-            m_stream_ended = false;
-            m_ready->room.store(!end && m_inputs.size() < MaxQueuedInputs, std::memory_order_relaxed);
-        }
-        m_cv.notify_one();
-        const u64 id = ++m_submitted;
-        TipcReplyWords(ctx, {static_cast<u32>(id), static_cast<u32>(id >> 32)});
-    }
-
-    // Flush (8) and Stop (207): drop queued input and frames not yet in an image. Images already
-    // handed out keep their place, so the sync values stay in step with the client's ring.
-    void Flush(HLERequestContext& ctx) {
-        Log(ctx, ctx.GetCommand() == 8 ? "flush" : "stop");
-        {
-            std::scoped_lock lk{m_mutex};
-            m_inputs.clear();
-            m_flush = true;
-            m_stream_ended = false;
+            m_end_queued = false;
             m_clock_offset.reset();
+            m_stream_start.reset();
             m_ready->room.store(true, std::memory_order_relaxed);
             // Only Stop: Bananza flushes (8) after its movies end and treats every completed
             // fence as a frame to acquire.
@@ -2858,23 +2727,14 @@ private:
             std::scoped_lock lk{m_mutex};
             CompleteHandedFences();
             m_clock_offset.reset();
-        }
-        TipcReplyWords(ctx, {});
+    s64 HostTimeUs() const {
+        return system.CoreTiming().GetGlobalTimeUs().count();
     }
 
-    static bool PacingEnabled() {
-        // EDEN_NX2_VDEC_PACE=0: hand out every decoded frame, however late.
-        static const bool enabled = [] {
-            const char* value = std::getenv("EDEN_NX2_VDEC_PACE");
-            return value == nullptr || value[0] != '0';
-        }();
-        return enabled;
-    }
-
-    static s64 HostTimeUs() {
-        return std::chrono::duration_cast<std::chrono::microseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch())
-            .count();
+    // Whether emulation was paused and resumed after host time `time_us`: the movie's audio
+    // stopped meanwhile, so the clock must restart from the next acquire.
+    bool ResumedSince(s64 time_us) const {
+        return system.CoreTiming().GetPauseEndTime().count() / 1000 > time_us;
     }
 
     // Starts or corrects the movie clock from a frame the client just acquired (m_mutex held).
@@ -2882,8 +2742,9 @@ private:
     void AnchorClock(u64 pts) {
         const s64 now = HostTimeUs();
         const s64 offset = now - static_cast<s64>(pts);
-        if (!m_clock_offset || now - m_last_acquire > PauseGap || pts < m_last_acquired_pts ||
-            offset < *m_clock_offset || offset - *m_clock_offset > MaxCatchUp) {
+        if (!m_clock_offset || now - m_last_acquire > PauseGap || ResumedSince(m_last_acquire) ||
+            pts < m_last_acquired_pts || offset < *m_clock_offset ||
+            offset - *m_clock_offset > MaxCatchUp) {
             m_clock_offset = offset;
         }
         m_last_acquire = now;
@@ -2898,7 +2759,7 @@ private:
         const s64 now = HostTimeUs();
         const s64 due = now - *m_clock_offset;
         // Nothing acquired for a while: paused; the next acquire restarts the clock.
-        if (due < 0 || now - m_last_acquire > PauseGap) {
+        if (due < 0 || now - m_last_acquire > PauseGap || ResumedSince(m_last_acquire)) {
             return std::nullopt;
         }
         return static_cast<u64>(due);
@@ -2910,7 +2771,7 @@ private:
     // (m_mutex held). Returns true when the only frame left is late and more input is queued:
     // decode on before filling an image.
     bool DropOvertakenFrames() {
-        if (!PacingEnabled() || m_decoded.empty()) {
+        if (m_decoded.empty()) {
             return false;
         }
         const auto due = DuePts();
@@ -2929,7 +2790,7 @@ private:
             ++m_dropped_in_a_row;
         }
         const Decoded& front = m_decoded.front();
-        return m_decoded.size() == 1 && !m_inputs.empty() && !front.end &&
+        return m_decoded.size() == 1 && !m_inputs.Empty() && !front.end &&
                m_dropped_in_a_row < MaxDroppedInARow && front.pts + m_frame_interval < *due;
     }
 
@@ -3028,11 +2889,24 @@ private:
                 }
                 system.Host1x().GetSyncpointManager().IncrementGuest(m_syncpoint);
                 ++m_frames_out;
+                const s64 written_us = HostTimeUs();
+                if (!m_stream_start) {
+                    m_stream_start = {written_us, frame.pts};
+                }
                 if (m_frames_out == 1 || (m_frames_out % 600) == 0 || frame.end) {
+                    // How far the frames written lag their timestamps since the stream's first.
+                    const s64 behind_us =
+                        (written_us - m_stream_start->first) -
+                        (static_cast<s64>(frame.pts) - static_cast<s64>(m_stream_start->second));
                     LOG_INFO(Service,
-                             "{} frame {} ({}x{}, pts {} us{}) in image {}, {} late dropped",
+                             "{} frame {} ({}x{}, pts {} us{}) in image {}, {} late dropped, "
+                             "{} ms behind",
                              GetServiceName(), m_frames_out, width, height, frame.pts,
-                             frame.end ? ", end of stream" : "", image, m_frames_dropped);
+                             frame.end ? ", end of stream" : "", image, m_frames_dropped,
+                             behind_us / 1000);
+                }
+                if (frame.end) {
+                    m_stream_start.reset();
                 }
                 continue;
             }
@@ -3200,14 +3074,8 @@ private:
     u32 m_height{};
     u32 m_handed{}; ///< Output images handed out (registered or released) so far
     u64 m_frames_out{};
-    u64 m_frames_dropped{};
-    std::optional<s64> m_clock_offset; ///< Host time minus pts (us) of the frames the client shows
-    s64 m_last_acquire{};              ///< Host time (us) of the client's last acquire
-    u64 m_last_acquired_pts{};
-    u64 m_frame_interval{16667}; ///< us, from consecutive decoded frames
-    u64 m_last_decoded_pts{};
-    u32 m_dropped_in_a_row{};
-    std::deque<Input> m_inputs;
+    std::optional<std::pair<s64, u64>> m_stream_start; ///< Host time (us) and pts of its first frame
+    Nx2VideoInputQueue m_inputs;
     std::deque<Decoded> m_decoded;     ///< Waiting for a free output image
     std::deque<u32> m_free;            ///< Output images, in the order the client acquires them
     std::map<u32, Fence> m_release_fences;
