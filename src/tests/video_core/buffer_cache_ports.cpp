@@ -340,16 +340,16 @@ TEST_CASE("Storage binding cache tracks map changes and descriptor dependencies"
 TEST_CASE("Storage binding cache preserves native and table size policies", "[buffer_ports]") {
     Fixture f;
     constexpr GPUVAddr base = 0x4000000;
-    f.memory->Map(base, 0x10000000, 80 << 20, Tegra::PTEKind::PITCH, true);
+    f.memory->Map(base, 0x10000000, 300 << 20, Tegra::PTEKind::PITCH, true);
     f.Descriptor(base, 256);
     REQUIRE(f.Bind().size == 4096);
     REQUIRE(f.Bind(false, true).size == 8 << 20);
-    REQUIRE(f.Bind(false, false, true).size == 64 << 20);
+    REQUIRE(f.Bind(false, false, true).size == 256 << 20);
     REQUIRE(f.Bind(true, false, true).size == 256);
     f.Descriptor(base, (1ULL << 32) | 256);
     REQUIRE(f.Bind().size == 8 << 20);
-    REQUIRE(f.Bind(false, false, true).size == 64 << 20);
-    f.Descriptor(base + (79 << 20), 0);
+    REQUIRE(f.Bind(false, false, true).size == 256 << 20);
+    f.Descriptor(base + (299 << 20), 0);
     REQUIRE(f.Bind(false, false, true).size == 1 << 20);
 }
 
