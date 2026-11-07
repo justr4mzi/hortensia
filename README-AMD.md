@@ -7,7 +7,7 @@
 
 Lichii-AMD is [Lichii](https://github.com/zortos293/Lichii) with fixes for **AMD Radeon** GPUs, tested with
 **The Legend of Zelda: Ocarina of Time** for Switch 2 (`0400486024DEC000`). It is built on Lichii's `nx2`
-branch at `931c9a649b`, which in turn builds on Eglantine, Eden, yuzu and Sudachi. This fork is not
+branch at `65e979adb3`, which in turn builds on Eglantine, Eden, yuzu and Sudachi. This fork is not
 affiliated with Nintendo, AMD or the upstream projects.
 
 *Português abaixo.*
@@ -29,17 +29,33 @@ You need:
 For Ocarina of Time, set **GPU Mode** to **Fast** in the graphics settings, either globally or for the
 game. All measurements below used Fast.
 
-The first launch of this version compiles Ocarina's shaders again (shader cache version 54), so it
-stutters for a while in each new area.
+The first launch of this version compiles Ocarina's shaders again (the driver's cache does not carry
+over), so it stutters for a while in each new area.
 
-If shader builds still stall combat, turn on asynchronous shader building in the advanced graphics
-settings and set **Switch 2 draws with unbuilt pipelines** to **Bounded** (Lichii #465). A draw then
-waits at most 8 ms a frame for its pipeline, at the cost of a one-frame flash when it runs out.
+Shader stutter needs no extra setting: built pipelines are kept for the session, and while a very
+large shader compiles for the first time, its draws are skipped instead of freezing the game.
+Asynchronous shader building can stay off. To turn the skipping off, put `EDEN_NX2_HEAVY_SKIP=0` in
+`nx2_switches.txt` (see Switches).
 
 ## Changes from Lichii
 
 The commits are on the `amd` branch.
 
+- **Shader stutter in combat, on area changes and in new places.**
+  - Switch 2 pipelines are kept for the session, up to an eighth of the RAM (port of Lichii #313).
+    Before, a pipeline unused for 2.5 minutes was destroyed, and going back to an area or fighting
+    again rebuilt hundreds at once. One 90-minute session rebuilt about 10,000 and held draws for
+    214 s, because AMD's driver cache missed many of the rebuilds.
+  - A draw waiting for its pipeline builds that pipeline right away instead of waiting behind the
+    whole queue (port of Lichii #321).
+  - While a shader of 4,000 or more instructions compiles for the first time, its draws are
+    skipped unless that could lose data. This is the heavy skip from Lichii #579, on by default
+    here and also without asynchronous shaders. Draws held per new pipeline went from 111-124 ms to
+    2-20 ms, and the worst freeze from 7-11 s to under 1 s, with no missing objects seen. A large
+    object can appear a moment late in a new place.
+- **Ocarina's image filter on the GPU's matrix units** (Lichii #583). The game's tensor-core image
+  filter runs on 16x16x16 cooperative matrices on GPUs that have them. On the RX 9070 XT the GPU
+  went from about 64% to about 13% busy.
 - **Occlusion query copies (frame rate).** On AMD drivers, the occlusion query results the game reads
   are copied after one barrier instead of waiting on each query (`VK_QUERY_RESULT_WAIT_BIT`). AMD's
   driver spent about 22 µs on each wait. With Ocarina's ~2,000 queries a frame, that came to 45 ms of
@@ -72,14 +88,15 @@ The commits are on the `amd` branch.
 - **Other ports.** Lichii #204 and #215 (macro DMA reads wait for pending query results), #243
   (early macro DMA reads), #268 (texture cache budget) and #259 (opt-in `EDEN_NX2_PREFLUSH`, which
   should stay **off** on AMD because it turns water and grass black).
-- **Lichii `nx2` up to `931c9a649b`.** Among its changes:
-  - #550 keeps the pipelines prebuilt from the disk cache until a draw first uses them, so the first
-    eviction pass no longer destroys them and combat effects aren't rebuilt mid-fight.
+- **Lichii `nx2` up to `65e979adb3`.** Among its changes:
+  - #550 keeps the pipelines prebuilt from the disk cache until a draw first uses them.
   - #353 fixes the coloured blocks along the Hyrule Field horizon on AMD.
   - #397 stops buffer downloads from writing the GPU's older copy over newer CPU writes.
   - #446 polls suspended GPU channels more often (upstream measured Ocarina about 11% faster in
     Kokiri village).
   - #410 binds the buffers Ocarina's near tree leaves are read from.
+  - #580 reuses a buffer range's page table walk, #584 keeps Ocarina's Dynamic FPS at real speed
+    down to 10 fps, and #585 stops padding the audio with silence while sound is queued.
 - **Diagnostics.** GPU time per recording line (`EDEN_DKB_FRAME_TRACE=1`), frame time percentiles in
   the log, and live `rp_barrier` switching on the debug server (`docs/nx2/debug-mcp.md`).
 
@@ -88,13 +105,15 @@ The commits are on the `amd` branch.
 The `nx2_switches.txt` next to `lichii.exe` sets this build's defaults: the GPU split, fence
 batching, 128-draw submissions, the render pass barrier and unthrottled game file reads. To change
 one, copy its line into `%APPDATA%\eden\nx2_switches.txt`, which wins over the file next to the
-executable, then restart.
+executable, then restart. `EDEN_NX2_HEAVY_SKIP=0` there turns off the skipping of heavy shaders.
 
 ## Known issues
 
 - Only Ocarina of Time on one PC was tested with this build.
-- The GPU emulation thread now limits the frame rate. It is about 91% busy at the village, and
-  heavier areas run slower.
+- The frame rate moves between about 40 and 60 fps while walking. It is limited by the round trips
+  between the emulated CPU and the GPU emulation threads, not by the graphics card (the RX 9070 XT
+  is about 13% busy) or by one saturated thread.
+- Loading a new area can pause the game for a few seconds; once it took 19 s.
 - `EDEN_NX2_PREFLUSH=1` corrupts water and grass on AMD.
 
 ## License and source
@@ -126,12 +145,13 @@ Você precisa de:
 
 No Ocarina of Time, deixe o **GPU Mode** em **Fast** nas opções de gráficos, globais ou do jogo.
 
-Na primeira vez que abrir esta versão, os shaders do Ocarina são compilados de novo (cache versão 54),
-então o jogo engasga um pouco em cada área nova.
+Na primeira vez que abrir esta versão, os shaders do Ocarina são compilados de novo (o cache do
+driver não aproveita os antigos), então o jogo engasga um pouco em cada área nova.
 
-Se ainda travar em combate, ligue a compilação assíncrona de shaders nas opções avançadas de gráficos
-e escolha **Bounded** em **Switch 2 draws with unbuilt pipelines** (PR #465). O desenho espera no
-máximo 8 ms por quadro pelo shader, com um flash de um quadro quando o tempo acaba.
+As travadas de shader não precisam de nenhum ajuste. Os pipelines compilados ficam guardados durante
+a sessão, e, enquanto um shader muito pesado compila pela primeira vez, os desenhos dele são pulados
+em vez de travar o jogo. A compilação assíncrona pode ficar desligada. Para desligar o pulo, coloque
+`EDEN_NX2_HEAVY_SKIP=0` no `nx2_switches.txt`.
 
 ### O que muda em relação ao Lichii
 
@@ -144,13 +164,28 @@ máximo 8 ms por quadro pelo shader, com um flash de um quadro quando o tempo ac
   amarelo-esbranquiçada até reiniciar. Os shaders gráficos agora leem as probes de luz tão longe
   quanto a névoa (PR #351), e o mínimo, o máximo e o clamp de ponto flutuante não deixam mais um NaN
   se espalhar pela tela (PR #432).
-- **Travadas em combate:** os pipelines montados do cache no boot não são mais descartados antes de
-  serem usados (PR #550), então os efeitos de combate não são recompilados no meio da luta.
+- **Travadas de shader em combate, em troca de área e em lugares novos:**
+  - Os pipelines ficam guardados durante a sessão, até 1/8 da RAM (port da PR #313). Antes, eram
+    descartados depois de 2,5 minutos sem uso e recompilados ao voltar.
+  - O desenho que espera um pipeline compila esse pipeline na hora (PR #321).
+  - Enquanto um shader de 4.000 instruções ou mais compila pela primeira vez, os desenhos dele são
+    pulados, se isso não perder dados (PR #579, ligado por padrão aqui).
+  - A espera por pipeline novo caiu de 111–124 ms para 2–20 ms, e a pior travada de 7–11 s para menos
+    de 1 s, sem objetos faltando. Um objeto grande pode aparecer um instante depois num lugar novo.
+- **Filtro de imagem do Ocarina nas matrizes da placa** (PR #583): ele roda nas matrizes 16x16x16 das
+  placas que têm esse recurso. Na RX 9070 XT, o uso da GPU caiu de ~64% para ~13%.
 - **Blocos coloridos no horizonte de Hyrule Field:** corrigidos (PR #353).
 - **HUD, minimapa e diálogos piscando:** corrigidos com uma barreira em volta de cada passe de
   renderização (`EDEN_NX2_RP_BARRIER=1`), que custa ~0,05 ms por quadro.
 - **Vídeos fora de sincronia com o som:** corrigidos (ports das PRs #251 e #278).
 - Deixe `EDEN_NX2_PREFLUSH` desligado: na AMD ele deixa a água e a grama pretas.
+
+### Problemas conhecidos
+
+- Só o Ocarina of Time foi testado, num único PC.
+- Andando, o FPS varia entre ~40 e 60. O limite são as idas e voltas entre a CPU emulada e as threads
+  que emulam a GPU, não a placa de vídeo (a RX 9070 XT fica em ~13% de uso).
+- Carregar uma área nova pode pausar o jogo por alguns segundos; uma vez levou 19 s.
 
 ### Licença
 
