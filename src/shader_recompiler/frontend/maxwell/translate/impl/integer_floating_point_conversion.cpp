@@ -151,7 +151,7 @@ void I2F(TranslatorVisitor& v, u64 insn, IR::U32U64 src) {
     } else if (!is_signed && conversion_src_bitsize == 32 && dst_bitsize == 32 &&
                i2f.fp_rounding == FpRounding::RZ) {
         value = ConvertUnsigned32ToFloatRZ(v, IR::U32{src});
-    } else if (v.env.HasNativeInstructions() && is_signed && i2f.int_format == IntFormat::U32 &&
+    } else if (v.env.IsNativeProgram() && is_signed && i2f.int_format == IntFormat::U32 &&
                dst_bitsize == 32 && i2f.fp_rounding == FpRounding::RP && !i2f.abs && !i2f.neg) {
         auto& ir = v.ir;
         const IR::U32 source{src};
