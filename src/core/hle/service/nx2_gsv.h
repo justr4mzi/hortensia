@@ -2177,7 +2177,8 @@ private:
             // Preference word 6: 1 = RGBA8, 4 = RGB10A2.
             .pixel_format = image_format == 4 ? android::PixelFormat::Rgba1010102
                                               : android::PixelFormat::Rgba8888,
-            .transform_flags = android::BufferTransformFlags::Unset,
+            .transform_flags = (flags & (1U << 18)) != 0 ? android::BufferTransformFlags::FlipV
+                                                         : android::BufferTransformFlags::Unset,
             .crop_rect = {0, 0, static_cast<int>(crop_width), static_cast<int>(crop_height)},
             .blending = Tegra::BlendMode::Opaque,
             .native_tiling = true,
