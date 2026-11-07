@@ -496,3 +496,31 @@ Les remotes `pokedinner` (`https://git.eden-emu.dev/Franseven/PokeDinner-a-Eglan
     3. Donkey Kong Bananza : visibilité du terrain (Franseven) et tenue lors du cassage de blocs (DKB drain & fence backthread).
     4. Pokopia : affichage du ciel (nouveau cache v22) et photos en jeu.
     5. Splatoon : éclairage et rendu des scènes avec lowering Ampere complet.
+
+## Section 11 (2026-11-07) : Correctifs boot OOT, bridage DKB 60 FPS, cache de pipelines Selevet & PRs upstream
+
+- **Correction du crash au lancement d'OOT (build-40 -> build-41)** :
+  - **Restriction de `EDEN_NX2_PBFLUSH` (`dma_pusher.cpp`)** : Le flush synchrone systématique `split.Drain()` et `memory_manager.FlushRegion` sur tous les blocs de paramètres <= 64 mots est désormais strictement restreint au Program ID de Donkey Kong Bananza (`0x040074A01BF12000ULL`) ou à l'activation explicite `EDEN_NX2_PBFLUSH=1`. Sur les autres jeux (dont OOT au boot), les paramètres conservent leur traitement asynchrone sans bloquer le parallélisme du split GPU.
+  - **Restriction de `NX2_INDIRECT_RESET_PROGRAM` (`vk_rasterizer.cpp`)** : L'interception du programme de réinitialisation des indirect draw records de DKB est désormais strictement réservée à DKB (`0x040074A01BF12000ULL`).
+  - **Sécurisation de `GetAppLoader()` et métadonnées (`core.h`, `core.cpp`, `main_window.cpp`, `application_functions.cpp`)** : Ajout du prédicat `System::HasAppLoader()` pour éviter tout déréférencement nul de `impl->app_loader` dans `MainWindow::BootGame` et `LooseDumpDisplayVersion`.
+- **Plafonnement de Donkey Kong Bananza à 60 FPS (`nx2_gsv.h`)** :
+  - Ajout de `DKBananzaProgramId` (`0x040074A01BF12000ULL`) au clamp de rafraîchissement effectif à 60 Hz dans `PaceToVblank`, éliminant les pics erratiques à 76-84 FPS observés en jeu, tout en préservant le débridage de Mario Kart World.
+- **Résolution du build CI (`thread.h`)** :
+  - Suppression de la déclaration dupliquée de `enum class PinnedRole` et `PinCurrentThread` dans `src/common/thread.h`, rétablissant la compilation propre de tous les jobs CI.
+- **Résolution du temps de compilation des shaders (4 min à chaque lancement) & Portage Selevet build 10** :
+  - **Réutilisation du cache pilote Vulkan (`vulkan_pipelines.bin`)** : Ajustement de `DriverCachesPipelines` dans `vk_pipeline_cache.cpp` (pilotable par `EDEN_FORCE_VULKAN_PIPELINE_CACHE`), afin que le blob binaire précompilé du driver Vulkan soit systématiquement sauvegardé à la fermeture et rechargé au lancement sur GPU AMD et NVIDIA, permettant un chargement instantané au lieu d'une recompilation complète des 2224 shaders.
+  - **Système de précompilation en tâche de fond Selevet build 10 (`vk_pipeline_cache_prebuild.h`, `pipeline_build.h`, `async_draw_policy.h`)** :
+    - Intégration de `PipelinePrebuild` (`background_pipelines`) pour compiler en arrière-plan les pipelines non prioritaires sans bloquer l'affichage.
+    - Configuration du seuil de préchargement synchrone via `MinPipelinesAlwaysBuilt()` (`EDEN_NX2_MIN_PIPELINES_BUILT`, 2000 par défaut) et switch `EDEN_SELEVET_PIPELINE_CACHE=1` (actif par défaut).
+- **Intégration des PRs upstream** :
+  - `#397` (`5e14cab13e`) : `buffer_cache: don't download GPU data over newer CPU writes` (évite que les téléchargements asynchrones du GPU n'écrasent les écritures CPU plus récentes en mémoire invitée).
+  - Vérification et confirmation des intégrations complètes de `#439` (RAM macro Turing à 0x8000), `#438` (restitution des macros aux moteurs en arrêt de split), `#425` (blocs de 64 octets dans usage tracker), `#435` (rejet des plages VA avec wrap), `#485` (maintien des tables de pages nulles), `#443` (crashs au scan des répertoires), `#442` (bouton de migration), `#429` (CAS atomique 32 bits), `#192` (sérialisation des guarded et mesh pipelines dans le cache disque), `#241` (alignement des registres d'uniformes hauts), `#279` (shadowing IMAD avec multiplicateur uniforme), `#232` (priorité aux cœurs P sur processeurs hybrides Windows), et Orchid 0.9.0.
+- **État courant et étapes suivantes** :
+  - Branche : `rebase/smileytatsu` (isolée de `main`).
+  - Lancement d'un build de test en mode artifacts (`publish_release=false`).
+  - Protocole de test utilisateur recommandé :
+    1. **Ocarina of Time (OOT)** : vérifier que le jeu dépasse les 3,7 secondes, passe l'init audio et démarre la session sans crash au chargement.
+    2. **Mario Kart World (MKW)** : mesurer le temps de chargement au 2e boot (vérifier le chargement accéléré via `vulkan_pipelines.bin` et le système Selevet).
+    3. **Donkey Kong Bananza (DKB)** : vérifier que le framerate reste plafonné à 60 FPS maximum sans dépasser (fini les 76-84 FPS), et que le terrain et le cassage de blocs restent stables.
+    4. **Pokopia** : vérifier l'affichage du ciel avec le cache invalidé v22 et les photos sans bandes zébrées.
+    5. **Splatoon** : vérifier l'éclairage et la luminosité globale du décor avec le nouveau lowering Ampere.
