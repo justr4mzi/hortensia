@@ -1778,7 +1778,7 @@ private:
         m_previous_fence_id = ~w[22];
         m_previous_fence_value = w[24];
         const auto waited = std::chrono::steady_clock::now();
-        Composite(w[5], ~w[22], w[24], w[7], w.size() > 8 ? w[8] : 0);
+        Composite(w[5], ~w[22], w[24], w[7], w[8]);
         const auto composited = std::chrono::steady_clock::now();
         PaceToVblank(w[12]);
         const auto paced = std::chrono::steady_clock::now();

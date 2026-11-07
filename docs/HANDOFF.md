@@ -633,3 +633,12 @@ ebase/smileytatsu.
     - Remplacement complet de l'ancien `async_downloads` par `pending_download_ranges` conformément à Lichii #397 (`0c822822c1`) : remplissage dans `CommitAsyncFlushesHigh`, itération dans `PopAsyncBuffers`, soustraction dans `ClearDownload` et dépilement ordonné via `pending_download_ranges.pop_front()`.
   - **Options de compilation Ninja `-k 0`** :
     - Ajout du drapeau `-- -k 0` dans `.github/workflows/release-binaries.yml` afin d'obtenir la totalité des erreurs de compilation en une seule passe sur toutes les cibles CI.
+
+
+## Section 15 (2026-11-07) : Ajustements ciblés pointeur vi2 CommandBuffer et pipeline unoptimized
+
+- **Ajustements de compilation issus du run 42395177147** :
+  - **Accès indexé direct au CommandBuffer vi2 (`src/core/hle/service/nx2_gsv.h`)** :
+    - Remplacement de l'appel erroné `w.size()` par `w[8]` directement (`w` étant un pointeur brut `const u32*` retourné par `ctx.CommandBuffer()`).
+  - **Élimination de la redéfinition de variable dans `vk_graphics_pipeline.cpp`** :
+    - Suppression de la double déclaration `const bool unoptimized` dans `GraphicsPipeline::MakePipeline` en fusionnant l'application du flag `VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT` pour les GPU AMD propriétaires.

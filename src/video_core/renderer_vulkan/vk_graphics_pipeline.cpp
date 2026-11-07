@@ -1217,8 +1217,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
             }
         }
     }
-    const bool unoptimized = amd_proprietary && (safe_graphics || is_stalling_shader);
-    if (unoptimized) {
+    if (amd_proprietary && (safe_graphics || is_stalling_shader)) {
         flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
     }
 
