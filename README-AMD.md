@@ -7,7 +7,7 @@
 
 Lichii-AMD is [Lichii](https://github.com/zortos293/Lichii) with fixes for **AMD Radeon** GPUs, tested with
 **The Legend of Zelda: Ocarina of Time** for Switch 2 (`0400486024DEC000`). It is built on Lichii's `nx2`
-branch at `9fa4a71fa0`, which in turn builds on Eglantine, Eden, yuzu and Sudachi. This fork is not
+branch at `931c9a649b`, which in turn builds on Eglantine, Eden, yuzu and Sudachi. This fork is not
 affiliated with Nintendo, AMD or the upstream projects.
 
 *Português abaixo.*
@@ -32,6 +32,10 @@ game. All measurements below used Fast.
 The first launch of this version compiles Ocarina's shaders again (shader cache version 54), so it
 stutters for a while in each new area.
 
+If shader builds still stall combat, turn on asynchronous shader building in the advanced graphics
+settings and set **Switch 2 draws with unbuilt pipelines** to **Bounded** (Lichii #465). A draw then
+waits at most 8 ms a frame for its pipeline, at the cost of a one-frame flash when it runs out.
+
 ## Changes from Lichii
 
 The commits are on the `amd` branch.
@@ -51,13 +55,14 @@ The commits are on the `amd` branch.
   | p99 frame time | 66.0 ms | 42.0 ms |
   | 1% low | 15.2 fps | 23.9 fps |
 
-- **Green sky, fog and water.** Compute table pointers are bound up to 256 MiB (port of Lichii #292).
-  The fog pass reads its light probes past the old 64 MiB cap, and on AMD it read garbage there.
+- **Green sky, fog and water.** Read-only table pointers are bound as far as a storage buffer
+  reaches, up to 1 GiB (Lichii #351, which replaced this fork's port of #292). The fog pass reads its
+  light probes past the old 64 MiB cap, and on AMD it read garbage there.
 - **Black water and foliage, then a yellow-white image.** After an area change, such as entering a
   house and coming back, Kokiri Forest's water and foliage turned black, and later the whole image
   turned yellow-white until a restart. The foliage and water shaders read the same light probes past
-  the 64 MiB cap that graphics draws still had. Graphics table pointers now get 256 MiB too (the
-  second commit of Lichii #292). Float min, max and clamp also use NaN-defined SPIR-V instructions
+  the 64 MiB cap that graphics draws had, and get the same reach as the fog now. Float min, max and
+  clamp also use NaN-defined SPIR-V instructions
   (Lichii #432), like Maxwell's FMNMX, which returns the operand that isn't NaN, so a NaN no longer
   spreads across the screen through the bloom.
 - **Flickering HUD, minimap and dialogs.** A full memory barrier runs around every render pass
@@ -67,9 +72,14 @@ The commits are on the `amd` branch.
 - **Other ports.** Lichii #204 and #215 (macro DMA reads wait for pending query results), #243
   (early macro DMA reads), #268 (texture cache budget) and #259 (opt-in `EDEN_NX2_PREFLUSH`, which
   should stay **off** on AMD because it turns water and grass black).
-- **Lichii `nx2` up to `9fa4a71fa0`.** Among its changes, #397 stops buffer downloads from writing the
-  GPU's older copy over newer CPU writes, and #410 binds the buffers Ocarina's near tree leaves are
-  read from.
+- **Lichii `nx2` up to `931c9a649b`.** Among its changes:
+  - #550 keeps the pipelines prebuilt from the disk cache until a draw first uses them, so the first
+    eviction pass no longer destroys them and combat effects aren't rebuilt mid-fight.
+  - #353 fixes the coloured blocks along the Hyrule Field horizon on AMD.
+  - #397 stops buffer downloads from writing the GPU's older copy over newer CPU writes.
+  - #446 polls suspended GPU channels more often (upstream measured Ocarina about 11% faster in
+    Kokiri village).
+  - #410 binds the buffers Ocarina's near tree leaves are read from.
 - **Diagnostics.** GPU time per recording line (`EDEN_DKB_FRAME_TRACE=1`), frame time percentiles in
   the log, and live `rp_barrier` switching on the debug server (`docs/nx2/debug-mcp.md`).
 
@@ -86,8 +96,6 @@ executable, then restart.
 - The GPU emulation thread now limits the frame rate. It is about 91% busy at the village, and
   heavier areas run slower.
 - `EDEN_NX2_PREFLUSH=1` corrupts water and grass on AMD.
-- In Hyrule Field, AMD cards can show coloured blocks along the horizon (Lichii #322). Its fix, #353,
-  is not in this build yet.
 
 ## License and source
 
@@ -121,17 +129,24 @@ No Ocarina of Time, deixe o **GPU Mode** em **Fast** nas opções de gráficos, 
 Na primeira vez que abrir esta versão, os shaders do Ocarina são compilados de novo (cache versão 54),
 então o jogo engasga um pouco em cada área nova.
 
+Se ainda travar em combate, ligue a compilação assíncrona de shaders nas opções avançadas de gráficos
+e escolha **Bounded** em **Switch 2 draws with unbuilt pipelines** (PR #465). O desenho espera no
+máximo 8 ms por quadro pelo shader, com um flash de um quadro quando o tempo acaba.
+
 ### O que muda em relação ao Lichii
 
 - **Cópia das queries de oclusão:** nas placas AMD, os resultados são copiados depois de uma única
   barreira, sem esperar query por query. Na mesma cena, o FPS passou de 19,7 para 34,7, o p95 de
   55,9 para 34,2 ms e o p99 de 66,0 para 42,0 ms.
-- **Céu, névoa e água verdes:** corrigidos (port da PR #292 do Lichii).
+- **Céu, névoa e água verdes:** corrigidos (PR #351 do Lichii, que substituiu o port da #292).
 - **Água e plantas pretas, depois a imagem toda amarela:** corrigidos. Depois de entrar numa casa e
   voltar, a água e a folhagem da floresta Kokiri ficavam pretas e, com o tempo, a tela inteira ficava
-  amarelo-esbranquiçada até reiniciar. Os shaders gráficos agora também leem as probes de luz até
-  256 MiB (segundo commit da PR #292), e o mínimo, o máximo e o clamp de ponto flutuante não deixam
-  mais um NaN se espalhar pela tela (PR #432).
+  amarelo-esbranquiçada até reiniciar. Os shaders gráficos agora leem as probes de luz tão longe
+  quanto a névoa (PR #351), e o mínimo, o máximo e o clamp de ponto flutuante não deixam mais um NaN
+  se espalhar pela tela (PR #432).
+- **Travadas em combate:** os pipelines montados do cache no boot não são mais descartados antes de
+  serem usados (PR #550), então os efeitos de combate não são recompilados no meio da luta.
+- **Blocos coloridos no horizonte de Hyrule Field:** corrigidos (PR #353).
 - **HUD, minimapa e diálogos piscando:** corrigidos com uma barreira em volta de cada passe de
   renderização (`EDEN_NX2_RP_BARRIER=1`), que custa ~0,05 ms por quadro.
 - **Vídeos fora de sincronia com o som:** corrigidos (ports das PRs #251 e #278).
