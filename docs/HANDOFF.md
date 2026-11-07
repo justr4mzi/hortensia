@@ -662,3 +662,12 @@ ebase/smileytatsu.
   - **Ordre d'initialisation exact (`src/video_core/renderer_vulkan/vk_pipeline_cache.cpp`)** :
     - Déplacement de `background_pipelines` avant `workers` et `serialization_thread` pour reproduire l'ordre exact de déclaration des membres de `vk_pipeline_cache.h` (`background_pipelines` ligne 173, `workers` ligne 235, `serialization_thread` ligne 236).
     - Élimine définitivement l'avertissement `-Werror,-Wreorder-ctor` sous Clang Linux et MinGW GCC.
+
+
+## Section 18 (2026-11-07) : Implémentation du descripteur de polices intégrées GetBuiltInFontDataSet
+
+- **Résolution de l'indéfini à l'édition des liens (run 42397215554)** :
+  - **Implémentation de `GetBuiltInFontDataSet` (`src/core/hle/service/ns/platform_service_manager.cpp`)** :
+    - La table des fonctions Switch 2 et le header déclaraient `GetBuiltInFontDataSet` (commande 2020), mais son corps était manquant dans `platform_service_manager.cpp`.
+    - Implémentation complète portée depuis Orchid (`ee934b2e21`) décodant les types demandés et renvoyant le tableau de descripteurs de polices intégrées (`Descriptor { flags, offset, size }`) dans le tampon IPC.
+    - Élimine l'erreur d'édition de liens `undefined symbol: Service::NS::IPlatformServiceManager::GetBuiltInFontDataSet(Service::HLERequestContext&)` bloquant l'exécutable final.
