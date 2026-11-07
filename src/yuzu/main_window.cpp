@@ -2289,8 +2289,10 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             }
         }
         FileSys::VirtualFile update_raw;
-        auto& report_loader = QtCommon::system->GetAppLoader();
-        report_loader.ReadUpdateRaw(update_raw);
+        if (QtCommon::system->HasAppLoader()) {
+            auto& report_loader = QtCommon::system->GetAppLoader();
+            report_loader.ReadUpdateRaw(update_raw);
+        }
         QList<CompatibilityReporting::Addon> mods;
         QList<CompatibilityReporting::Addon> updates;
         for (const auto& patch : pm.GetPatches(update_raw)) {

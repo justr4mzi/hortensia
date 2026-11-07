@@ -123,10 +123,13 @@ bool DmaPusher::Step() {
                 // into a 5-word indirect draw record and the colour pass draws with it). Read
                 // without a flush, the macro sees the older guest words (a zero count, so the
                 // terrain is never drawn). EDEN_NX2_PBFLUSH=0 turns this off.
-                static const bool flush_parameters = [] {
+                constexpr u64 DKBananzaProgramId = 0x040074A01BF12000ULL;
+                static const int pbflush_env = [] {
                     const char* value = std::getenv("EDEN_NX2_PBFLUSH");
-                    return value == nullptr || value[0] != '0';
+                    return value == nullptr ? -1 : (value[0] != '0' ? 1 : 0);
                 }();
+                const bool is_dkb = Settings::GetCurrentProgramID() == DKBananzaProgramId;
+                const bool flush_parameters = pbflush_env == 1 || (pbflush_env == -1 && is_dkb);
                 bool flushed_parameters = false;
                 if (flush_parameters && words <= 64) {
                     if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {

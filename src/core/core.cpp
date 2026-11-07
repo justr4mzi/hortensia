@@ -881,6 +881,10 @@ Loader::ResultStatus System::GetGameName(std::string& out) const {
     return impl->GetGameName(out);
 }
 
+bool System::HasAppLoader() const {
+    return impl->app_loader != nullptr;
+}
+
 Loader::AppLoader& System::GetAppLoader() {
     return *impl->app_loader;
 }

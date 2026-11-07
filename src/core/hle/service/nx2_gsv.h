@@ -2001,9 +2001,11 @@ private:
         // Cap menus/loading frame rate to 60 FPS max for OOT & Switch Sports without touching MKW unlock
         constexpr u64 OcarinaOfTimeProgramId = 0x0400486024DEC000ULL;
         constexpr u64 SwitchSportsProgramId = 0x04008E001F098000ULL;
+        constexpr u64 DKBananzaProgramId = 0x040074A01BF12000ULL;
         const u64 current_app_id = process != nullptr ? process->GetProgramId() : 0ULL;
         u32 effective_refresh_rate = refresh_rate;
-        if ((current_app_id == OcarinaOfTimeProgramId || current_app_id == SwitchSportsProgramId) &&
+        if ((current_app_id == OcarinaOfTimeProgramId || current_app_id == SwitchSportsProgramId ||
+             current_app_id == DKBananzaProgramId) &&
             forced_interval == 0 && effective_refresh_rate > 60) {
             effective_refresh_rate = 60;
         }

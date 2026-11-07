@@ -226,6 +226,9 @@ Result IApplicationFunctions::SetTerminateResult(Result terminate_result) {
 // A loose ExeFS/RomFS dump has no installed control data: its loader's (a control.nacp next to the
 // dump, else the RomFS's version tag). Only for the program it loaded, not for library applets.
 bool IApplicationFunctions::LooseDumpDisplayVersion(std::string& version) {
+    if (!system.HasAppLoader()) {
+        return false;
+    }
     auto& loader = system.GetAppLoader();
     u64 program_id{};
     if (loader.ReadProgramId(program_id) != Loader::ResultStatus::Success ||

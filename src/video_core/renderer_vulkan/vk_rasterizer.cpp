@@ -308,11 +308,13 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     // buffer, so the recompiler loses them and every record keeps 0 copies -- and a draw of 0
     // copies draws nothing. Do that program's stores here instead. EDEN_NX2_RESETFIX=0 leaves it
     // to the GPU.
+    constexpr u64 DKBananzaProgramId = 0x040074A01BF12000ULL;
     static const bool reset_fix = [] {
         const char* value = std::getenv("EDEN_NX2_RESETFIX");
         return value == nullptr || value[0] != '0';
     }();
-    if (reset_fix && !is_indexed && maxwell3d->GetNativeMacroEngine().native_turing) {
+    if (reset_fix && Settings::GetCurrentProgramID() == DKBananzaProgramId && !is_indexed &&
+        maxwell3d->GetNativeMacroEngine().native_turing) {
         // The program's 11 native instructions.
         static constexpr std::array<u32, 44> NX2_INDIRECT_RESET_PROGRAM{
             0xff007321, 0x0002fcff, 0x00000000, 0x000e2400, 0x00007a11, 0x00004400, 0x078018ff,
