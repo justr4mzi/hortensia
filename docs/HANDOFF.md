@@ -654,3 +654,11 @@ ebase/smileytatsu.
   - **Prise en charge de `SetIdleHook` dans `GpuSplit` (`src/video_core/gpu_split.h`, `gpu_split.cpp`)** :
     - Ajout de `SetIdleHook(void (*hook)(void*), void* argument)` et stockage des pointeurs associés `idle_hook` / `idle_argument`.
     - Déclenchement du hook dans `BackLoop` avant mise en veille et réinitialisation dans `Stop()`, satisfaisant l'enregistrement de `RasterizerVulkan` (`VideoCommon::GpuSplit::Get().SetIdleHook(...)`).
+
+
+## Section 17 (2026-11-07) : Alignement strict de la séquence d'initialisation PipelineCache
+
+- **Correction de la séquence d'initialisation PipelineCache (run 42396510200)** :
+  - **Ordre d'initialisation exact (`src/video_core/renderer_vulkan/vk_pipeline_cache.cpp`)** :
+    - Déplacement de `background_pipelines` avant `workers` et `serialization_thread` pour reproduire l'ordre exact de déclaration des membres de `vk_pipeline_cache.h` (`background_pipelines` ligne 173, `workers` ligne 235, `serialization_thread` ligne 236).
+    - Élimine définitivement l'avertissement `-Werror,-Wreorder-ctor` sous Clang Linux et MinGW GCC.
