@@ -204,3 +204,145 @@ TEST_CASE("Built-in Max Resolution patch is listed and loaded for Ocarina's main
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
     REQUIRE_FALSE(builtin_enabled());
 }
+
+namespace {
+
+std::vector<u8> MakeDynamicMain() {
+    auto nso = MakeMain(OcarinaBuildId, TbzInstruction);
+    nso.resize(DynamicStateOffset + 16);
+    Loader::NSOHeader header;
+    std::memcpy(&header, nso.data(), sizeof(header));
+    header.segments[0].size = 63201744;
+    header.segments[1].location = 63205376;
+    header.segments[1].size = 12603520;
+    header.segments[2].location = 75812864;
+    header.segments[2].size = 5217152;
+    header.segments[2].bss_size = 1414272;
+    std::memcpy(nso.data(), &header, sizeof(header));
+    std::memcpy(nso.data() + DynamicCallOffset, &DynamicOriginalInstruction,
+                sizeof(DynamicOriginalInstruction));
+    return nso;
+}
+
+} // Anonymous namespace
+
+TEST_CASE("Built-in Dynamic FPS defaults on and can be disabled in Add-Ons", "[patch_manager]") {
+    PatchManagerTestContext context;
+    const auto manager = context.Manager();
+    const auto enabled = [&] {
+        const auto patches = manager.GetPatches();
+        const auto it = std::ranges::find(patches, DynamicFps, &FileSys::Patch::name);
+        REQUIRE(it != patches.end());
+        REQUIRE(it->type == FileSys::PatchType::Mod);
+        return it->enabled;
+    };
+    REQUIRE(enabled());
+    auto nso = MakeDynamicMain();
+    auto patched = manager.PatchNSO(nso, "main");
+    REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
+    REQUIRE(WordAt(patched, DynamicRoutineOffset) == 0x1E201828);
+    REQUIRE(WordAt(patched, DynamicRoutineOffset + 116) == 0x3F83D70A);
+    REQUIRE(
+        Common::HexToString(std::span{patched}.subspan(DynamicRoutineOffset, DynamicRoutineSize)) ==
+        "2818201ECA9200B04A0138912BE03BD54C0140F94B0100F9CC0200B46B010CCB0DE03BD5"
+        "4E0180D2AE09CE9A7F010EEBCB818B9A4C0540F94C0000B5EC030BAA6E010CCB8C0D8E8B"
+        "4C0500F98201239EA301239E4218231E4208211EC300001C0309231E4020231E4D000054"
+        "4840201EC0035FD60AD7833F");
+    REQUIRE(WordAt(patched) == BranchInstruction);
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{DynamicFps}};
+    REQUIRE_FALSE(enabled());
+    REQUIRE(WordAt(manager.PatchNSO(nso, "main"), DynamicCallOffset) == DynamicOriginalInstruction);
+    REQUIRE(WordAt(manager.PatchNSO(nso, "main"), DynamicRoutineOffset) == 0);
+
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
+    REQUIRE(enabled());
+    patched = manager.PatchNSO(nso, "main");
+    REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
+    REQUIRE(WordAt(patched) == TbzInstruction);
+
+    const auto unrelated = context.Manager(OtherTitleId).GetPatches();
+    REQUIRE(std::ranges::find(unrelated, DynamicFps, &FileSys::Patch::name) == unrelated.end());
+}
+
+TEST_CASE("Built-in Dynamic FPS rejects mismatched or truncated modules transactionally",
+          "[patch_manager]") {
+    PatchManagerTestContext context;
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
+    auto nso = MakeDynamicMain();
+    std::string module = "main";
+    u64 title = OcarinaTitleId;
+    SECTION("Wrong build") {
+        nso[offsetof(Loader::NSOHeader, build_id)] ^= 1;
+    }
+    SECTION("Wrong module") {
+        module = "sdk";
+    }
+    SECTION("Wrong title") {
+        title = OtherTitleId;
+    }
+    SECTION("Incomplete header") {
+        nso.resize(sizeof(Loader::NSOHeader) - 1);
+    }
+    SECTION("Incomplete call") {
+        nso.resize(DynamicCallOffset + 3);
+    }
+    SECTION("Incomplete routine") {
+        nso.resize(DynamicRoutineOffset + DynamicRoutineSize - 1);
+    }
+    SECTION("Incomplete timer state") {
+        nso.resize(DynamicStateOffset + 15);
+    }
+    SECTION("Timer state outside BSS") {
+        Loader::NSOHeader header;
+        std::memcpy(&header, nso.data(), sizeof(header));
+        header.segments[2].bss_size = 15;
+        std::memcpy(nso.data(), &header, sizeof(header));
+    }
+    SECTION("Wrong original hook") {
+        nso[DynamicCallOffset] ^= 1;
+    }
+    SECTION("Nonzero code cave") {
+        nso[DynamicRoutineOffset + DynamicRoutineSize - 1] = 1;
+    }
+    SECTION("Nonzero timer state") {
+        nso[DynamicStateOffset + 15] = 1;
+    }
+    SECTION("Code cave outside executable padding") {
+        Loader::NSOHeader header;
+        std::memcpy(&header, nso.data(), sizeof(header));
+        header.segments[0].size = 0x3C46000;
+        std::memcpy(nso.data(), &header, sizeof(header));
+    }
+    SECTION("Code cave overlaps read-only segment") {
+        Loader::NSOHeader header;
+        std::memcpy(&header, nso.data(), sizeof(header));
+        header.segments[1].location = 0x3C46200;
+        std::memcpy(nso.data(), &header, sizeof(header));
+    }
+    REQUIRE(context.Manager(title).PatchNSO(nso, module) == nso);
+}
+
+TEST_CASE("Built-in Dynamic FPS leaves both records alone when a user mod changes either",
+          "[patch_manager]") {
+    size_t offset = DynamicCallOffset;
+    u32 mod_word = 0x11223344;
+    SECTION("User call takes precedence") {}
+    SECTION("Identical call still takes precedence for the whole patch") {
+        mod_word = DynamicCallInstruction;
+    }
+    SECTION("User routine takes precedence") {
+        offset = DynamicRoutineOffset;
+    }
+    SECTION("Last routine byte takes precedence") {
+        offset = DynamicRoutineOffset + DynamicRoutineSize - sizeof(u32);
+    }
+    SECTION("User timer state takes precedence") {
+        offset = DynamicStateOffset;
+    }
+    PatchManagerTestContext context{mod_word, offset};
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
+    const auto nso = MakeDynamicMain();
+    auto expected = nso;
+    std::memcpy(expected.data() + offset, &mod_word, sizeof(mod_word));
+    REQUIRE(context.Manager().PatchNSO(nso, "main") == expected);
+}
