@@ -93,3 +93,15 @@ EDEN_NX2_FENCE_BATCH=1
 # AMD proprietary driver: build crashing/stalling shaders without driver optimizations (default on; set to 0 to disable).
 #EDEN_NX2_AMD_SAFE_COMPILE=0
 #EDEN_NX2_AMD_SAFE_COMPILE_GRAPHICS=1
+
+# Pokopia: flush accelerated DMA image-to-buffer copies to guest memory to prevent banded/striped photos (default on; set to 0 to disable).
+#EDEN_NX2_DMA_READBACK_FLUSH=0
+
+# Vulkan pipeline preloading: asynchronously pre-build recorded pipelines in background workers at boot (Selevet port, default on; set to 0 to disable).
+#EDEN_NX2_PIPELINE_PRELOAD=0
+
+# Switch 2 Ampere tensor emulation: synthesize Maxwell collective TENSOR_MUL_ADD for HMMA compute shaders (Splatoon, DK, etc.; default on; set to 0 to disable).
+#EDEN_NX2_TENSOR=0
+
+# Donkey Kong Bananza: cap framerate to 60 FPS in PaceToVblank (default on; set to 0 to allow uncapped framerates).
+#EDEN_NX2_DK_60FPS=0

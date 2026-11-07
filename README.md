@@ -127,8 +127,8 @@ off for that game.
 | Mario Kart World | Vulkan, GPU accuracy Fast, asynchronous shaders, reactive flushing off, FIFO Relaxed VSync, handheld mode, Bilinear, FXAA, dynamic FPS off by default (swap interval uncap 1), VRR off by default (`EDEN_NX2_REPORT_VRR=0`), uncompressed ASTC, CPU/DMA Unsafe |
 | Ocarina of Time | Vulkan, asynchronous shaders, Max Resolution & Dynamic FPS patches enabled, AMD unoptimized compilation for stall shaders, SSBO alignment sync |
 | Donkey Kong Bananza | Vulkan, asynchronous shaders, HMMA compute emulation, geometry shader generic masking, optional 30 FPS lock (`EDEN_NX2_DK_30FPS=1`) |
-| Pokémon Pokopia | Vulkan, asynchronous shaders, far shadow cascades skipped (`EDEN_NX2_SHADOW_FAR=1`), unpaced storage reads |
-| Splatoon Raiders | Vulkan, asynchronous shaders |
+| Pokémon Pokopia | Vulkan, asynchronous shaders, far shadow cascades enabled by default, accelerated DMA readback flush for photos (`EDEN_NX2_DMA_READBACK_FLUSH=1`), unpaced storage reads |
+| Splatoon Raiders | Vulkan, asynchronous shaders, Maxwell TENSOR_MUL_ADD emulation for HMMA compute shaders (`EDEN_NX2_TENSOR=1`) |
 
 ## Recommended settings per game
 
@@ -256,7 +256,11 @@ One `NAME=VALUE` per line. Restart Hortensia after editing.
 | `EDEN_NX2_SYNC_SKIP` | `1` | Skip scanning untouched 4 MiB buffer tracker regions (`=0` off) |
 | `EDEN_NX2_DEFER_UPLOADS` | `1` | Read large texture uploads on Vulkan worker thread (`=0` off) |
 | `EDEN_NX2_PIPELINE_SKIP` | `1` | Keep CurrentGraphicsPipeline when Maxwell3D regs unchanged (`=0` off) |
-| `EDEN_NX2_SHADOW_FAR` | `1` (Pokopia) | Skip Pokémon Pokopia far shadow cascade draws (`=0` keep) |
+| `EDEN_NX2_SHADOW_FAR` | `1` (Pokopia) | Draw Pokémon Pokopia far shadow cascade (`=0` skip for ~17% less GPU work) |
+| `EDEN_NX2_DMA_READBACK_FLUSH` | `1` (Pokopia) | Flush accelerated image-to-buffer copies to prevent banded photos (`=0` off) |
+| `EDEN_NX2_PIPELINE_PRELOAD` | `1` | Asynchronously pre-build Vulkan pipelines in background at boot (`=0` off) |
+| `EDEN_NX2_TENSOR` | `1` | Emulate Ampere HMMA with collective TENSOR_MUL_ADD on Maxwell (`=0` off) |
+| `EDEN_NX2_DK_60FPS` | `1` (DK) | Cap Donkey Kong Bananza framerate at 60 FPS in PaceToVblank (`=0` uncapped) |
 | `EDEN_NX2_UPSCALE_REPLACE` | `1` (OOT) | Replace OOT title neural upscale with direct surface copy (`=0` off) |
 | `EDEN_NX2_HIGH_PRIORITY` | `1` | Run emulator process at high priority (`=0` normal) |
 | `EDEN_TIMING_COARSE` | `1` | Sleep timer thread during long waits (`=0` precise waits) |

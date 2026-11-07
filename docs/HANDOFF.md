@@ -588,3 +588,11 @@ ebase/smileytatsu.
   - **`c9950fca40`** : Implémentation du service `pl:u` commande 2100 (`OpenFont`) et conservation de la mémoire de transfert pour Switch 2.
   - **`c7d26dc2` (IMAD.HI)** : Vérification effectuée : notre implémentation dans `lower_to_maxwell.h` est plus complète que celle d'Orchid (gère déjà les produits larges et signés ainsi que les paires 64 bits `c_low` et `c_high = c + 1` pour les 6 opcodes).
   - **ZendNevs** : Dépôt public sans sources C++ complètes (releases seulement) ; ses patchs de dynamic FPS ont déjà été intégrés via `monteger8/Eglantine-DKB` dans `nso.cpp` et `settings.h`.
+
+- **Préparation finale v1.0.0 & Bilan des intégrations** :
+  - **Correction `integer_floating_point_conversion.cpp`** : Remplacement de l'appel `v.env.HasNativeInstructions()` par `v.env.IsNativeProgram()` (conformité avec l'architecture `Shader::Environment` de SmileyTatsu).
+  - **Extension des descripteurs SSBO à 64 bindings (`f57593d805` / jpkto)** : Portage de la limite `Info::MAX_SSBOS = 64` et passage des masques de liaison de tampons de stockage en `u64` dans `buffer_cache_base.h` et `buffer_cache.h` (élimination des pertes de feuillage et d'herbe sous OoT).
+  - **Prise en charge des régions DLSS actives et inversion verticale (Orchid)** : Ajout de `native_upscale.h` (`DecodeNativeUpscaleRegions`) et de l'inversion verticale bit 18 (`android::BufferTransformFlags::FlipV`).
+  - **Documentation des commutateurs d'environnement** : Mise à jour exhaustive de `dist/nx2_switches.txt` et `README.md` avec `EDEN_NX2_DMA_READBACK_FLUSH`, `EDEN_NX2_PIPELINE_PRELOAD`, `EDEN_NX2_TENSOR`, `EDEN_NX2_DK_60FPS`, `EDEN_NX2_SHADOW_FAR`.
+  - **Rédaction des notes de version v1.0.0** : Fichier `docs/RELEASE_NOTES_v1.0.0.md` rédigé en anglais, détaillant l'ensemble des correctifs, ports, performances mesurées et réglages par jeu.
+  - **Vérifications préalables** : Zéro marqueur de conflit dans les fichiers texte, aucun script temporaire commité, isolation stricte des patchs spécifiques jeu (PBFLUSH, RESETFIX, limite 60 FPS) aux identifiants de programme correspondants.
