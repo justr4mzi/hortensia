@@ -216,6 +216,8 @@ public:
 
     void Deserialize(std::ifstream& file);
 
+    [[nodiscard]] size_t MemorySize() const;
+
     /// See GenericEnvironment::StoragePointerSlots.
     void StoragePointerSlots(std::vector<u64>& pointers, std::vector<u64>& null_slots) const;
 

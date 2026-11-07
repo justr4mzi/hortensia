@@ -79,6 +79,11 @@ public:
         return back_running.load(std::memory_order_acquire);
     }
 
+    void SetIdleHook(void (*hook)(void*), void* argument) {
+        idle_hook = hook;
+        idle_argument = argument;
+    }
+
     /// Starts the back thread once the split is wanted (EDEN_NX2_SPLIT=1, a Switch 2 title,
     /// commands read without cache flushes). Called by the front between commands.
     void MaybeStart(Core::System& system);
@@ -243,6 +248,8 @@ private:
     alignas(128) std::atomic<u64> wait_target{~u64{0}};
     alignas(128) std::atomic<bool> back_waiting{};
     std::atomic<bool> back_running{};
+    void (*idle_hook)(void*){};
+    void* idle_argument{};
     std::atomic<u32> wake{};
     std::jthread back_thread;
 };

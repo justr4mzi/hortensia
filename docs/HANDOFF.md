@@ -642,3 +642,15 @@ ebase/smileytatsu.
     - Remplacement de l'appel erroné `w.size()` par `w[8]` directement (`w` étant un pointeur brut `const u32*` retourné par `ctx.CommandBuffer()`).
   - **Élimination de la redéfinition de variable dans `vk_graphics_pipeline.cpp`** :
     - Suppression de la double déclaration `const bool unoptimized` dans `GraphicsPipeline::MakePipeline` en fusionnant l'application du flag `VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT` pour les GPU AMD propriétaires.
+
+
+## Section 16 (2026-11-07) : Finalisation des symboles pipeline cache, shader environment & gpu split
+
+- **Résolution des trois derniers points de compilation CI (run 42395778412)** :
+  - **Ordre d'initialisation des membres dans `PipelineCache` (`src/video_core/renderer_vulkan/vk_pipeline_cache.cpp`)** :
+    - Placement de `background_pipelines` avant `serialization_thread` dans la liste d'initialisation du constructeur pour respecter l'ordre exact de déclaration de `vk_pipeline_cache.h` (résolution de `-Werror,-Wreorder-ctor` sous Clang).
+  - **Implémentation de `MemorySize` sur `FileEnvironment` (`src/video_core/shader_environment.h`, `shader_environment.cpp`)** :
+    - Ajout de la méthode `[[nodiscard]] size_t MemorySize() const` calculant l'empreinte mémoire dynamique (code instructions et tables de hachage associées) requise par `background_pipelines.Add` dans `vk_pipeline_cache.cpp`.
+  - **Prise en charge de `SetIdleHook` dans `GpuSplit` (`src/video_core/gpu_split.h`, `gpu_split.cpp`)** :
+    - Ajout de `SetIdleHook(void (*hook)(void*), void* argument)` et stockage des pointeurs associés `idle_hook` / `idle_argument`.
+    - Déclenchement du hook dans `BackLoop` avant mise en veille et réinitialisation dans `Stop()`, satisfaisant l'enregistrement de `RasterizerVulkan` (`VideoCommon::GpuSplit::Get().SetIdleHook(...)`).

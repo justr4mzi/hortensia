@@ -150,6 +150,8 @@ void GpuSplit::Stop() {
     published.store(0, std::memory_order_relaxed);
     consumed.store(0, std::memory_order_relaxed);
     back_waiting.store(false, std::memory_order_relaxed);
+    idle_hook = nullptr;
+    idle_argument = nullptr;
 }
 
 u64* GpuSplit::ReserveSlow(size_t words) {
@@ -363,6 +365,10 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
             // The front usually sends more within microseconds: spin briefly before sleeping.
             for (u32 spins = 0; spins < 8192 && available == read_position; ++spins) {
                 Pause();
+                available = published.load(std::memory_order_acquire);
+            }
+            if (available == read_position && idle_hook != nullptr) {
+                idle_hook(idle_argument);
                 available = published.load(std::memory_order_acquire);
             }
             if (available == read_position) {
