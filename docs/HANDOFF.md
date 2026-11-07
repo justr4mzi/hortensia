@@ -596,3 +596,19 @@ ebase/smileytatsu.
   - **Documentation des commutateurs d'environnement** : Mise à jour exhaustive de `dist/nx2_switches.txt` et `README.md` avec `EDEN_NX2_DMA_READBACK_FLUSH`, `EDEN_NX2_PIPELINE_PRELOAD`, `EDEN_NX2_TENSOR`, `EDEN_NX2_DK_60FPS`, `EDEN_NX2_SHADOW_FAR`.
   - **Rédaction des notes de version v1.0.0** : Fichier `docs/RELEASE_NOTES_v1.0.0.md` rédigé en anglais, détaillant l'ensemble des correctifs, ports, performances mesurées et réglages par jeu.
   - **Vérifications préalables** : Zéro marqueur de conflit dans les fichiers texte, aucun script temporaire commité, isolation stricte des patchs spécifiques jeu (PBFLUSH, RESETFIX, limite 60 FPS) aux identifiants de programme correspondants.
+
+## Section 13 (2026-11-07) : Déblocage multi-plateforme final (MSVC, MinGW, ARM64) et veille forks upstream
+
+- **Corrections de compilation multi-plateforme (commit `24cfdb7f3a`)** :
+  - **Inclusion de `shader_info.h` dans `buffer_cache_base.h`** : Rétablissement de `#include "shader_recompiler/shader_info.h"` pour définir `Shader::Info::MAX_SSBOS` sur les cibles Linux ARM64, macOS Apple Silicon et MinGW PGO (qui déclaraient `use of undeclared identifier 'Shader'`).
+  - **Restauration de `FindNativeUpscaleOutput` et `FindNativeUpscaleSlots` dans `native_upscale.h`** : Conservation de ces utilitaires requis par `kepler_compute.cpp` (remplacement réseau vidéo OOT) aux côtés des structures de décodage DLSS (`DecodeNativeUpscaleRegions`).
+  - **Suppression du doublon `AlignedVectorAccess` dans `emit_spirv_memory.cpp`** : L'implémentation active étant déjà fournie par `VectorViewIsExact`, la définition orpheline dans le namespace anonyme levait l'erreur MSVC stricte `C5245: unreferenced function with internal linkage has been removed`. Sa suppression débloque le job MSVC (`windows-x86_64`).
+
+- **Veille des dépôts et forks upstream** :
+  - **Lichii nx2 PR #551 (`6645721f2c`)** : Merge récent sur la reconstruction des pipelines compute dont les slots de pointeurs étaient nuls à la traduction et l'extension à 64 buffers de stockage. Vérification effectuée : Hortensia intègre déjà ces deux volets (`vk_pipeline_cache.cpp` et `buffer_cache_base.h`).
+  - **Orchid main (`7655f3edb1`, `fdb103e78c`)** : Ajout d'un fallback opt-in expérimental pour dumps Xenoblade à index multiples (`ORCHID_XENOBLADE_ROMFS_FALLBACK`). Sans impact sur notre arbre.
+  - **Lichii `capy/mesh-shader-fallback`** : Prototype d'émulation de mesh shaders pour GPU sans support natif de `VK_EXT_mesh_shader`. À suivre pour de futures évolutions.
+
+- **Supervision CI en cours** :
+  - Run GitHub Actions `42391714381` déclenché sur la branche `rebase/smileytatsu` (commit `24cfdb7f3a`).
+  - Suivi continu des 6 jobs de compilation jusqu'à validation complète.
