@@ -391,13 +391,18 @@ namespace {
 // of RAM for the session) and copied it whole at each save, which stalled frames; pipelines built
 // no slower without it.
 bool DriverCachesPipelines(const Device& device) {
-    switch (device.GetDriverID()) {
-    case VK_DRIVER_ID_NVIDIA_PROPRIETARY:
-    case VK_DRIVER_ID_AMD_PROPRIETARY:
-        return true;
-    default:
-        return false;
+    static const int force_cache = [] {
+        const char* value = std::getenv("EDEN_FORCE_VULKAN_PIPELINE_CACHE");
+        return value == nullptr ? -1 : (value[0] != '0' ? 1 : 0);
+    }();
+    if (force_cache == 1) {
+        return false; // Force use_vulkan_pipeline_cache to true
     }
+    if (force_cache == 0) {
+        return true;
+    }
+    // Return false so vulkan_pipelines.bin is preserved and reused across boots on AMD and all drivers
+    return false;
 }
 } // Anonymous namespace
 
@@ -419,7 +424,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
       workers(device.HasBrokenParallelShaderCompiling() ? 1ULL : GetTotalPipelineWorkers(),
               "VkPipelineBuilder", {}, Common::ThreadPlacement::Background),
       serialization_thread(1, "VkPipelineSerialization", {},
-                           Common::ThreadPlacement::Background) {
+                           Common::ThreadPlacement::Background),
+      background_pipelines{64, 16 * 1024 * 1024, device.HasBrokenParallelShaderCompiling()} {
     const auto& float_control{device.FloatControlProperties()};
     const VkDriverId driver_id{device.GetDriverID()};
     const VkShaderStageFlags subgroup_stages{device.GetSubgroupSupportedStages()};
@@ -677,6 +683,15 @@ std::unordered_map<u64, u8> LoadUsedPipelines(const std::filesystem::path& path,
 // boot that ran out of memory never saved one and the next boot did the same.
 constexpr size_t MaxPipelinesWithoutUsedList = 3000;
 
+// Cached graphics pipelines built at boot whatever the list says (~0.45 MB of driver memory each).
+size_t MinPipelinesAlwaysBuilt() {
+    static const size_t min_built = [] {
+        const char* value = std::getenv("EDEN_NX2_MIN_PIPELINES_BUILT");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 2000ULL;
+    }();
+    return min_built;
+}
+
 // EDEN_NX2_PRELOAD_ALL_PIPELINES=1 builds every cached pipeline at boot, as before.
 bool PreloadAllPipelines() {
     static const bool all = [] {
@@ -688,6 +703,9 @@ bool PreloadAllPipelines() {
 } // Anonymous namespace
 
 PipelineCache::~PipelineCache() {
+    background_pipelines.Stop();
+    workers.WaitForRequests();
+    serialization_thread.WaitForRequests();
     SaveUsedPipelines();
     if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
@@ -924,6 +942,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         return;
     }
     if (!pipeline_cache_filename.empty()) {
+        background_pipelines.Stop();
+        workers.WaitForRequests();
         serialization_thread.WaitForRequests();
         if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
             SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
@@ -942,6 +962,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     used_pipelines = LoadUsedPipelines(used_pipelines_filename, MaxUsedPipelineAge(device));
     used_pipelines_saved = std::chrono::steady_clock::now();
     size_t skipped_pipelines = 0;
+    size_t deferred_pipelines = 0;
     size_t queued_graphics = 0;
 
     if (use_vulkan_pipeline_cache) {
@@ -1029,12 +1050,35 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         }
 
         const u64 hash = key.Hash();
-        disk_pipelines.insert(hash);
-        // Switch 2 titles stutter on pipelines built mid-game, so all of them are built at boot.
-        if (!PreloadAllPipelines() && !Settings::CurrentProgramIsSwitch2() &&
+        if (!disk_pipelines.insert(hash).second) {
+            return;
+        }
+        static const bool selevet_cache = [] {
+            const char* value = std::getenv("EDEN_SELEVET_PIPELINE_CACHE");
+            return value == nullptr || value[0] != '0';
+        }();
+        const bool skip_allowed = selevet_cache ? true : !Settings::CurrentProgramIsSwitch2();
+        if (!PreloadAllPipelines() && skip_allowed && queued_graphics >= MinPipelinesAlwaysBuilt() &&
             (used_pipelines.empty() ? queued_graphics >= MaxPipelinesWithoutUsedList
                                     : !used_pipelines.contains(hash))) {
             ++skipped_pipelines;
+            size_t capture_bytes = (envs.capacity() - envs.size()) * sizeof(FileEnvironment);
+            for (const auto& env : envs) {
+                capture_bytes += env.MemorySize();
+            }
+            if (background_pipelines.Add(
+                    key, capture_bytes, [this, key, envs = std::move(envs)]() mutable {
+                        ShaderPools pools;
+                        boost::container::static_vector<Shader::Environment*, 5> env_ptrs;
+                        for (auto& env : envs) {
+                            env_ptrs.push_back(&env);
+                        }
+                        auto pipeline =
+                            CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs), nullptr, false);
+                        return pipeline;
+                    })) {
+                ++deferred_pipelines;
+            }
             return;
         }
         ++queued_graphics;
@@ -1065,8 +1109,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
     if (skipped_pipelines != 0) {
         LOG_INFO(Render_Vulkan,
-                 "{} cached graphics pipelines are built when first needed",
-                 skipped_pipelines);
+                 "{} cached graphics pipelines skipped at boot, {} admitted for background prebuild",
+                 skipped_pipelines, deferred_pipelines);
     }
 
     std::unique_lock lock{state.mutex};
@@ -1087,6 +1131,11 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
 
     if (state.statistics) {
         state.statistics->Report();
+    }
+    if (stop_loading.stop_requested()) {
+        background_pipelines.Stop();
+    } else {
+        background_pipelines.Start(std::clamp<size_t>(GetTotalPipelineWorkers() / 4, 1, 2));
     }
 }
 
@@ -1179,7 +1228,10 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
     auto& pipeline{pair->second};
     if (is_new) {
         ReportNewPipelineKey(graphics_key);
-        pipeline = CreateGraphicsPipeline();
+        pipeline = background_pipelines.Take(graphics_key);
+        if (!pipeline) {
+            pipeline = CreateGraphicsPipeline();
+        }
     }
     if (!pipeline) {
         return nullptr;
