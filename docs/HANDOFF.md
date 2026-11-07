@@ -563,3 +563,9 @@ Les remotes `pokedinner` (`https://git.eden-emu.dev/Franseven/PokeDinner-a-Eglan
   - `.github/ISSUE_TEMPLATE/*.yml` : Descriptions et labels mis à jour vers Hortensia.
   - `dist/packaging/arch/eglantine-git` renommé en `dist/packaging/arch/hortensia-git` avec `PKGBUILD` et `README.md` adaptés.
   - Conservation du commit `e2540de71b` (`CONTRIBUTING.md`) et préservation des identifiants internes requis (`EGLANTINE_STREAMLINE`, `eglantine.profdata`, migration de profil `EdenLegacy`/`Eglantine`).
+
+- **Correction CI emit_spirv_instructions.h (commit e1f61dda91)** :
+  - Déclaration anticipée de struct Program; dans le namespace Shader::IR pour résoudre l'erreur 
+o type named 'Program' in namespace 'Shader::IR' survenue dans DefineSoftwareMatrixFunctions.
+  - Déclenchement de la suite de compilation CI (run 42389131050) sur la branche 
+ebase/smileytatsu.
