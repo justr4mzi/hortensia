@@ -32,6 +32,7 @@
 #include "video_core/memory_manager.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/query_dma.h"
+#include "video_core/gpu_split.h"
 #include "video_core/macro.h"
 
 #include "common/assert.h"

@@ -75,6 +75,9 @@ public:
     [[nodiscard]] static bool OnBackThread() {
         return on_back_thread;
     }
+    [[nodiscard]] bool BackRunning() const {
+        return back_running.load(std::memory_order_acquire);
+    }
 
     /// Starts the back thread once the split is wanted (EDEN_NX2_SPLIT=1, a Switch 2 title,
     /// commands read without cache flushes). Called by the front between commands.
@@ -239,6 +242,7 @@ private:
     /// A position the front waits for (WaitFor): the back stores `consumed` once past it.
     alignas(128) std::atomic<u64> wait_target{~u64{0}};
     alignas(128) std::atomic<bool> back_waiting{};
+    std::atomic<bool> back_running{};
     std::atomic<u32> wake{};
     std::jthread back_thread;
 };
