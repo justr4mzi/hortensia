@@ -601,6 +601,14 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
     if (profile.support_cooperative_hmma_16x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
     }
+    if (const size_t heavy_words = HeavySkipWords(); heavy_words != 0) {
+        LOG_INFO(Render_Vulkan,
+                 "Draws of Switch 2 pipelines with {} or more instructions are skipped while "
+                 "they build (EDEN_NX2_HEAVY_SKIP=0 turns it off)",
+                 heavy_words);
+    } else {
+        LOG_INFO(Render_Vulkan, "Heavy pipeline skip off (EDEN_NX2_HEAVY_SKIP=0)");
+    }
 
     host_info = Shader::HostTranslateInfo{
         .min_ssbo_alignment = device.GetStorageBufferAlignment(),
@@ -811,7 +819,7 @@ void PipelineCache::SaveUsedPipelines() {
 }
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
-
+    heavy_skipped_lookup = false;
     if (!RefreshStages(graphics_key.unique_hashes)) {
         current_pipeline = nullptr;
         return nullptr;
@@ -1402,7 +1410,8 @@ void PipelineCache::EvictUnusedPipelines() {
 }
 
 void PipelineCache::NoteClear(u64 color_address, u64 depth_address) {
-    if (HeavySkipWords() == 0) {
+    // Only native draws read the clears (CurrentTargetIsRedrawn).
+    if (HeavySkipWords() == 0 || !maxwell3d->GetNativeMacroEngine().native_turing) {
         return;
     }
     if (color_address != 0) {
@@ -1465,13 +1474,15 @@ bool PipelineCache::CurrentTargetIsRedrawn() {
 }
 
 /// Returns `pipeline` when it is built or the current draw must wait for it, and nullptr when the
-/// draw may be skipped while it builds (asynchronous shaders; native draws only with
-/// EDEN_NX2_ASYNC_DISCARD=1; heavy pipelines with EDEN_NX2_HEAVY_SKIP). Each nullptr returned for
-/// an unbuilt pipeline is counted for the log.
+/// draw may be skipped while it builds: a heavy native pipeline (HeavySkipWords), or with
+/// asynchronous shaders the legacy heuristic and native draws by the native_async_draws setting or
+/// EDEN_NX2_ASYNC_DISCARD=1. Each nullptr returned for an unbuilt pipeline is counted for the log.
 GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) {
     static const size_t heavy_skip_words = HeavySkipWords();
-    // Tracked on every draw so a target's history is known before a heavy pipeline needs it.
-    const bool redrawn = heavy_skip_words != 0 && CurrentTargetIsRedrawn();
+    const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
+    // Tracked on every native draw so a target's history is known before a heavy pipeline needs
+    // it.
+    const bool redrawn = heavy_skip_words != 0 && native && CurrentTargetIsRedrawn();
     if (pipeline->IsBuilt()) {
         if (pipeline->heavy_skipped_draws != 0) {
             LOG_INFO(Render_Vulkan,
@@ -1484,6 +1495,50 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) {
             pipeline->heavy_skipped_draws = 0;
         }
         return pipeline;
+    }
+    pipeline->hold_reason = !native || heavy_skip_words == 0 ? 0 : 1;
+    {
+        const auto& regs = maxwell3d->regs;
+        const bool color = regs.rt_control.count > 0 &&
+                           regs.rt[0].format != Tegra::RenderTargetFormat::NONE;
+        pipeline->hold_target_color = color;
+        pipeline->hold_target_width = color ? regs.rt[0].width : regs.zeta_size.width;
+        pipeline->hold_target_height = color ? regs.rt[0].height : regs.zeta_size.height;
+    }
+    // A heavy pipeline takes the driver 0.5-5 s to build. Its draws are skipped meanwhile, with or
+    // without asynchronous shaders, unless skipping would lose data for good. A draw kept that way
+    // waits, or with asynchronous shaders goes to the native_async_draws setting like any other.
+    switch (DecideHeavyPending(
+        {
+            .native = native,
+            .source_words = pipeline->SourceWords(),
+            .keeps_data = pipeline->WritesStorage() || pipeline->UsesTransformFeedback(),
+            .target_redrawn = redrawn,
+            .target_not_cleared = last_target_reason == TargetReason::NotCleared,
+        },
+        heavy_skip_words)) {
+    case HeavyPendingAction::NotHeavy:
+        break;
+    case HeavyPendingAction::HoldStorage:
+        pipeline->hold_reason = 2;
+        ++heavy_skip_counters.held_storage;
+        break;
+    case HeavyPendingAction::HoldNotCleared:
+        pipeline->hold_reason = 3;
+        ++heavy_skip_counters.held_not_cleared;
+        break;
+    case HeavyPendingAction::HoldNewTarget:
+        pipeline->hold_reason = 4;
+        ++heavy_skip_counters.held_new_target;
+        break;
+    case HeavyPendingAction::Skip:
+        if (pipeline->heavy_skipped_draws++ == 0) {
+            pipeline->heavy_skip_begin = std::chrono::steady_clock::now();
+            ++heavy_skip_counters.pipelines;
+        }
+        ++heavy_skip_counters.draws;
+        heavy_skipped_lookup = true;
+        return nullptr;
     }
     if (!use_asynchronous_shaders) {
         return pipeline;
@@ -1500,41 +1555,6 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) {
         return enabled;
     }();
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
-    const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
-    pipeline->hold_reason = !native || heavy_skip_words == 0 ? 0 : 1;
-    {
-        const auto& regs = maxwell3d->regs;
-        const bool color = regs.rt_control.count > 0 &&
-                           regs.rt[0].format != Tegra::RenderTargetFormat::NONE;
-        pipeline->hold_target_color = color;
-        pipeline->hold_target_width = color ? regs.rt[0].width : regs.zeta_size.width;
-        pipeline->hold_target_height = color ? regs.rt[0].height : regs.zeta_size.height;
-    }
-    if (native && heavy_skip_words != 0 && pipeline->SourceWords() >= heavy_skip_words) {
-        // A heavy pipeline takes the driver 0.5-5 s to build; its draws are skipped meanwhile
-        // unless skipping would lose data for good.
-        if (pipeline->WritesStorage() || pipeline->UsesTransformFeedback()) {
-            pipeline->hold_reason = 2;
-            ++heavy_skip_counters.held_storage;
-            return pipeline;
-        }
-        if (!redrawn) {
-            if (last_target_reason == TargetReason::NotCleared) {
-                pipeline->hold_reason = 3;
-                ++heavy_skip_counters.held_not_cleared;
-            } else {
-                pipeline->hold_reason = 4;
-                ++heavy_skip_counters.held_new_target;
-            }
-            return pipeline;
-        }
-        if (pipeline->heavy_skipped_draws++ == 0) {
-            pipeline->heavy_skip_begin = std::chrono::steady_clock::now();
-            ++heavy_skip_counters.pipelines;
-        }
-        ++heavy_skip_counters.draws;
-        return nullptr;
-    }
     // The environment variable wins over the setting; the setting is read per call.
     NativePendingMode mode = NativePendingMode::Wait;
     if (native) {
@@ -1878,7 +1898,10 @@ void ReportRuntimePipeline(const char* kind, std::chrono::steady_clock::time_poi
                  "{:.1f} ms of draws held for unbuilt pipelines",
                  count, ms(total), ms(take(runtime_spirv_ns[0])), ms(take(runtime_spirv_ns[1])),
                  ms(GraphicsPipeline::TakeHoldTime()));
-        if (HeavySkipWords() != 0) {
+        // Only when a heavy draw was judged, so titles without native pipelines log nothing.
+        const HeavySkipCounters& heavy = heavy_skip_counters;
+        if (heavy.draws != 0 || heavy.held_storage != 0 || heavy.held_not_cleared != 0 ||
+            heavy.held_new_target != 0) {
             LOG_INFO(Render_Vulkan,
                      "Nx2Perf heavy_skip in the last 10 s: {} draw lookups skipped for {} heavy "
                      "pipelines; held instead: {} (writes storage), {} (target not cleared this frame), "

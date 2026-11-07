@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -17,19 +18,13 @@
 
 namespace Vulkan {
 
-/// EDEN_NX2_HEAVY_SKIP: a native pipeline of at least this many converted instructions (all
-/// stages) has its draws skipped while the driver builds it, instead of holding every draw
-/// behind it. "1" picks 4000; 0 or unset turns it off. In a demanding Switch 2 test title's first
-/// visits every driver build over 500 ms was above 4000, and they made ~90% of the compile time.
+/// A native pipeline of at least this many converted instructions (all stages) has its draws
+/// skipped while the driver builds it, instead of holding every draw behind it. On by default:
+/// Ocarina of Time on an RX 9070 XT held draws 31 ms per new pipeline with it and 111-124 ms
+/// without, worst frame 0.9 s against 7-11 s. EDEN_NX2_HEAVY_SKIP=0 turns it off and
+/// EDEN_NX2_HEAVY_SKIP=<n> sets the threshold (see ParseHeavySkipWords).
 inline size_t HeavySkipWords() {
-    static const size_t words = [] {
-        const char* value = std::getenv("EDEN_NX2_HEAVY_SKIP");
-        if (!value || !*value) {
-            return size_t{0};
-        }
-        const size_t parsed = static_cast<size_t>(std::strtoull(value, nullptr, 10));
-        return parsed == 1 ? size_t{4000} : parsed;
-    }();
+    static const size_t words = ParseHeavySkipWords(std::getenv("EDEN_NX2_HEAVY_SKIP"));
     return words;
 }
 

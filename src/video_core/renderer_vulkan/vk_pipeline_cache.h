@@ -138,6 +138,12 @@ public:
     /// EDEN_NX2_HEAVY_SKIP: a clear of these targets (0 = none) in the current frame.
     void NoteClear(u64 color_address, u64 depth_address);
 
+    /// Whether the last CurrentGraphicsPipeline returned nullptr because a heavy pipeline is still
+    /// building (its draws are skipped on purpose, not lost to a failure).
+    [[nodiscard]] bool HeavySkippedLookup() const noexcept {
+        return heavy_skipped_lookup;
+    }
+
     [[nodiscard]] ComputePipeline* CurrentComputePipeline();
 
     void LoadDiskResources(u64 title_id, std::stop_token stop_loading,
@@ -221,6 +227,7 @@ private:
     enum class TargetReason { Redrawn, NotCleared, NewTarget };
     TargetReason last_target_reason{TargetReason::NotCleared};
     std::unordered_map<u64, u64> cleared_frames; ///< Target address -> last frame it was cleared
+    bool heavy_skipped_lookup{}; ///< See HeavySkippedLookup
     std::deque<std::pair<u64, std::unique_ptr<GraphicsPipeline>>> evicted_pipelines; ///< (tick, pipeline)
     std::unordered_set<u64> used_and_evicted; ///< Key hashes of pipelines used this session, evicted since
 

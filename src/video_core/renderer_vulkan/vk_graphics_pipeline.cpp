@@ -758,7 +758,11 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     }
     if (!IsBuilt()) {
         // Wait for the pipeline to be built
-        scheduler.Record([this](vk::CommandBuffer) {
+        // The hold details are copied now: a later draw of this pipeline rewrites them on the GPU
+        // thread while this command waits on the scheduler thread.
+        scheduler.Record([this, reason = hold_reason, target_color = hold_target_color,
+                          target_width = hold_target_width,
+                          target_height = hold_target_height](vk::CommandBuffer) {
             const auto begin = std::chrono::steady_clock::now();
             // Claim the build here even for worker-only builds: the queue is FIFO, so a held
             // draw otherwise waits behind every pipeline queued before it (title 1: 1-2 s), and
@@ -777,9 +781,8 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                          "Nx2Perf held_draw: {:016x} ({} instructions) held {:.0f} ms: {} ({} {}x{})",
                          key.Hash(), source_words,
                          std::chrono::duration<double, std::milli>(held).count(),
-                         reasons[std::min<size_t>(hold_reason, reasons.size() - 1)],
-                         hold_target_color ? "color" : "depth", hold_target_width,
-                         hold_target_height);
+                         reasons[std::min<size_t>(reason, reasons.size() - 1)],
+                         target_color ? "color" : "depth", target_width, target_height);
             }
         });
     }
