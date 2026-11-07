@@ -569,3 +569,22 @@ Les remotes `pokedinner` (`https://git.eden-emu.dev/Franseven/PokeDinner-a-Eglan
 o type named 'Program' in namespace 'Shader::IR' survenue dans DefineSoftwareMatrixFunctions.
   - Déclenchement de la suite de compilation CI (run 42389131050) sur la branche 
 ebase/smileytatsu.
+
+- **Portage des nouveautés Pokopia (notsapinho)** :
+  - **`maxwell_dma: flush accelerated image-to-buffer copies on Switch 2 (Pokopia's banded photos)` (`7dde4f15`)** : Vidage systématique de la région mémoire hôte vers la mémoire invitée après les copies image-vers-tampon accélérées sur Switch 2 (`memory_manager.FlushRegion`), éliminant les bandes noires et lignes résiduelles lors de l'encodage JPEG CPU des photos.
+  - **`vk_rasterizer: draw Pokopia's far shadow cascade again (skip is opt-in)` (`84e061ce`)** : Restauration du rendu de la cascade d'ombre lointaine de Pokopia par défaut (le saut de cascade devient un réglage optionnel via `EDEN_NX2_SHADOW_FAR=0`), supprimant la coupure nette des ombres et le ciel noir.
+
+- **Portage et vérification des nouveautés Lichii nx2** :
+  - **#515 (`1bd370346d` / `a10e5f5569`)** : Support complet des mesh shaders émettant des topologies de points (`OutputPoints`) ou de lignes (`OutputLinesEXT`), avec gestion de `point_size` fixe et variables d'index primitives correspondantes.
+  - **#524 (`ef22dfe338` / `c0a03141a4`)** : Désactivation du loop unswitching sur GCC 13+ (`-fno-unswitch-loops`) prévenant la perte des uploads macro dans `FrontCallMultiMethod` sous Linux.
+  - **#519 (`a835cdba21`)** : Analyse effectuée : correctif spécifique aux types de capture micro Switch 2 et aux digests sha256 de l'auto-updater Lichii (non présents dans notre arbre de build).
+  - **#526 (`91d1aada6b`)** : Analyse effectuée : bascule du workflow CI Windows de MinGW vers clang-cl ThinLTO avec un profil IR MSVC `lichii-windows.profdata` enregistré sur OOT. Hortensia conserve son pipeline hybride validé MinGW PGO AVX2 + Windows MSVC.
+  - **#537 (`b83cd6e0b7`)** : Analyse effectuée : Hortensia dispose déjà de son propre bouton interactif avec menu contextuel et commutation temps-réel pour la génération d'images dans la barre d'état.
+  - **#410 (`b8d81e2097`)** : Analyse effectuée : portage conditionné aux pools de tables de pointeurs Lichii (#351) ; notre recompiler gère déjà les candidats de pointeurs multiples.
+  - **#192 (`077e455c85`)** : Vérification effectuée : déjà présent dans `src/video_core/shader_environment.cpp:272` (`CanBeSerialized` retourne `!has_unbound_instructions`).
+
+- **Portage et vérification Orchid 0.9.0 & ZendNevs** :
+  - **`8ebad36f58`** : Affichage permanent de la vitesse d'émulation dans la barre d'état même avec le multicœur activé.
+  - **`c9950fca40`** : Implémentation du service `pl:u` commande 2100 (`OpenFont`) et conservation de la mémoire de transfert pour Switch 2.
+  - **`c7d26dc2` (IMAD.HI)** : Vérification effectuée : notre implémentation dans `lower_to_maxwell.h` est plus complète que celle d'Orchid (gère déjà les produits larges et signés ainsi que les paires 64 bits `c_low` et `c_high = c + 1` pour les 6 opcodes).
+  - **ZendNevs** : Dépôt public sans sources C++ complètes (releases seulement) ; ses patchs de dynamic FPS ont déjà été intégrés via `monteger8/Eglantine-DKB` dans `nso.cpp` et `settings.h`.
