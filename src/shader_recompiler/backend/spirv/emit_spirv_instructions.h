@@ -15,6 +15,7 @@ enum class Attribute : u64;
 enum class Patch : u64;
 class Inst;
 class Value;
+struct Program;
 } // namespace Shader::IR
 
 namespace Shader::Backend::SPIRV {
