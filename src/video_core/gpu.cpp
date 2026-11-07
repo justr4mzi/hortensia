@@ -33,6 +33,7 @@
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/engines/maxwell_dma.h"
 #include "video_core/gpu.h"
+#include "video_core/gpu_timestamp.h"
 #include "video_core/gpu_thread.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
@@ -199,11 +200,20 @@ struct GPU::Impl {
     }
 
     [[nodiscard]] u64 GetTicks() const {
+        if (g_nx2_ampere.load(std::memory_order_relaxed)) {
+            return Tegra::ReadGpuTimestamp(system.CoreTiming(), true,
+                                           Settings::values.gpu_clock.GetValue(),
+                                           ampere_anchor.load(std::memory_order_relaxed));
+        }
         const u64 gpu_tick = system.CoreTiming().GetGPUTicks();
         return gpu_tick / GpuClockMultiplier(EffectiveGpuClock(Settings::values.gpu_clock.GetValue(), program_id_for_clock.load(std::memory_order_relaxed)));
     }
 
     void RendererFrameEndNotify() {
+        ampere_anchor.store(
+            AmpereAnchor::At(static_cast<u64>(system.CoreTiming().GetGlobalTimeNs().count()),
+                             Settings::values.gpu_clock.GetValue()),
+            std::memory_order_relaxed);
         system.GetPerfStats().EndGameFrame();
     }
 
@@ -395,6 +405,7 @@ struct GPU::Impl {
     std::atomic<u32> pending_sync_requests{};
     std::atomic<u64> current_sync_fence{};
     std::atomic<u64> program_id_for_clock{};
+    std::atomic<Tegra::AmpereAnchor> ampere_anchor{};
     u64 last_sync_fence{};
     std::mutex sync_request_mutex;
     std::condition_variable sync_request_cv;
