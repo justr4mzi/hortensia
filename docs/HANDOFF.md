@@ -616,3 +616,20 @@ ebase/smileytatsu.
     - Suppression de la déclaration doublon `void ClearDownload` à la ligne 562 de `buffer_cache_base.h` (rejetée par `-Werror` sur Clang Linux/macOS : `class member cannot be redeclared`).
     - Ajout de `#include "core/gpu_dirty_memory_manager.h"` dans `src/video_core/gpu.cpp` pour fournir la définition complète de `Core::GPUDirtyMemoryManager` requise lors de l'itération sur `std::span` dans `ForEachPendingCpuWrite`.
     - Run final en cours de compilation : GitHub Actions `42392516100`.
+
+
+## Section 14 (2026-11-07) : Résolution globale des symboles buffer cache & composite vi2, vérification d'ensemble
+
+- **Corrections des dernières erreurs de compilation (runs 42392065691 et 42393317992)** :
+  - **Gestion de `GPUDirtyMemoryManager` & `GpuSplit` (`src/core/gpu_dirty_memory_manager.h`, `src/video_core/macro.cpp`, `src/video_core/gpu_split.h/.cpp`)** :
+    - Rapatriement de l'implémentation complète de `Core::GPUDirtyMemoryManager` depuis `lichii/nx2` avec `std::mutex gather_guard`, `Overlaps(PAddr, size_t)` et verrous RAII pour résoudre l'ambiguïté de typage et les méthodes manquantes.
+    - Ajout de `#include "video_core/gpu_split.h"` dans `src/video_core/macro.cpp` pour lever le type incomplet `VideoCommon::GpuSplit` accédé via `owns_caches`.
+    - Ajout de la variable atomique `back_running` et de l'accesseur `BackRunning()` dans `gpu_split.h/.cpp`.
+  - **Correction du paramètre `flags` de présentation vi2 (`src/core/hle/service/nx2_gsv.h`)** :
+    - Déclaration de `Composite(u32 image_id, u32 fence_id, u32 fence_value, u32 shown_size, u32 flags = 0)` et passage du mot de drapeau `w.size() > 8 ? w[8] : 0` au point d'appel.
+    - Résout l'erreur `use of undeclared identifier 'flags'` lors du calcul du transform vertical (`BufferTransformFlags::FlipV`).
+  - **Harmonisation de `DownloadRangesMemory` & `pending_download_ranges` (`src/video_core/buffer_cache/buffer_cache_base.h`, `buffer_cache.h`)** :
+    - Déclaration de `void DownloadRangesMemory(std::span<const std::pair<DAddr, u64>> ranges);` dans `BufferCacheBase`.
+    - Remplacement complet de l'ancien `async_downloads` par `pending_download_ranges` conformément à Lichii #397 (`0c822822c1`) : remplissage dans `CommitAsyncFlushesHigh`, itération dans `PopAsyncBuffers`, soustraction dans `ClearDownload` et dépilement ordonné via `pending_download_ranges.pop_front()`.
+  - **Options de compilation Ninja `-k 0`** :
+    - Ajout du drapeau `-- -k 0` dans `.github/workflows/release-binaries.yml` afin d'obtenir la totalité des erreurs de compilation en une seule passe sur toutes les cibles CI.
