@@ -15,7 +15,13 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 if(YUZU_TESTS)
-    add_subdirectory(../tests/qt_compatibility ${CMAKE_BINARY_DIR}/qt_compatibility_tests)
+    # The bundled Windows Qt has no Test module.
+    find_package(Qt6 QUIET COMPONENTS Test)
+    if(Qt6Test_FOUND)
+        add_subdirectory(../tests/qt_compatibility ${CMAKE_BINARY_DIR}/qt_compatibility_tests)
+    else()
+        message(STATUS "Qt6 Test not found: skipping the compatibility report tests")
+    endif()
 endif()
 
 add_executable(yuzu

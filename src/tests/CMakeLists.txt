@@ -158,6 +158,14 @@ create_target_directory_groups(tests)
 target_link_libraries(tests PRIVATE common core audio_core input_common video_core frontend_common)
 target_link_libraries(tests PRIVATE ${PLATFORM_LIBRARIES} Catch2::Catch2WithMain Threads::Threads)
 
+if (MSVC)
+    # src/CMakeLists.txt makes these MSVC warnings errors for the emulator. The tests are only
+    # checked with clang and GCC, so they stay warnings here.
+    target_compile_options(tests PRIVATE
+        /w44062 /w44189 /w44265 /w44388 /w44389 /w44456 /w44457 /w44458 /w44459
+        /w44547 /w44549 /w44555 /w44826 /w45038 /w45233 /w45245)
+endif()
+
 if (TARGET dynarmic::dynarmic)
     target_sources(tests PRIVATE core/window_trace.cpp)
     target_link_libraries(tests PRIVATE dynarmic::dynarmic)
