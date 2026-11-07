@@ -725,8 +725,8 @@ bool BufferCache<P>::BindGraphicsStorageBuffer(size_t stage, size_t ssbo_index, 
             }
         }
     }
-    channel_state->enabled_storage_buffers[stage] |= 1U << ssbo_index;
-    channel_state->written_storage_buffers[stage] |= (is_written ? 1U : 0U) << ssbo_index;
+    channel_state->enabled_storage_buffers[stage] |= u64{1} << ssbo_index;
+    channel_state->written_storage_buffers[stage] |= u64{is_written ? 1U : 0U} << ssbo_index;
     if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
         if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
             ++channel_state->total_graphics_storage_buffers;
@@ -814,8 +814,8 @@ void BufferCache<P>::BindComputeStorageBuffer(size_t ssbo_index, u32 cbuf_index,
             }
         }
     }
-    channel_state->enabled_compute_storage_buffers |= 1U << ssbo_index;
-    channel_state->written_compute_storage_buffers |= (is_written ? 1U : 0U) << ssbo_index;
+    channel_state->enabled_compute_storage_buffers |= u64{1} << ssbo_index;
+    channel_state->written_compute_storage_buffers |= u64{is_written ? 1U : 0U} << ssbo_index;
     if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
         if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
             ++channel_state->total_compute_storage_buffers;
@@ -840,9 +840,8 @@ void BufferCache<P>::BindComputeStorageBuffer(size_t ssbo_index, u32 cbuf_index,
         }
         ssbo_addr = holder + indirect_offset;
     }
-    channel_state->compute_storage_buffers[ssbo_index] =
-        StorageBufferBinding(ssbo_addr, cbuf_index, is_written, kepler_compute->IsNativeMode(),
-                             indirect_offset != ~0U, true);
+    channel_state->compute_storage_buffers[ssbo_index] = StorageBufferBinding(
+        ssbo_addr, cbuf_index, is_written, kepler_compute->IsNativeMode(), indirect_offset != ~0U);
     if (indirect_offset != ~0U) {
         TraceTablePointer(true, 0, ssbo_index, cbuf_index, cbuf_offset, indirect_offset, holder,
                           channel_state->compute_storage_buffers[ssbo_index]);
@@ -2943,8 +2942,7 @@ void BufferCache<P>::TraceTablePointer(bool compute, size_t stage, size_t ssbo_i
 
 template <class P>
 Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index, bool is_written,
-                                             bool native_pointer, bool table_pointer,
-                                             bool compute) const {
+                                             bool native_pointer, bool table_pointer) const {
     const GPUVAddr gpu_addr = gpu_memory->Read<u64>(ssbo_addr);
 
     if (gpu_addr == 0) {
@@ -2965,8 +2963,8 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
     };
     constexpr size_t ways = 4;
     thread_local std::array<std::array<CachedBinding, ways>, 512> binding_cache{};
-    const u32 flags = (is_written ? 1U : 0U) | (native_pointer ? 2U : 0U) |
-                      (table_pointer ? 4U : 0U) | (compute ? 8U : 0U);
+    const u32 flags =
+        (is_written ? 1U : 0U) | (native_pointer ? 2U : 0U) | (table_pointer ? 4U : 0U);
     const size_t owner = gpu_memory->GetID() + 1;
     const u64 serial = gpu_memory->MapSerial();
     auto& set = binding_cache[((gpu_addr ^ next_qword ^ flags) * 0x9E3779B97F4A7C15ULL) >> 55];
@@ -2982,25 +2980,19 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
     }
     const Binding binding = [&]() -> Binding {
         u32 size = [&]() {
-            const u32 memory_layout_size =
-                static_cast<u32>(gpu_memory->GetMemoryLayoutSize(gpu_addr));
+            const u32 memory_layout_size = static_cast<u32>((std::min)(
+                u64{gpu_memory->GetMemoryLayoutSize(gpu_addr)}, u64{(std::numeric_limits<u32>::max)()}));
             // A pointer read from a table in memory is the base of an object pool, read anywhere in
-            // it (Ocarina of Time's grass instances lie 12-18 MiB past theirs): bound to the end of
-            // its mapping, up to 256 MiB. Its light probes, SH records ~104-122 MiB past their
-            // pointer, read 0 at 64 MiB: the volumetric fog lost its sky ambient (compute), and
-            // Kokiri Forest's water and foliage turned black after an area change (graphics). The
-            // 8 MiB cap made the grass reads return 0 and culled every blade. Written pools keep
-            // the cap: a write marks the whole binding GPU-modified.
+            // it: bound to the end of its mapping, as far as a storage buffer may reach (at most
+            // 1 GiB). Ocarina of Time's grass instances lie 12-18 MiB past theirs (an 8 MiB cap
+            // culled every blade), and its light probe records reach about 130 MiB past theirs: a
+            // 64 MiB cap left the far probes outside the binding, and the fog took one overbright
+            // constant from them. Written pools keep a cap: a write marks the whole binding
+            // GPU-modified.
             if (table_pointer && !is_written) {
-                // EDEN_NX2_GFX_TABLE_MIB=<1-1024> sets the graphics cap instead (testing).
-                static const u32 graphics_cap = [] {
-                    const char* text = std::getenv("EDEN_NX2_GFX_TABLE_MIB");
-                    const unsigned long mib = text ? std::strtoul(text, nullptr, 10) : 0;
-                    return mib > 0 && mib <= 1024 ? static_cast<u32>(mib << 20)
-                                                  : static_cast<u32>(256_MiB);
-                }();
-                return (std::min)(memory_layout_size,
-                                  compute ? static_cast<u32>(256_MiB) : graphics_cap);
+                const u64 reach = (std::min)(runtime.GetMaxStorageBufferRange(), u64{1_GiB});
+                const u32 limit = static_cast<u32>(reach - (std::min)(reach, u64{64_KiB}));
+                return (std::min)(memory_layout_size, limit);
             }
             // A native (Switch 2) compute program's pointer is bare: the word after it is another
             // parameter (a dimension, stride or texture handle), not an NVN buffer size. Taking it
@@ -3041,13 +3033,6 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         u32 binding_size = static_cast<u32>(cpu_end - *aligned_device_addr);
         if (is_written) {
             binding_size = aligned_size;
-        }
-        if constexpr (requires { runtime.GetMaxStorageBufferRange(); }) {
-            // A read-only pool's 256 MiB cap is above the 128 MiB every device guarantees.
-            // Only those are clamped, so no write is cut off.
-            if (table_pointer && !is_written) {
-                binding_size = (std::min)(binding_size, runtime.GetMaxStorageBufferRange());
-            }
         }
         return Binding{
             .device_addr = *aligned_device_addr,
