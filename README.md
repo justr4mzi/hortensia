@@ -12,6 +12,9 @@
 
 # Lichii
 
+> **Lichii-AMD:** this fork adds AMD Radeon fixes for The Legend of Zelda: Ocarina of Time. See
+> [README-AMD.md](README-AMD.md) and the [releases page](https://github.com/nauxph/Lichii-AMD/releases).
+
 Lichii is an experimental, open-source Nintendo Switch and Switch 2 emulator written in C++. It builds on Eglantine, Eden, yuzu and Sudachi, preserving their contributions while developing this fork's game compatibility and renderer fixes.
 
 This is an independent fork, not an official release of those upstream projects. Lichii is not affiliated with Nintendo.
