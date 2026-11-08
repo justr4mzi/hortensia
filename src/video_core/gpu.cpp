@@ -34,6 +34,7 @@
 #include "video_core/engines/maxwell_dma.h"
 #include "video_core/gpu.h"
 #include "video_core/gpu_timestamp.h"
+#include "video_core/nx2.h"
 #include "video_core/gpu_thread.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
@@ -200,7 +201,7 @@ struct GPU::Impl {
     }
 
     [[nodiscard]] u64 GetTicks() const {
-        if (g_nx2_ampere.load(std::memory_order_relaxed)) {
+        if (Tegra::g_nx2_ampere.load(std::memory_order_relaxed)) {
             return Tegra::ReadGpuTimestamp(system.CoreTiming(), true,
                                            Settings::values.gpu_clock.GetValue(),
                                            ampere_anchor.load(std::memory_order_relaxed));
