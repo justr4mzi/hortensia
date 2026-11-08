@@ -108,7 +108,6 @@ Result ICommonStateGetter::GetEventHandle(OutCopyHandle<Kernel::KReadableEvent> 
 Result ICommonStateGetter::ReceiveMessage(Out<AppletMessage> out_applet_message) {
     LOG_DEBUG(Service_AM, "called");
 
-    std::scoped_lock lk{m_applet->lock};
     if (!m_applet->lifecycle_manager.PopMessage(system.Kernel(), out_applet_message)) {
         LOG_ERROR(Service_AM, "Tried to pop message but none was available!");
         R_THROW(AM::ResultNoMessages);
@@ -323,7 +322,6 @@ Result ICommonStateGetter::PerformSystemButtonPressingIfInFocus(SystemButtonType
 
 Result ICommonStateGetter::EnableStartupLogoDisappearedMessage() {
     LOG_WARNING(Service_AM, "(STUBBED) called");
-    std::scoped_lock lk{m_applet->lock};
     m_applet->lifecycle_manager.PushUnorderedMessage(system.Kernel(), AppletMessage::StartupLogoDisappeared);
     R_SUCCEED();
 }

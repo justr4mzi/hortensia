@@ -9,8 +9,7 @@
 #include <cstdlib>
 #include <thread>
 
-#include "common/settings.h"
-#include "core/core.h" 
+#include "core/core.h"
 #include "core/file_sys/errors.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/service/cmif_serialization.h"
@@ -55,10 +54,7 @@ Result IStorage::Read(
     R_UNLESS(length >= 0, FileSys::ResultInvalidSize);
     R_UNLESS(offset >= 0, FileSys::ResultInvalidOffset);
 
-    // Switch 2 storage is many times faster, and a Switch 2 title that streams a movie with
-    // hundreds of reads a second (Ocarina of Time's opening: 300-460) sleeps most of each second
-    // on the thread that also hands decoder images back, so its video falls seconds behind.
-    if (!Settings::CurrentProgramIsSwitch2() && read_bytes_per_second > 0) {
+    if (read_bytes_per_second > 0) {
         const auto now = std::chrono::steady_clock::now();
         if (now < next_read_tick) {
             std::this_thread::sleep_for(next_read_tick - now);

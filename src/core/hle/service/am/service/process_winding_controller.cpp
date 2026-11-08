@@ -70,7 +70,6 @@ Result IProcessWindingController::OpenCallingLibraryApplet(
 
 Result IProcessWindingController::PushContext(SharedPointer<IStorage> context) {
     LOG_INFO(Service_AM, "called");
-    std::scoped_lock lk{m_applet->lock};
     m_applet->context_stack.push(context);
     R_SUCCEED();
 }
@@ -78,7 +77,6 @@ Result IProcessWindingController::PushContext(SharedPointer<IStorage> context) {
 Result IProcessWindingController::PopContext(Out<SharedPointer<IStorage>> out_context) {
     LOG_INFO(Service_AM, "called");
 
-    std::scoped_lock lk{m_applet->lock};
     if (m_applet->context_stack.empty()) {
         LOG_ERROR(Service_AM, "Context stack is empty");
         R_THROW(ResultUnknown);

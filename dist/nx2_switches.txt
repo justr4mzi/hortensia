@@ -105,6 +105,3 @@ EDEN_NX2_FENCE_BATCH=1
 
 # Donkey Kong Bananza: cap framerate to 60 FPS in PaceToVblank (default on; set to 0 to allow uncapped framerates).
 #EDEN_NX2_DK_60FPS=0
-
-# Ocarina of Time: Opt-in built-in Occlusion Off patch (bypasses z-prepass and occlusion queries, Fritchii/cLohan port; set to 1 to enable).
-#EDEN_NX2_OCCLUSION_OFF=1

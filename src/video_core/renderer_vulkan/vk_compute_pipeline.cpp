@@ -25,7 +25,6 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
-#include "video_core/nx2_debug_control.h"
 #include "video_core/shader_handle_program.h"
 #include "video_core/shader_notify.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -98,8 +97,7 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
         // compile SIMD32, which can spill a register-heavy kernel for minutes (Mario Kart World).
         const bool uses_warp_ops = info.uses_subgroup_vote || info.uses_subgroup_invocation_id ||
                                    info.uses_subgroup_shuffles || info.uses_subgroup_mask ||
-                                   info.uses_quad_shuffles || info.uses_fswzadd ||
-                                   info.uses_cooperative_matrix;
+                                   info.uses_quad_shuffles || info.uses_fswzadd;
         VkPipelineCreateFlags flags{};
         if (device.IsKhrPipelineExecutablePropertiesEnabled() && Settings::values.renderer_debug.GetValue()) {
             flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
@@ -119,10 +117,7 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
                 .pNext = device.IsExtSubgroupSizeControlSupported() && uses_warp_ops
                              ? &subgroup_size_ci
                              : nullptr,
-                .flags = info.uses_cooperative_matrix
-                             ? VkPipelineShaderStageCreateFlags{
-                                   VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT}
-                             : VkPipelineShaderStageCreateFlags{},
+                .flags = 0,
                 .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                 .module = *spv_module,
                 .pName = "main",
@@ -253,14 +248,9 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     for (const auto& desc : info.image_buffer_descriptors) {
         add_image(desc, false);
     }
-    // EDEN_NX2_EXP21 (default 1; 0 = off): no texture for a handle that is a buffer address.
-    const bool null_pointer_handles{VideoCore::Nx2Debug::Experiment(21) != 0};
     for (const auto& desc : info.texture_descriptors) {
         for (u32 index = 0; index < desc.count; ++index) {
-            const auto handle{null_pointer_handles &&
-                                      VideoCommon::HandleIsStoragePointer(info, desc, index)
-                                  ? VideoCommon::NULL_TEXTURE_HANDLE
-                                  : read_handle(desc, index)};
+            const auto handle{read_handle(desc, index)};
             views.push_back({handle.first});
 
             VideoCommon::SamplerId sampler = texture_cache.GetSamplerId(handle.second, true);
