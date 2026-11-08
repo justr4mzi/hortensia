@@ -733,3 +733,26 @@ ebase/smileytatsu.
   - Branche de travail : `rebase/smileytatsu`.
   - Commit final valid? : `1ac6081ff815a679df62a8b2fa8a5a40a3ece1cf`.
   - La branche `main` demeure intacte tant que la validation interactive par Ramzi n'a pas confirm? le passage en release publique.
+
+## Section 21 (2026-11-08) : Rapport de veille approfondie des 5 heures sur l'ensemble des forks
+
+- **Examen de `lichii/nx2` (commits `6645721f2c..bf4c42e223`)** :
+  - **`ce9be9d14a` (Zortos)** : *video_core: make GPU Clocks Boost and Overclock shrink Switch 2 GPU durations again (Mario Kart World 30 fps lock) (#664)*. Mise ? l'?chelle des timestamps GPU Ampere sous les modes Boost (divis? par 4) et Overclock (divis? par 16). Permet ? Ocarina of Time de monter en 1080p natif au lieu d'?tre brid? ? 854x480, et d?bloque le cap 30 FPS de Mario Kart World.
+  - **`72e9429daf` (Zortos, Duck912, Claude Opus)** : *nx2: keep movie video in sync with its audio (#659)*. Synchronisation audio/vid?o des cin?matiques NVN2 : suppression du throttle de lecture SD card pour Switch 2, allocation de 3 threads h?tes pour le serveur AM, rejet des paquets vid?o exc?dentaires (erreur 3603) et abandon automatique des trames vid?o retardataires pour coller au flux audio r?el.
+  - **`acb9c18d65` (ne1i)** : *gpu_thread: poll suspended channels every 50 us instead of every 1 ms (#446)*. R?duction de l'intervalle de polling des canaux suspendus sur s?maphores de 1 ms ? 50 ?s, procurant un gain mesur? de +11 % de FPS dans le village Kokiri sous OoT.
+  - **`f96cded333` (ProphetWild)** : *video_core: Ocarina of Time option to bypass the game's sharpening anti-aliasing network (#616)*. Option de contournement du r?seau de sharpening agressif d'OoT, rempla?ant la passe finale par une copie directe de l'image tonemapp?e (+9 FPS, passant de 41 ? 50 FPS).
+  - **`65e979adb3` (Rengundom, Level3Skiller)** : *vulkan: NVIDIA DLSS Super Resolution for Ocarina of Time (#606)*. Int?gration compl?te de DLSS Super Resolution pour OoT avec shaders d?di?s de calcul des vecteurs de mouvement cam?ra et acteur.
+  - **`d549411690` & `8318201fa2` (estevanbs, mstampfli)** : *shader: run HMMA on VK_KHR_cooperative_matrix*. Support des instructions tensorielles HMMA via les matrices coop?ratives Vulkan (gain +12% ? +24% sous OoT, et jusqu'? 60 FPS sur RDNA4).
+  - **`bf4c42e223` (Zortos)** : *vulkan: import the easy AMD fixes from the CheezerWheezer fork survey (EGLA-67)*. S?curisation des requ?tes d'occlusion sur GPU AMD et samplers non-Dref.
+
+- **Examen de `orchid/main` (commits `7655f3edb1..f2eb04babd`)** :
+  - **`f2eb04babd` (MythosOfs)** : *fix: keep held-back CPU writes from being overwritten by GPU downloads*. Protection des ?critures CPU diff?r?es face aux t?l?chargements du buffer cache pour ?viter l'?crasement de code shader dynamique en mode multic?ur (corrige les artefacts de rendu dans Yoshi).
+  - **`5fd2181f25`, `c735ef29b7`, `25c3948f01`** : Adaptations de la simulation de Mario Tennis Fever pour les framerates ?lev?s et d?couplage des horloges de jeu.
+  - **`0be650b6f6`** : R?solution des layouts imbriqu?s de mises ? jour d?compress?es dans l'AppLoader.
+
+- **Examen de `dahbard/tuned` (commits `417f63548d..7382d49b1a`)** :
+  - **Round 15 (`165c91dd33`)** : Int?gration exp?rimentale de FSR 4 SDK 2.4 API par d?faut pour OoT avec fallback FSR 3.1 et profiling fin des c?urs invit?s.
+
+- **Synth?se et Recommandation** :
+  - La version candidate v1.0.0 construite sur `1ac6081ff815a679df62a8b2fa8a5a40a3ece1cf` est valid?e verte sur les 6 jobs CI et pr?te pour les tests utilisateur.
+  - Les nouveaut?s upstream r?pertori?es ci-dessus forment une excellente feuille de route pour la v1.1.0, avec en priorit? les commits `acb9c18d65` (+11% FPS Kokiri) et `ce9be9d14a` (MKW 30 fps unlock) comme candidats ? int?gration rapide post-tests v1.0.0.
