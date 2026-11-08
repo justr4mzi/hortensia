@@ -2559,7 +2559,7 @@ public:
         RegisterHandlersTipc({
             {1, &INx2VideoSession::CreateDecoderService, "CreateVideoDecoderService"},
             {3, &INx2VideoSession::GetEvent, "GetEvent"},
-            {6, &INx2VideoSession::Succeed, "Start"},
+            {6, &INx2VideoSession::Start, "Start"},
             {8, &INx2VideoSession::Flush, "Flush"},
             {101, &INx2VideoSession::Configure, "Configure"},
             {109, &INx2VideoSession::SubmitInput, "SubmitInputBuffer"},
@@ -2578,6 +2578,7 @@ public:
     }
 
     ~INx2VideoSession() override {
+        m_ready->SetRunning(system.Kernel(), false);
         if (m_worker.joinable()) {
             {
                 std::scoped_lock lk{m_mutex};
@@ -2603,11 +2604,7 @@ public:
     }
 
 private:
-    struct Input {
-        std::vector<u8> data;
-        u64 pts; // us
-        bool end;
-    };
+    using Input = Nx2VideoInputQueue::Input;
     struct Decoded {
         std::optional<Tegra::Host1x::Nx2Picture> picture; // none: an empty end-of-stream frame
         u64 pts;
@@ -2626,7 +2623,6 @@ private:
     };
 
     static constexpr u32 NoSyncpoint = ~0U;
-    static constexpr size_t MaxQueuedInputs = 8;
     static constexpr size_t MaxDecodedAhead = 2; // decoded frames held while no image is free
     static constexpr u32 HostSyncpoints = 192;   // Tegra::Host1x::SyncpointManager
     // Movie pacing (see DropOvertakenFrames): a longer gap between acquires is a pause, a longer
@@ -2640,7 +2636,7 @@ private:
         if (Nx2FirstVideoCommand(GetServiceName(), ctx.GetCommand())) {
             LOG_INFO(Service, "{} TIPC {} {} (first use): words {:08x}", GetServiceName(),
                      ctx.GetCommand(), what, fmt::join(std::span<const u32>{w, 12}, " "));
-        } else if (static const bool trace = std::getenv("EDEN_NX2_VDEC_TRACE") != nullptr; trace) {
+        } else if (Nx2VideoTraceEnabled()) {
             // EDEN_NX2_VDEC_TRACE=1: every video decoder call at Info level.
             LOG_INFO(Service, "{} TIPC {} {}: [2]={:#x} [3]={:#x} [4]={:#x} [5]={:#x}",
                      GetServiceName(), ctx.GetCommand(), what, w[2], w[3], w[4], w[5]);
@@ -2666,6 +2662,16 @@ private:
 
     void Succeed(HLERequestContext& ctx) {
         Log(ctx, "");
+        TipcReplyWords(ctx, {});
+    }
+
+    void Start(HLERequestContext& ctx) {
+        Log(ctx, "start");
+        if (Nx2VideoTraceEnabled()) {
+            LOG_INFO(Service, "nx2:vdec trace start syncpoint={}", m_syncpoint);
+        }
+        m_ready->SetRunning(system.Kernel(), true);
+        m_ready->Signal(system.Kernel());
         TipcReplyWords(ctx, {});
     }
 
@@ -2707,6 +2713,186 @@ private:
             m_width = w[5];
             m_height = w[6];
             m_clock_offset.reset();
+            m_stream_start.reset();
+        }
+        if (!m_worker.joinable()) {
+            m_worker = std::thread{[this] { DecodeLoop(); }};
+        }
+        TipcReplyWords(ctx, {});
+    }
+
+    void GetEvent(HLERequestContext& ctx) {
+        Log(ctx, "event");
+        if (m_event == nullptr) {
+            m_event = m_context.CreateEvent(fmt::format("{}:Ready", GetServiceName()));
+            // The client attaches it auto-clearing, so one signal is consumed by the first wait:
+            // while the input queue has room, re-signal every 4 ms; a spurious wake only makes it
+            // check again.
+            {
+                std::scoped_lock lk{m_ready->mutex};
+                m_ready->event = m_event;
+            }
+            m_ready_timer = Core::Timing::CreateEvent(
+                "nx2:vdec ready",
+                [ready = m_ready, &kernel = system.Kernel()](
+                    s64, std::chrono::nanoseconds) -> std::optional<std::chrono::nanoseconds> {
+                    ready->Signal(kernel);
+                    return std::nullopt;
+                });
+            constexpr std::chrono::nanoseconds ReadyInterval{std::chrono::milliseconds{4}};
+            system.CoreTiming().ScheduleLoopingEvent(ReadyInterval, ReadyInterval, m_ready_timer);
+        }
+        m_ready->Signal(system.Kernel());
+        IPC::ResponseBuilder rb{ctx, 2, 1, 0};
+        rb.Push(ResultSuccess);
+        rb.PushCopyObjects(ctx, m_event->GetReadableEvent());
+    }
+
+    // Queues an output image for the next decoded frame; returns the NativeSyncHandle words that
+    // signal once that frame is in it.
+    std::array<u32, 4> HandOut(u32 image, std::optional<Fence> release_fence) {
+        if (m_syncpoint == NoSyncpoint) {
+            m_syncpoint = NvdrvSyncpoints().AllocateSyncpoint(false);
+            m_sync_base = system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(m_syncpoint);
+            LOG_INFO(Service, "{} counts decoded frames on syncpoint {} from {}",
+                     GetServiceName(), m_syncpoint, m_sync_base);
+        }
+        u32 value;
+        {
+            std::scoped_lock lk{m_mutex};
+            m_free.push_back(image);
+            if (release_fence) {
+                m_release_fences[image] = *release_fence;
+            }
+            // Mario Kart World waits for returned images after a movie and acquires a frame for
+            // each completed fence, so its released images need synthetic end-of-stream frames.
+            static const bool release_now = [] {
+                const char* env_value = std::getenv("EDEN_NX2_VDEC_EOS_RELEASE_NOW");
+                return env_value != nullptr && env_value[0] != '0';
+            }();
+            const bool drain_eos =
+                system.GetApplicationProcessProgramID() == Settings::MarioKartWorldProgramId;
+            if ((drain_eos || release_now) && release_fence && m_stream_ended && m_inputs.Empty() &&
+                m_decoded.empty()) {
+                const u32 reached =
+                    drain_eos ? DrainFreeAsEndOfStream()
+                              : static_cast<u32>(system.Host1x().GetSyncpointManager()
+                                                     .GetGuestSyncpointValue(m_syncpoint));
+                m_sync_base = reached;
+                m_handed = 0;
+                value = reached;
+            } else {
+                value = m_sync_base + ++m_handed;
+            }
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service,
+                         "nx2:vdec trace handout syncpoint={} image={} release={} fence={} "
+                         "current={} eos={} inputs={} decoded={} outputs={}",
+                         m_syncpoint, image, release_fence.has_value(), value,
+                         system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(m_syncpoint),
+                         m_stream_ended, m_inputs.Size(), m_decoded.size(), m_outputs.size());
+            }
+        }
+        m_cv.notify_one();
+        return {~m_syncpoint, 0, value, 0};
+    }
+
+    void RegisterBuffer(HLERequestContext& ctx) {
+        Log(ctx, "register output");
+        const auto handle = HandOut(ctx.CommandBuffer()[2], std::nullopt);
+        TipcReplyWords(ctx, {handle[0], handle[1], handle[2], handle[3]});
+    }
+
+    void ReleaseBuffer(HLERequestContext& ctx) {
+        const auto* w = ctx.CommandBuffer();
+        Log(ctx, "release output");
+        const auto handle = HandOut(w[2], Fence{~w[4], w[6]});
+        TipcReplyWords(ctx, {handle[0], handle[1], handle[2], handle[3]});
+    }
+
+    void UnregisterBuffer(HLERequestContext& ctx) {
+        Log(ctx, "unregister output");
+        const u32 image = ctx.CommandBuffer()[2];
+        {
+            std::scoped_lock lk{m_mutex};
+            std::erase(m_free, image);
+            m_release_fences.erase(image);
+        }
+        TipcReplyWords(ctx, {});
+    }
+
+    void SubmitInput(HLERequestContext& ctx) {
+        const auto* w = ctx.CommandBuffer();
+        // Words 2-4 are the A descriptor of the compressed frame (400: 5-7 that of its information
+        // block), the data words follow.
+        const size_t words = 2 + 3 * ctx.BufferDescriptorA().size();
+        const u64 pts = u64{w[words]} | (u64{w[words + 1]} << 32);
+        const bool end = (w[words + 2] & 0xFF) != 0;
+        Log(ctx, "submit");
+        // The SDK answers busy when the decoder cannot take a packet, and the client retries after
+        // the submission-ready event. Taking every packet let a player queue a whole movie: Ocarina
+        // of Time's title movie went in at ~330 packets a second (2,600 queued), and until the
+        // last was in, its pictures came at 20-28 fps, so the video started ~11 s behind its
+        // audio. End of stream is never refused.
+        if (!end) {
+            std::scoped_lock lk{m_mutex};
+            if (m_inputs.Full()) {
+                if (Nx2VideoTraceEnabled()) {
+                    LOG_INFO(Service, "nx2:vdec trace refuse syncpoint={} pts={} queued={}",
+                             m_syncpoint, pts, m_inputs.Size());
+                }
+                // nn::codec's module (111) is HwOpus in ErrorModule
+                constexpr Result ResultDecoderBusy{ErrorModule::HwOpus, 3603};
+                IPC::ResponseBuilder rb{ctx, 2};
+                rb.PushRaw<u32>(ResultDecoderBusy.raw);
+                return;
+            }
+        }
+        Input input{{}, pts, end};
+        if (!ctx.BufferDescriptorA().empty()) {
+            const auto data = ctx.ReadBufferA(0);
+            input.data.assign(data.begin(), data.end());
+        }
+        const auto input_size = input.data.size();
+        {
+            std::scoped_lock lk{m_mutex};
+            m_inputs.Push(std::move(input));
+            m_stream_ended = false;
+            m_end_queued |= end;
+            m_ready->room.store(!m_end_queued && m_inputs.BelowReadyWatermark(),
+                                std::memory_order_relaxed);
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service,
+                         "nx2:vdec trace submit syncpoint={} input={} bytes={} pts={} eos={} queued={}",
+                         m_syncpoint, m_submitted + 1, input_size, pts, end,
+                         m_inputs.Size());
+            }
+        }
+        m_cv.notify_one();
+        const u64 id = ++m_submitted;
+        TipcReplyWords(ctx, {static_cast<u32>(id), static_cast<u32>(id >> 32)});
+    }
+
+    // Flush (8) and Stop (207): drop queued input and frames not yet in an image. Images already
+    // handed out keep their place, so the sync values stay in step with the client's ring.
+    void Flush(HLERequestContext& ctx) {
+        Log(ctx, ctx.GetCommand() == 8 ? "flush" : "stop");
+        if (ctx.GetCommand() == 207) {
+            m_ready->SetRunning(system.Kernel(), false);
+        }
+        {
+            std::scoped_lock lk{m_mutex};
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service,
+                         "nx2:vdec trace {} syncpoint={} inputs={} decoded={} outputs={} "
+                         "decoded_frames={} frames_out={} eos={} eos_queued={}",
+                         ctx.GetCommand() == 8 ? "flush" : "stop", m_syncpoint, m_inputs.Size(),
+                         m_decoded.size(), m_outputs.size(), m_decoded_frames, m_frames_out,
+                         m_stream_ended, m_end_queued);
+            }
+            m_inputs.Clear();
+            m_flush = true;
+            m_stream_ended = false;
             m_end_queued = false;
             m_clock_offset.reset();
             m_stream_start.reset();
@@ -2723,10 +2909,23 @@ private:
 
     void Finalize(HLERequestContext& ctx) {
         Log(ctx, "finalize");
+        m_ready->SetRunning(system.Kernel(), false);
         {
             std::scoped_lock lk{m_mutex};
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service,
+                         "nx2:vdec trace finalize syncpoint={} inputs={} decoded={} outputs={} "
+                         "decoded_frames={} frames_out={} eos={} eos_queued={}",
+                         m_syncpoint, m_inputs.Size(), m_decoded.size(), m_outputs.size(),
+                         m_decoded_frames, m_frames_out, m_stream_ended, m_end_queued);
+            }
             CompleteHandedFences();
             m_clock_offset.reset();
+            m_stream_start.reset();
+        }
+        TipcReplyWords(ctx, {});
+    }
+
     s64 HostTimeUs() const {
         return system.CoreTiming().GetGlobalTimeUs().count();
     }
@@ -2802,6 +3001,10 @@ private:
         auto& syncpoints = system.Host1x().GetSyncpointManager();
         const u32 target = m_sync_base + m_handed;
         u32 current = static_cast<u32>(syncpoints.GetGuestSyncpointValue(m_syncpoint));
+        if (Nx2VideoTraceEnabled()) {
+            LOG_INFO(Service, "nx2:vdec trace complete fences syncpoint={} current={} target={}",
+                     m_syncpoint, current, target);
+        }
         while (static_cast<s32>(target - current) > 0) {
             syncpoints.IncrementGuest(m_syncpoint);
             ++current;
@@ -2820,12 +3023,21 @@ private:
             }
         }
         if (!output) {
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service, "nx2:vdec trace output empty syncpoint={} result=0x1c286f",
+                         m_syncpoint);
+            }
             // Nothing finished: the code the client's own Acquire uses for an empty ring.
             IPC::ResponseBuilder rb{ctx, 2};
             rb.PushRaw<u32>(0x1c286f);
             return;
         }
         const u64 pts_ns = output->pts * 1000;
+        if (Nx2VideoTraceEnabled()) {
+            LOG_INFO(Service, "nx2:vdec trace output syncpoint={} image={} size={}x{} pts={} eos={}",
+                     m_syncpoint, output->image, output->width, output->height, output->pts,
+                     output->end);
+        }
         TipcReplyWords(ctx, {output->image, output->width, output->height, output->width,
                              output->height, 0, static_cast<u32>(pts_ns),
                              static_cast<u32>(pts_ns >> 32), output->end ? 1U : 0U, 0, 0, 0, 0,
@@ -2843,7 +3055,7 @@ private:
         while (true) {
             m_cv.wait(lk, [&] {
                 return m_quit || m_flush || (!m_decoded.empty() && !m_free.empty()) ||
-                       (!m_inputs.empty() && m_decoded.size() < MaxDecodedAhead);
+                       (!m_inputs.Empty() && m_decoded.size() < MaxDecodedAhead);
             });
             if (m_quit) {
                 return;
@@ -2869,10 +3081,6 @@ private:
                 std::optional<Fence> fence;
                 if (const auto it = m_release_fences.find(image); it != m_release_fences.end()) {
                     fence = it->second;
-                if (m_width >= 1920) {
-                    Nx2MkwMovieFrameClock().store(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
-                }
                     m_release_fences.erase(it);
                 }
                 lk.unlock();
@@ -2885,9 +3093,15 @@ private:
                 m_outputs.push_back({image, width, height, frame.pts, frame.end});
                 if (frame.end) {
                     m_stream_ended = true;
+                    m_end_queued = false;
                     m_ready->room.store(false, std::memory_order_relaxed);
                 }
                 system.Host1x().GetSyncpointManager().IncrementGuest(m_syncpoint);
+                m_last_output = m_outputs.back();
+                if (frame.end && m_inputs.Empty() && m_decoded.empty() &&
+                    system.GetApplicationProcessProgramID() == Settings::MarioKartWorldProgramId) {
+                    DrainFreeAsEndOfStream();
+                }
                 ++m_frames_out;
                 const s64 written_us = HostTimeUs();
                 if (!m_stream_start) {
@@ -2910,10 +3124,9 @@ private:
                 }
                 continue;
             }
-            Input input = std::move(m_inputs.front());
-            m_inputs.pop_front();
-            if (!m_stream_ended) {
-                m_ready->room.store(m_inputs.size() < MaxQueuedInputs, std::memory_order_relaxed);
+            Input input = m_inputs.Pop();
+            if (!m_stream_ended && !m_end_queued) {
+                m_ready->room.store(m_inputs.BelowReadyWatermark(), std::memory_order_relaxed);
             }
             std::string codec = m_codec;
             if (codec.empty() && Tegra::Host1x::IsH264Stream(input.data)) {
@@ -2924,6 +3137,14 @@ private:
             }
             lk.unlock();
             if (!decoder || decoder->Name() != codec) {
+                if (codec.empty()) {
+                    LOG_WARNING(Service,
+                                "{} input without codec: size {}, pts {}, end {}, first bytes {:02x}",
+                                GetServiceName(), input.data.size(), input.pts, input.end,
+                                fmt::join(std::span<const u8>{input.data}.first(
+                                              std::min(input.data.size(), size_t{16})),
+                                          " "));
+                }
                 decoder = std::make_unique<Tegra::Host1x::Nx2VideoDecoder>(codec);
             }
             pictures.clear();
@@ -2932,6 +3153,14 @@ private:
                 decoder->Drain(pictures);
             }
             lk.lock();
+            m_decoded_frames += pictures.size();
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service,
+                         "nx2:vdec trace decode syncpoint={} codec={} open={} pts={} eos={} "
+                         "pictures={} decoded_frames={} discarded_by_flush={}",
+                         m_syncpoint, decoder->Name(), decoder->IsOpen(), input.pts, input.end,
+                         pictures.size(), m_decoded_frames, m_flush);
+            }
             if (m_flush) {
                 continue;
             }
@@ -2955,6 +3184,22 @@ private:
         }
     }
 
+    u32 DrainFreeAsEndOfStream() {
+        auto& syncpoints = system.Host1x().GetSyncpointManager();
+        if (Nx2VideoTraceEnabled()) {
+            LOG_INFO(Service, "nx2:vdec trace synthetic EOS syncpoint={} images={}",
+                     m_syncpoint, m_free.size());
+        }
+        while (!m_free.empty()) {
+            const u32 image = m_free.front();
+            m_free.pop_front();
+            m_release_fences.erase(image);
+            m_outputs.push_back({image, m_last_output.width, m_last_output.height, m_last_output.pts, true});
+            syncpoints.IncrementGuest(m_syncpoint);
+        }
+        return static_cast<u32>(syncpoints.GetGuestSyncpointValue(m_syncpoint));
+    }
+
     // Waits (bounded) until the client's reads of an image it gave back have passed.
     void WaitForRelease(const Fence& fence) {
         if (fence.syncpoint >= HostSyncpoints) {
@@ -2966,18 +3211,29 @@ private:
                std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
+        if (Nx2VideoTraceEnabled()) {
+            LOG_INFO(Service, "nx2:vdec trace release wait syncpoint={} value={} reached={}",
+                     fence.syncpoint, fence.value,
+                     syncpoints.IsReadyGuest(fence.syncpoint, fence.value));
+        }
     }
 
     // Writes a decoded frame into an output image; returns the size the frame reports.
     std::pair<u32, u32> WriteImage(Tegra::Host1x::Nx2VideoDecoder* decoder, u32 image_id,
                                    const Decoded& frame, std::vector<u8>& bytes) {
         u64 address{};
+        u32 parent{};
+        u64 parent_offset{};
         Nx2DecoderImageLayout layout{};
         bool block_linear{};
         {
             std::scoped_lock lk{m_objects->mutex};
             const auto image = m_objects->images.find(image_id);
             if (image == m_objects->images.end()) {
+                if (Nx2VideoTraceEnabled()) {
+                    LOG_INFO(Service, "nx2:vdec trace write skipped syncpoint={} image={} destroyed",
+                             m_syncpoint, image_id);
+                }
                 return {m_width, m_height};
             }
             layout = Nx2CalculateDecoderImageLayout(image->second.preference.data());
@@ -2986,12 +3242,42 @@ private:
             const auto memory = m_objects->memories.find(image->second.memory);
             if (memory != m_objects->memories.end() && memory->second.address != 0) {
                 address = memory->second.address + image->second.offset;
+                parent = memory->second.parent;
+                parent_offset = memory->second.parent_offset + image->second.offset;
             }
         }
         if (!frame.picture || decoder == nullptr || address == 0 ||
             system.ApplicationProcess() == nullptr) {
+            if (Nx2VideoTraceEnabled()) {
+                LOG_INFO(Service,
+                         "nx2:vdec trace write skipped syncpoint={} image={} cpu={:#x} picture={} eos={}",
+                         m_syncpoint, image_id, address, frame.picture.has_value(), frame.end);
+            }
             return {std::min(m_width, layout.width), std::min(m_height, layout.height)};
         }
+        const auto trace_write = [&] {
+            if (!Nx2VideoTraceEnabled()) {
+                return;
+            }
+            auto& registry = Nvidia::Devices::Nx2GpuMemoryRegistry::Get();
+            auto gpu_address = registry.GpuAddressOf(parent, parent_offset);
+            const auto device = registry.DeviceAddressOf(address);
+            if (!gpu_address && device && registry.DeviceAddressOfGpu(address) == device) {
+                gpu_address = address;
+            }
+            LOG_INFO(Service,
+                     "nx2:vdec trace write syncpoint={} decoded_frames={} output={} codec={} "
+                     "image={} cpu={:#x} gpu={:#x} gpu_known={} device={:#x} mapped={} "
+                     "format={} block_linear={} pitch={} chroma={:#x} pts={} eos={}",
+                     m_syncpoint, m_decoded_frames, m_frames_out + 1, decoder->Name(), image_id,
+                     address, gpu_address.value_or(0), gpu_address.has_value(),
+                     device.value_or(0), device.has_value(), static_cast<u32>(layout.format),
+                     block_linear, layout.pitch, layout.chroma_offset, frame.pts, frame.end);
+            std::scoped_lock lk{m_objects->mutex};
+            m_objects->last_video_write = Nx2NativeObjects::VideoTrace{
+                m_syncpoint, m_decoded_frames, image_id, gpu_address.value_or(0),
+                device.value_or(0), frame.pts, decoder->Name()};
+        };
         // A frame larger than the image is scaled down to it.
         const u32 width = std::min(frame.picture->width, layout.width);
         const u32 height = std::min(frame.picture->height, layout.height);
@@ -3002,6 +3288,7 @@ private:
             // 16-GOB blocks, as our Eden tree writes these images.
             decoder->Render(*frame.picture, Tegra::Host1x::Nx2PictureFormat::Rgba8, width, height,
                             layout.pitch, 0, bytes);
+            DumpFrame(image_id, bytes, layout, width, height);
             m_tiled.resize(layout.size);
             Tegra::Texture::SwizzleTexture(m_tiled, bytes, 4, static_cast<u32>(layout.pitch / 4),
                                            layout.height, 1, 4, 0, 1, true);
@@ -3010,11 +3297,12 @@ private:
                     Nvidia::Devices::Nx2GpuMemoryRegistry::Get().DeviceAddressOf(address)) {
                 system.GPU().InvalidateRegion(*device, m_tiled.size());
             }
+            trace_write();
             return {width, height};
         }
         decoder->Render(*frame.picture, layout.format, width, height, layout.pitch,
                         layout.chroma_offset, bytes);
-        DumpFrame(bytes, layout, width, height);
+        DumpFrame(image_id, bytes, layout, width, height);
         memory.WriteBlock(address, bytes.data(), layout.pitch * height);
         if (layout.format == Tegra::Host1x::Nx2PictureFormat::Nv12) {
             memory.WriteBlock(address + layout.chroma_offset, bytes.data() + layout.chroma_offset,
@@ -3024,13 +3312,14 @@ private:
         if (const auto device = Nvidia::Devices::Nx2GpuMemoryRegistry::Get().DeviceAddressOf(address)) {
             system.GPU().InvalidateRegion(*device, layout.size);
         }
+        trace_write();
         return {width, height};
     }
 
     // EDEN_NX2_VDEC_DUMP=<dir>: save the luma of every 120th decoded frame, a quarter of its size,
-    // as nx2-vdec-<frame>.pgm (to check what the decoder wrote, apart from how the game shows it).
-    void DumpFrame(const std::vector<u8>& bytes, const Nx2DecoderImageLayout& layout, u32 width,
-                   u32 height) {
+    // as nx2-vdec-image-<id>-<frame>.pgm (apart from how the game shows it).
+    void DumpFrame(u32 image_id, const std::vector<u8>& bytes, const Nx2DecoderImageLayout& layout,
+                   u32 width, u32 height) {
         static const char* const directory = std::getenv("EDEN_NX2_VDEC_DUMP");
         if (directory == nullptr || (m_frames_out % 120) != 0) {
             return;
@@ -3038,7 +3327,8 @@ private:
         const u32 bpp = layout.format == Tegra::Host1x::Nx2PictureFormat::Nv12 ? 1 : 4;
         const u32 w = width / 4;
         const u32 h = height / 4;
-        const std::string path = fmt::format("{}/nx2-vdec-{:05}.pgm", directory, m_frames_out + 1);
+        const std::string path =
+            fmt::format("{}/nx2-vdec-image-{}-{:05}.pgm", directory, image_id, m_frames_out + 1);
         if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
             std::fprintf(file, "P5 %u %u 255\n", w, h);
             for (u32 y = 0; y < h; ++y) {
@@ -3050,16 +3340,10 @@ private:
         }
     }
 
-    struct ReadyState {
-        std::mutex mutex;
-        Kernel::KEvent* event{};
-        std::atomic<bool> room{true}; ///< The input queue takes more frames
-    };
-
     KernelHelpers::ServiceContext m_context;
     std::shared_ptr<Nx2NativeObjects> m_objects;
     Kernel::KEvent* m_event{};
-    std::shared_ptr<ReadyState> m_ready = std::make_shared<ReadyState>();
+    std::shared_ptr<Nx2VideoReadyState> m_ready = std::make_shared<Nx2VideoReadyState>();
     std::shared_ptr<Core::Timing::EventType> m_ready_timer;
     u64 m_submitted{};
     u32 m_syncpoint{NoSyncpoint}; ///< Counts finished frames (allocated at the first register)
@@ -3074,13 +3358,23 @@ private:
     u32 m_height{};
     u32 m_handed{}; ///< Output images handed out (registered or released) so far
     u64 m_frames_out{};
+    u64 m_decoded_frames{};
+    u64 m_frames_dropped{};
+    std::optional<s64> m_clock_offset; ///< Host time minus pts (us) of the frames the client shows
+    s64 m_last_acquire{};              ///< Host time (us) of the client's last acquire
+    u64 m_last_acquired_pts{};
+    u64 m_frame_interval{16667}; ///< us, from consecutive decoded frames
+    u64 m_last_decoded_pts{};
+    u32 m_dropped_in_a_row{};
     std::optional<std::pair<s64, u64>> m_stream_start; ///< Host time (us) and pts of its first frame
     Nx2VideoInputQueue m_inputs;
     std::deque<Decoded> m_decoded;     ///< Waiting for a free output image
     std::deque<u32> m_free;            ///< Output images, in the order the client acquires them
     std::map<u32, Fence> m_release_fences;
     std::deque<Output> m_outputs;      ///< Finished, for 213
+    Output m_last_output{};
     bool m_stream_ended{};             ///< End-of-stream frame handed out, nothing submitted since
+    bool m_end_queued{};
     bool m_flush{};
     bool m_quit{};
     std::thread m_worker;
