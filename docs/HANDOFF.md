@@ -800,3 +800,13 @@ ebase/smileytatsu.
 - **Marqueurs de conflit** : Aucun marqueur de conflit (`<<<<<<<`, `=======`, `>>>>>>>`) dans l'ensemble du dépôt.
 - **Fichiers temporaires** : Aucun script temporaire laissé dans l'arbre de travail.
 - **Documentation** : `README.md`, `dist/nx2_switches.txt` et `docs/HANDOFF.md` sont tenus à jour.
+
+### C. Validation Complète de la CI (Run 42459287834)
+- **Statut** : 100 % vert sur les 6 jobs de compilation et de packaging (Run GitHub Actions 42459287834 sur commit `96e9f14963`).
+- **Artefacts générés et disponibles** :
+  - `hortensia-windows-x86_64-pgo-avx2-96e9f149632fcd93da96d6d9047592f6662fd7e7` (66.54 MB)
+  - `hortensia-windows-x86_64-96e9f149632fcd93da96d6d9047592f6662fd7e7` (112.62 MB)
+  - `hortensia-windows-x86_64-pgo-train-96e9f149632fcd93da96d6d9047592f6662fd7e7` (122.33 MB)
+  - `hortensia-linux-x86_64-pgo-96e9f149632fcd93da96d6d9047592f6662fd7e7` (155.65 MB)
+  - `hortensia-linux-aarch64-pgo-96e9f149632fcd93da96d6d9047592f6662fd7e7` (147.25 MB)
+  - `hortensia-macos-arm64-96e9f149632fcd93da96d6d9047592f6662fd7e7` (151.27 MB)
