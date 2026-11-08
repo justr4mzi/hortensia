@@ -62,6 +62,7 @@ add_library(video_core STATIC
     engines/puller.h
     framebuffer_config.cpp
     framebuffer_config.h
+    pipeline_cache_policy.h
     fsr.cpp
     fsr.h
     game_dlss_status.cpp

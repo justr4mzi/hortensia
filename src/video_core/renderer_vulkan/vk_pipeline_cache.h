@@ -139,6 +139,9 @@ private:
 
     std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline();
 
+    /// FixedPipelineState::Refresh of graphics_key, keeping only the vertex attribute types the
+    /// bound programs read (VideoCommon::KeyedAttributeTypes).
+    void RefreshGraphicsKey();
     std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline(
         ShaderPools& pools, const GraphicsPipelineCacheKey& key,
         std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
@@ -178,6 +181,7 @@ private:
     bool use_vulkan_pipeline_cache{};
 
     GraphicsPipelineCacheKey graphics_key{};
+    u64 vertex_attribute_types{}; ///< graphics_key's attribute types before the programs' mask
     GraphicsPipeline* current_pipeline{};
     mutable const char* graphics_miss{"no-pipeline"};
 

@@ -31,6 +31,7 @@
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/memory_manager.h"
+#include "video_core/pipeline_cache_policy.h"
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
@@ -755,6 +756,19 @@ bool PipelineCache::IsIndirectResetShader() const {
            info->lowered_native->diagnostic_key == reset_key;
 }
 
+void PipelineCache::RefreshGraphicsKey() {
+    if (!dynamic_features.has_dynamic_vertex_input) {
+        graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+        return;
+    }
+    graphics_key.state.attribute_types = vertex_attribute_types;
+    graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+    vertex_attribute_types = graphics_key.state.attribute_types;
+    graphics_key.state.attribute_types = VideoCommon::KeyedAttributeTypes(
+        vertex_attribute_types, graphics_key.unique_hashes, vertex_attribute_masks);
+}
+}
+
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
 
     if (!RefreshStages(graphics_key.unique_hashes)) {
@@ -762,7 +776,7 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
         graphics_miss = "stage-rejected";
         return nullptr;
     }
-    graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+    RefreshGraphicsKey();
 
     if (current_pipeline) {
         GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
@@ -944,6 +958,29 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
             (key.state.dynamic_vertex_input != 0) !=
                 dynamic_features.has_dynamic_vertex_input) {
             return;
+        }
+
+        // Keys stored before they kept only the attribute types the programs read are looked up
+        // masked. The pipeline is the same: a type is only dropped for an attribute no program
+        // reads. Records that now share a key are tried newest first, and the used list is
+        // carried over to the masked hashes.
+        if (key.state.dynamic_vertex_input != 0) {
+            std::array<u64, Maxwell::MaxShaderProgram> attribute_masks;
+            attribute_masks.fill(~u64{0});
+            size_t env_index = 0;
+            for (size_t stage = 0; stage < Maxwell::MaxShaderProgram; ++stage) {
+                if (key.unique_hashes[stage] != 0 && env_index < envs.size()) {
+                    attribute_masks[stage] = VideoCommon::VertexAttributeMaskOf(envs[env_index++]);
+                }
+            }
+            const u64 stored_hash = key.Hash();
+            key.state.attribute_types = VideoCommon::KeyedAttributeTypes(
+                key.state.attribute_types, key.unique_hashes, attribute_masks);
+            if (const auto used = used_pipelines.find(stored_hash); used != used_pipelines.end()) {
+                const u8 age = used->second;
+                const auto [entry, inserted] = used_pipelines.try_emplace(key.Hash(), age);
+                entry->second = (std::min)(entry->second, age);
+            }
         }
 
         const bool key_requests_provoking_last = key.state.provoking_vertex_last != 0;
