@@ -157,6 +157,8 @@ inline Nx2SparseBackingHandler g_nx2_sparse_backing;
 inline std::atomic<u64> g_nx2_sparse_low{~u64{0}};
 inline std::atomic<u64> g_nx2_sparse_high{0};
 
+inline std::atomic<u64> g_nx2_last_qmd_address{0};
+
 inline void Nx2SetSparseBacking(Nx2SparseBackingHandler handler) {
     std::scoped_lock lk{g_nx2_sparse_backing_mutex};
     g_nx2_sparse_backing = std::move(handler);

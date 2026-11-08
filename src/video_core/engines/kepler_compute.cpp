@@ -346,8 +346,9 @@ bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 ar
             [&](u64 address, NativeQmdScheduler::Descriptor& descriptor) {
                 if (!memory_manager.IsFullyMappedRange(address, sizeof(descriptor))) return false;
                 memory_manager.ReadBlockUnsafe(address, descriptor.data(), sizeof(descriptor));
-                if (static u32 logged{}; (descriptor[53] & (1U << 23)) && logged < 8) {
-                    ++logged;
+                g_nx2_last_qmd_address.store(address, std::memory_order_relaxed);
+                static u32 logged{};
+                if (logged++ < 128 || (descriptor[53] & (1U << 23))) {
                     LOG_INFO(HW_GPU, "Native QMD {:#x} releases: {:08x} | {:08x} | {:08x}", address,
                              fmt::join(std::span{descriptor}.subspan(24, 4), ","),
                              fmt::join(std::span{descriptor}.subspan(28, 4), ","),

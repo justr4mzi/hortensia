@@ -249,7 +249,10 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
         };
         if (op != GpuSemaphoreOperation::AcquireEqual && op != GpuSemaphoreOperation::AcquireGequal &&
             op != GpuSemaphoreOperation::AcquireMask) {
-            LOG_ERROR(HW_GPU, "Invalid semaphore operation {}", static_cast<u32>(op));
+            LOG_ERROR(HW_GPU, "Invalid semaphore operation {} on address {:#x} seq={:#x} trigger={:#x} (ch={}, last QMD={:#x})",
+                      static_cast<u32>(op), regs.semaphore_address.SemaphoreAddress(),
+                      regs.semaphore_sequence, regs.semaphore_trigger, dma_pusher.channel_state.bind_id,
+                      g_nx2_last_qmd_address.load(std::memory_order_relaxed));
             return;
         }
         VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::AcquireChecks, 1);
