@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <bit>
 #include <utility>
@@ -195,9 +196,7 @@ private:
     T* base_ptr{};
 
     std::vector<std::atomic<u64>> committed_pages{};
-#ifdef _WIN32
     const std::array<u8, sizeof(T)> default_val{};
-#endif
 };
 
 } // namespace Common

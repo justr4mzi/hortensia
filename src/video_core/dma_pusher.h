@@ -55,6 +55,7 @@ enum class BufferMethods : u32 {
     BindObject = 0x0,
     Illegal = 0x1,
     Nop = 0x2,
+    Method3 = 0x3,
     SemaphoreAddressHigh = 0x4,
     SemaphoreAddressLow = 0x5,
     SemaphoreSequencePayload = 0x6,

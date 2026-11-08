@@ -376,7 +376,7 @@ void Puller::CallPullerMethod(DmaPusher& dma_pusher, const MethodCall& method_ca
         break;
     }
     case BufferMethods::Nop:
-    case static_cast<BufferMethods>(3):
+    case BufferMethods::Method3:
     case BufferMethods::SemaphoreAddressHigh:
     case BufferMethods::SemaphoreAddressLow:
     case BufferMethods::SemaphoreSequencePayload:
