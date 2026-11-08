@@ -262,6 +262,7 @@ One `NAME=VALUE` per line. Restart Hortensia after editing.
 | `EDEN_NX2_TENSOR` | `1` | Emulate Ampere HMMA with collective TENSOR_MUL_ADD on Maxwell (`=0` off) |
 | `EDEN_NX2_DK_60FPS` | `1` (DK) | Cap Donkey Kong Bananza framerate at 60 FPS in PaceToVblank (`=0` uncapped) |
 | `EDEN_NX2_UPSCALE_REPLACE` | `1` (OOT) | Replace OOT title neural upscale with direct surface copy (`=0` off) |
+| `EDEN_NX2_OCCLUSION_OFF` | `0` (OOT) | Opt-in patch bypassing z-prepass and occlusion queries (`=1` on) |
 | `EDEN_NX2_HIGH_PRIORITY` | `1` | Run emulator process at high priority (`=0` normal) |
 | `EDEN_TIMING_COARSE` | `1` | Sleep timer thread during long waits (`=0` precise waits) |
 | `EDEN_NX2_GSV_HOST_THREAD` | `1` | Run Switch 2 graphics services on dedicated host thread (`=0` off) |
