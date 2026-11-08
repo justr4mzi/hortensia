@@ -9,6 +9,12 @@ Hortensia v1.0.0 marks a major milestone as the definitive, production-ready rel
 ### 1. Game Repairs & Fixes
 
 - **The Legend of Zelda: Ocarina of Time (NUP / Loose Dump)**:
+  - **Movie Audio/Video Desync Resolved**: SD card reads are now unthrottled during video cutscenes (port of Lichii/Fritchii), running audio management across host worker threads to eliminate subtitles leading or lagging dialogue.
+  - **Water & Waterfall Flickering Fixed**: Bound no texture when a handle word represents a storage buffer address, completely fixing waterfall and water surface texture corruption and flashing.
+  - **Village & Foliage Performance Boost**: Polling suspended GPU channels every 50 µs instead of 1 ms, boosting Kokiri Village and dense open areas by +11% to +24% FPS.
+  - **Cooperative Matrix Acceleration (HMMA.16816.F16)**: Full support for native Vulkan cooperative matrices (VK_KHR_cooperative_matrix 16x16x16) for Tensor operations, accelerating modern GPUs (NVIDIA RTX 20/30/40, AMD RDNA3/4) while safely falling back on older architectures (RDNA1/2).
+  - **Dynamic FPS Real Scaling**: Kept Ocarina's Dynamic FPS real down to 10 FPS to prevent stuttering during heavy transitions.
+  - **Occlusion Query Bypass (Built-in Patch)**: Added EDEN_NX2_OCCLUSION_OFF=1 to eliminate occlusion query stalls in CPU-bound areas.
   - **249s Native Crash Fixed**: Completely resolved native crash at 249.66 s (`Unmapped Device WriteBlock` of 4.1 MB) during movie playback by implementing strict address space boundary guards across `DeviceMemoryManager` (`WalkBlock`, `GetSpan`, `GetPointer`, `ReadBlock`, `WriteBlock`) and fixing out-of-bounds page checks in `SparseLargeVector`.
   - **Launch Crash Resolved**: Fixed native emulator crash on startup (at 3.7 s) by properly scoping `Loader::AppLoader* report_loader` in `MainWindow::BootGame`, preventing dangling pointers and null dereferences when building compatibility sessions.
   - **NUP Display Version & Applet Protection**: Added `ReadDisplayVersion` to `AppLoader_NUP` and guarded `m_applet` against null dereferences in `LooseDumpDisplayVersion`.
