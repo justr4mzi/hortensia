@@ -468,10 +468,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             }
         }
         // EDEN_NX2_EXP21 (default 1; 0 = off): no texture for a handle that is a buffer address.
-        static const bool null_pointer_handles = [] {
-            const char* const env = std::getenv("EDEN_NX2_EXP21");
-            return env == nullptr || env[0] != '0';
-        }();
+        const bool null_pointer_handles{VideoCore::Nx2Debug::Experiment(21) != 0};
         for (const auto& desc : info.texture_descriptors) {
             for (u32 index = 0; index < desc.count; ++index) {
                 const auto handle{null_pointer_handles &&
@@ -504,7 +501,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
                                  desc.size_shift, desc.handle_program, program, handle.first,
                                  handle.second, desc.cbuf_index, desc.cbuf_offset,
                                  desc.cbuf_index < cbufs.size() && cbufs[desc.cbuf_index].enabled
-                                     ? gpu_memory->Read<u32>(
+                                     ? gpu_memory->ReadHandleWord(
                                            cbufs[desc.cbuf_index].address + desc.cbuf_offset)
                                      : 0U);
                     }
