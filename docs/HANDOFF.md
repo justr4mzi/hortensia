@@ -713,3 +713,23 @@ ebase/smileytatsu.
 
 - **Pokopia (Bug E)** :
   - Le ciel de Pokopia n'a fait l'objet d'aucune modification, conform?ment ? la demande.
+
+## Section 20 (2026-11-08) : Validation multi-compilateurs 100% VERTE (Run 42433075086) et binaires v1.0.0
+
+- **R?solution des deux r?gressions de portabilit? de compilation (commit `1ac6081ff815a679df62a8b2fa8a5a40a3ece1cf`)** :
+  - **`src/common/sparse_large_vector.h`** : Suppression de la garde `#ifdef _WIN32` autour de `default_val` afin de rendre la valeur de repli hors-bornes disponible sur toutes les architectures (Linux x86_64, Linux ARM64, macOS ARM64), et inclusion explicite du header `<array>`.
+  - **`src/video_core/dma_pusher.h` & `src/video_core/engines/puller.cpp`** : Ajout de la valeur `Method3 = 0x3` dans l'?num?ration `enum class BufferMethods : u32` et mise ? jour de la clause du switch `case BufferMethods::Method3:` pour ?liminer l'erreur Clang `-Werror,-Wswitch` sous MinGW.
+
+- **Ex?cution et validation compl?te du pipeline CI `release-binaries.yml` (Run 42433075086)** :
+  - Les 6 jobs de compilation multi-plateformes sont pass?s avec un statut **100 % VERT (`success`)** :
+    1. `windows-x86_64-pgo-avx2 binary` : **SUCCESS** (MinGW Clang PGO avec instructions AVX2 / x86-64-v3 + ThinLTO) -> Artifact ID `13598832417` (66.49 Mo).
+    2. `windows-x86_64 binary` : **SUCCESS** (MSVC x86-64 standard de compatibilit?) -> Artifact ID `13598941824` (112.56 Mo).
+    3. `windows-x86_64-pgo-train binary` : **SUCCESS** (MinGW profilage instrument?) -> Artifact ID `13599160403` (122.28 Mo).
+    4. `linux-x86_64-pgo binary` : **SUCCESS** (Clang PGO + ThinLTO AppImage) -> Artifact ID `13598982334` (155.59 Mo).
+    5. `linux-aarch64-pgo binary` : **SUCCESS** (Linux ARM64 PGO AppImage) -> Artifact ID `13599001154` (147.14 Mo).
+    6. `macos-arm64 binary` : **SUCCESS** (macOS Apple Silicon .app/.dmg) -> Artifact ID `13598188215` (151.14 Mo).
+
+- **Statut de livraison** :
+  - Branche de travail : `rebase/smileytatsu`.
+  - Commit final valid? : `1ac6081ff815a679df62a8b2fa8a5a40a3ece1cf`.
+  - La branche `main` demeure intacte tant que la validation interactive par Ramzi n'a pas confirm? le passage en release publique.
