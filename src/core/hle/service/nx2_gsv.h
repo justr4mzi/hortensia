@@ -1998,15 +1998,18 @@ private:
             swap_interval = mkw_interval;
         }
         const u32 refresh_rate = (timing & 0xffff) >= 30 && (timing & 0xffff) <= 240 ? timing & 0xffff : 60;
-        // Cap menus/loading frame rate to 60 FPS max for OOT & Switch Sports without touching MKW unlock
+        // Cap frame rate to 60 FPS max for OOT, DKB & Switch Sports without touching MKW unlock
         constexpr u64 OcarinaOfTimeProgramId = 0x0400486024DEC000ULL;
         constexpr u64 SwitchSportsProgramId = 0x04008E001F098000ULL;
+        constexpr u64 SwitchSportsAltProgramId = 0x04004B2019E02000ULL;
         constexpr u64 DKBananzaProgramId = 0x040074A01BF12000ULL;
         const u64 current_app_id = process != nullptr ? process->GetProgramId() : 0ULL;
+        const bool is_capped_60 = (current_app_id == OcarinaOfTimeProgramId ||
+                                   current_app_id == SwitchSportsProgramId ||
+                                   current_app_id == SwitchSportsAltProgramId ||
+                                   current_app_id == DKBananzaProgramId);
         u32 effective_refresh_rate = refresh_rate;
-        if ((current_app_id == OcarinaOfTimeProgramId || current_app_id == SwitchSportsProgramId ||
-             current_app_id == DKBananzaProgramId) &&
-            forced_interval == 0 && effective_refresh_rate > 60) {
+        if (is_capped_60 && forced_interval == 0 && effective_refresh_rate > 60) {
             effective_refresh_rate = 60;
         }
         if (timing != std::exchange(m_swap_word, timing)) {
@@ -2020,12 +2023,18 @@ private:
             // Running slower than the swap interval: show at once and don't bank the lost time.
             m_next_vblank = now;
         } else if (now < m_next_vblank) {
-            // Sleep this service thread in the guest kernel. It runs on guest core 3, and a host
-            // sleep held that core for the whole wait: game threads scheduled there ran only
-            // between presents (Fortune's Weave's loader read one RomFS block per frame).
-            const auto wait = std::chrono::duration_cast<std::chrono::nanoseconds>(m_next_vblank - now);
-            static_cast<void>(Kernel::GetCurrentThread(kernel).Sleep(
-                kernel, kernel.HardwareTimer().GetTick() + wait.count() + 2));
+            if (is_capped_60) {
+                // Ensure games like OOT, DKB, Switch Sports strictly adhere to 60 FPS in wall-clock time
+                // even on high-refresh-rate host displays (144 Hz / 240 Hz).
+                std::this_thread::sleep_until(m_next_vblank);
+            } else {
+                // Sleep this service thread in the guest kernel. It runs on guest core 3, and a host
+                // sleep held that core for the whole wait: game threads scheduled there ran only
+                // between presents (Fortune's Weave's loader read one RomFS block per frame).
+                const auto wait = std::chrono::duration_cast<std::chrono::nanoseconds>(m_next_vblank - now);
+                static_cast<void>(Kernel::GetCurrentThread(kernel).Sleep(
+                    kernel, kernel.HardwareTimer().GetTick() + wait.count() + 2));
+            }
         }
         m_next_vblank += interval;
         m_fps_logger.OnPresent(now);

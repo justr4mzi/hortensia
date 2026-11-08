@@ -363,6 +363,9 @@ template <typename Traits>
 u8* DeviceMemoryManager<Traits>::GetSpan(const DAddr src_addr, const std::size_t size) {
     size_t page_index = src_addr >> page_bits;
     size_t subbits = src_addr & page_mask;
+    if (page_index >= tracked_entries.size()) {
+        return nullptr;
+    }
     if ((static_cast<size_t>(tracked_entries[page_index].continuity_tracker+1) << page_bits) >= size + subbits) {
         return GetPointer<u8>(src_addr);
     }
@@ -373,6 +376,9 @@ template <typename Traits>
 const u8* DeviceMemoryManager<Traits>::GetSpan(const DAddr src_addr, const std::size_t size) const {
     size_t page_index = src_addr >> page_bits;
     size_t subbits = src_addr & page_mask;
+    if (page_index >= tracked_entries.size()) {
+        return nullptr;
+    }
     if ((static_cast<size_t>(tracked_entries[page_index].continuity_tracker+1) << page_bits) >= size + subbits) {
         return GetPointer<u8>(src_addr);
     }
@@ -398,6 +404,8 @@ template <typename T>
 T* DeviceMemoryManager<Traits>::GetPointer(DAddr address) {
     const size_t index = address >> Memory::YUZU_PAGEBITS;
     const size_t offset = address & Memory::YUZU_PAGEMASK;
+    if (index >= tracked_entries.size()) [[unlikely]]
+        return nullptr;
     auto phys_addr = tracked_entries[index].compressed_physical_ptr;
     if (phys_addr == 0) [[unlikely]]
         return nullptr;
@@ -409,6 +417,8 @@ template <typename T>
 const T* DeviceMemoryManager<Traits>::GetPointer(DAddr address) const {
     const size_t index = address >> Memory::YUZU_PAGEBITS;
     const size_t offset = address & Memory::YUZU_PAGEMASK;
+    if (index >= tracked_entries.size()) [[unlikely]]
+        return nullptr;
     auto phys_addr = tracked_entries[index].compressed_physical_ptr;
     if (phys_addr == 0)
         return nullptr;
@@ -439,11 +449,17 @@ T DeviceMemoryManager<Traits>::Read(DAddr address) const {
 
 template <typename Traits>
 void DeviceMemoryManager<Traits>::WalkBlock(DAddr addr, std::size_t size, auto on_unmapped, auto on_memory, auto increment) {
+    if (size == 0) return;
     std::size_t remaining_size = size;
     std::size_t page_index = addr >> Memory::YUZU_PAGEBITS;
     std::size_t page_offset = addr & Memory::YUZU_PAGEMASK;
+    const std::size_t max_pages = tracked_entries.size();
     while (remaining_size) {
-        const size_t next_pages = std::size_t(tracked_entries[page_index].continuity_tracker+1);
+        if (page_index >= max_pages) [[unlikely]] {
+            on_unmapped(remaining_size, u64((page_index << Memory::YUZU_PAGEBITS) + page_offset));
+            break;
+        }
+        const size_t next_pages = (std::max<size_t>)(1, std::size_t(tracked_entries[page_index].continuity_tracker+1));
         const std::size_t copy_amount = (std::min)((next_pages << Memory::YUZU_PAGEBITS) - page_offset, remaining_size);
         const auto current_vaddr = u64((page_index << Memory::YUZU_PAGEBITS) + page_offset);
         SCOPE_EXIT{
@@ -459,7 +475,11 @@ void DeviceMemoryManager<Traits>::WalkBlock(DAddr addr, std::size_t size, auto o
             continue;
         }
         auto* mem_ptr = GetPointerFromRaw<u8>((PAddr(phys_addr - 1) << Memory::YUZU_PAGEBITS) + page_offset);
-        on_memory(copy_amount, mem_ptr);
+        if (mem_ptr != nullptr) [[likely]] {
+            on_memory(copy_amount, mem_ptr);
+        } else {
+            on_unmapped(copy_amount, current_vaddr);
+        }
     }
 }
 
@@ -478,13 +498,15 @@ void DeviceMemoryManager<Traits>::ReadBlock(DAddr address, void* dest_pointer, s
         }
 
         const std::size_t page_index = address >> Memory::YUZU_PAGEBITS;
-        const auto phys_addr = tracked_entries[page_index].compressed_physical_ptr;
-        if (phys_addr != 0) {
-            auto* const mem_ptr = GetPointerFromRaw<u8>((PAddr(phys_addr - 1) << Memory::YUZU_PAGEBITS));
-            cache.slots[cache.cursor] = TranslationEntry{.guest_page = guest_page, .host_ptr = mem_ptr};
-            cache.cursor = (cache.cursor + 1) & 3U;
-            std::memcpy(dest_pointer, mem_ptr + page_offset, size);
-            return;
+        if (page_index < tracked_entries.size()) {
+            const auto phys_addr = tracked_entries[page_index].compressed_physical_ptr;
+            if (phys_addr != 0) {
+                auto* const mem_ptr = GetPointerFromRaw<u8>((PAddr(phys_addr - 1) << Memory::YUZU_PAGEBITS));
+                cache.slots[cache.cursor] = TranslationEntry{.guest_page = guest_page, .host_ptr = mem_ptr};
+                cache.cursor = (cache.cursor + 1) & 3U;
+                std::memcpy(dest_pointer, mem_ptr + page_offset, size);
+                return;
+            }
         }
     }
     WalkBlock(
@@ -509,6 +531,7 @@ void DeviceMemoryManager<Traits>::ReadBlock(DAddr address, void* dest_pointer, s
 
 template <typename Traits>
 void DeviceMemoryManager<Traits>::WriteBlock(DAddr address, const void* src_pointer, size_t size) {
+    bool has_mapped = false;
     WalkBlock(
         address, size,
         [&](size_t copy_amount, DAddr current_vaddr) {
@@ -521,12 +544,15 @@ void DeviceMemoryManager<Traits>::WriteBlock(DAddr address, const void* src_poin
             }
         },
         [&](size_t copy_amount, u8* const dst_ptr) {
+            has_mapped = true;
             std::memcpy(dst_ptr, src_pointer, copy_amount);
         },
         [&](const std::size_t copy_amount) {
             src_pointer = static_cast<const u8*>(src_pointer) + copy_amount;
         });
-    device_inter->InvalidateRegion(address, size);
+    if (has_mapped) {
+        device_inter->InvalidateRegion(address, size);
+    }
 }
 
 template <typename Traits>
@@ -543,13 +569,15 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
         }
 
         const std::size_t page_index = address >> Memory::YUZU_PAGEBITS;
-        const auto phys_addr = tracked_entries[page_index].compressed_physical_ptr;
-        if (phys_addr != 0) {
-            auto* const mem_ptr = GetPointerFromRaw<u8>((PAddr(phys_addr - 1) << Memory::YUZU_PAGEBITS));
-            cache.slots[cache.cursor] = TranslationEntry{.guest_page = guest_page, .host_ptr = mem_ptr};
-            cache.cursor = (cache.cursor + 1) & 3U;
-            std::memcpy(dest_pointer, mem_ptr + page_offset, size);
-            return;
+        if (page_index < tracked_entries.size()) {
+            const auto phys_addr = tracked_entries[page_index].compressed_physical_ptr;
+            if (phys_addr != 0) {
+                auto* const mem_ptr = GetPointerFromRaw<u8>((PAddr(phys_addr - 1) << Memory::YUZU_PAGEBITS));
+                cache.slots[cache.cursor] = TranslationEntry{.guest_page = guest_page, .host_ptr = mem_ptr};
+                cache.cursor = (cache.cursor + 1) & 3U;
+                std::memcpy(dest_pointer, mem_ptr + page_offset, size);
+                return;
+            }
         }
     }
     WalkBlock(

@@ -101,8 +101,10 @@ public:
     }
 
     PAddr GetPhysicalRawAddressFromDAddr(DAddr address) const {
+        const size_t page_index = address >> page_bits;
+        if (page_index >= tracked_entries.size()) return 0;
         PAddr subbits = PAddr(address & page_mask);
-        auto paddr = tracked_entries[(address >> page_bits)].compressed_physical_ptr;
+        auto paddr = tracked_entries[page_index].compressed_physical_ptr;
         if (paddr == 0) {
             return 0;
         }

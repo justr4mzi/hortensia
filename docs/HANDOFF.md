@@ -671,3 +671,45 @@ ebase/smileytatsu.
     - La table des fonctions Switch 2 et le header déclaraient `GetBuiltInFontDataSet` (commande 2020), mais son corps était manquant dans `platform_service_manager.cpp`.
     - Implémentation complète portée depuis Orchid (`ee934b2e21`) décodant les types demandés et renvoyant le tableau de descripteurs de polices intégrées (`Descriptor { flags, offset, size }`) dans le tampon IPC.
     - Élimine l'erreur d'édition de liens `undefined symbol: Service::NS::IPlatformServiceManager::GetBuiltInFontDataSet(Service::HLERequestContext&)` bloquant l'exécutable final.
+
+
+## Section 19 (2026-11-08) : R?solution des bugs bloquants pour la version finale v1.0.0
+
+- **Bug A : Freeze en fin de session sur Donkey Kong Bananza (log 1f164807)** :
+  - **Correction QMD Scheduler (`src/video_core/native_qmd.h`)** :
+    - ?limination du rejet strict de la file secondaire Ampere `(qmd[4] & 0x100)` et des versions QMD alternatives (`0x20`, `0x31`, `0x00`) qui renvoyaient imm?diatement `unsupported QMD version or queue`.
+    - En cas d'erreur de dispatch ou de format, le planificateur QMD marque d?sormais `state.completed = true` et ex?cute obligatoirement les lib?rations de s?maphores (`ReleaseSlots`) au lieu de court-circuiter l'ex?cution.
+    - Dans la boucle de lib?ration, si une adresse de destination individuelle est temporairement non mapp?e, l'erreur est consign?e mais le traitement continue pour les autres slots et pour le cha?nage des QMD d?pendants.
+  - **Secours de lib?ration des s?maphores GPU (`src/video_core/engines/kepler_compute.cpp`)** :
+    - En cas d'?chec d'un QMD, les slots de lib?ration (mots 24, 28, 52) sont imm?diatement signal?s (`SignalFence` ou `Query`) avec garantie d'allocation de blocs sparse (`Nx2BackSparseWrite`), emp?chant d?finitivement les canaux GPU 1 et 2 d'attendre ind?finiment sur un s?maphore non lib?r? (`CanResumeAcquire`).
+    - Suppression de l'affectation agressive `native_macro->native_execution_failed = true` sur simple avertissement de QMD.
+  - **Prise en charge de la m?thode Puller 3 (`src/video_core/engines/puller.cpp`)** :
+    - Ajout de `case static_cast<BufferMethods>(3):` trait? comme NOP dans le puller, ?liminant l'erreur `Special puller engine method 3 not implemented` et les dumps d'?tat associ?s.
+
+- **Bug B : Crash natif OOT ? 249 s (Unmapped Device WriteBlock, log 1db98500)** :
+  - **Protection des acc?s hors bornes du gestionnaire m?moire p?riph?rique (`src/core/device_memory_manager.inc`, `device_memory_manager.h`)** :
+    - `WalkBlock` : ajout d'une garde de taille nulle et d'une v?rification stricte `page_index >= tracked_entries.size()`. Si l'adresse GPU d?passe l'espace adressable, la copie est ignor?e proprement via `on_unmapped` et la boucle est interrompue sans d?r?f?rencer la m?moire h?te.
+    - `GetPointer` et `GetSpan` : ajout de gardes de bornes `page_index >= tracked_entries.size()` renvoyant `nullptr` de mani?re s?curis?e.
+    - `ReadBlock` et `ReadBlockUnsafe` : v?rification que `page_index < tracked_entries.size()` avant de lire `compressed_physical_ptr`.
+    - `WriteBlock` : l'invalidation de r?gion dans le rasterizer (`device_inter->InvalidateRegion`) n'est d?clench?e que si des pages effectivement mapp?es ont ?t? ?crites.
+  - **Correction des d?bordements dans `SparseLargeVector` (`src/common/sparse_large_vector.h`)** :
+    - Correction de la condition de validation de page : remplacement du test permissif `index > alloc_size / sizeof(T)` par `index >= alloc_size / sizeof(T)`.
+    - Dans `GetOrDefault`, renvoi imm?diat de `default_val` si `index >= alloc_size / sizeof(T)`, ?vitant le d?r?f?rencement d'un pointeur m?moire au-del? du buffer allou? qui causait l'arr?t brutal sans message d'erreur.
+  - **Garantie de mapping sparse pour les releases de calcul (`src/video_core/engines/kepler_compute.cpp`)** :
+    - Appel ? `Tegra::Nx2BackSparseWrite` sur l'adresse de destination avant de v?rifier `IsFullyMappedRange`, garantissant que les pages sparse allou?es par le compute natif re?oivent leur m?moire physique avant d'?mettre le s?maphore.
+    - Aucun changement apport? ? `PBFLUSH`.
+
+- **Bug C : Analyse des flashs blancs sur Ocarina of Time (log 1db98500)** :
+  - Examen approfondi de la cha?ne de r?troaction couleur dans `texture_cache.h:603` (`CheckFeedbackLoop`) et du vidage r?actif CPU (`gpu.cpp:267`).
+  - La copie de texture vers le buffer d'ombre (`runtime.CopyImage`) utilise des barri?res de transition m?moire Vulkan strictes (`TRANSFER_SRC_OPTIMAL` vers `TRANSFER_DST_OPTIMAL`) et copie fid?lement le contenu.
+  - Conform?ment aux instructions, aucun contournement hasardeux n'a ?t? ins?r? dans la boucle de feedback sans preuve absolue de r?gression dans le code ; le comportement est consign? pour le rapport final.
+
+- **Bug D : Limitation stricte ? 60 FPS sur ?crans ? haut rafra?chissement (144 Hz+)** :
+  - **Cadencement temporel pr?cis (`src/core/hle/service/nx2_gsv.h`)** :
+    - Identification cibl?e des jeux cap?s ? 60 FPS : The Legend of Zelda: Ocarina of Time (`0400486024DEC000`), Donkey Kong Bananza (`040074A01BF12000`) et Nintendo Switch Sports (`04008E001F098000` et `04004B2019E02000`).
+    - Pour ces titres, `effective_refresh_rate` est plafonn? ? 60 Hz et le temps d'attente inter-trames (`interval = 16.666 ms`) est appliqu? via un sommeil h?te pr?cis (`std::this_thread::sleep_until(m_next_vblank)`).
+    - Cela emp?che le rafra?chissement de l'?cran h?te (144 Hz) d'acc?l?rer artificiellement la cadence de trame ? 144 FPS lorsque le limiteur multic?ur est inactif.
+    - Mario Kart World (`Settings::MarioKartWorldProgramId`) reste totalement non cap? avec son patch de framerate dynamique actif.
+
+- **Pokopia (Bug E)** :
+  - Le ciel de Pokopia n'a fait l'objet d'aucune modification, conform?ment ? la demande.

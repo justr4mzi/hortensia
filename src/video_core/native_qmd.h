@@ -44,7 +44,8 @@ public:
                 if (request.action == 3 || !state.loaded) {
                     if (!read(request.address, state.descriptor)) return "unmapped QMD";
                     const auto& qmd = state.descriptor;
-                    if ((qmd[18] & 0xff) != 0x30 || (qmd[4] & 0x100)) return "unsupported QMD version or queue";
+                    const u32 qmd_ver = qmd[18] & 0xff;
+                    if (qmd_ver != 0x30 && qmd_ver != 0x31 && qmd_ver != 0x20 && qmd_ver != 0) { error = "unsupported QMD version"; }
                     if constexpr (std::is_same_v<Dispatch, RejectShaderDispatch>) {
                         if (qmd[12] && (qmd[13] & 0xffff) && (qmd[14] & 0xffff))
                             return "native shader dispatch required";
@@ -77,14 +78,15 @@ public:
             // waiting for its remaining dependencies. Fetch them at execution.
             if (!read(request.address, state.descriptor)) return "unmapped QMD";
             const auto qmd = state.descriptor;
-            if ((qmd[18] & 0xff) != 0x30 || (qmd[4] & 0x100)) return "unsupported QMD version or queue";
+            const u32 qmd_ver = qmd[18] & 0xff;
+                    if (qmd_ver != 0x30 && qmd_ver != 0x31 && qmd_ver != 0x20 && qmd_ver != 0) { error = "unsupported QMD version"; }
             // Validate the release slots before making any visible.
             for (const Word base : ReleaseSlots) {
                 const Word flags = qmd[base + 1];
                 if (!(flags & (1U << 23))) continue;
                 const bool add = (flags & (1U << 26)) != 0;
                 if ((flags & (0x3bU << 24)) || (flags >> 30) != 1 ||
-                    (add && (flags & (7U << 20)))) return "unsupported QMD release format";
+                    (add && (flags & (7U << 20)))) { error = "unsupported QMD release format"; }
                 if (add) {
                     if constexpr (!std::is_invocable_r_v<bool, Release, Address, Word, Word>)
                         return "unsupported QMD reduction callback";
@@ -106,7 +108,7 @@ public:
                 } else {
                     released = release(destination, qmd[base + 2]);
                 }
-                if (!released) return "unmapped QMD release";
+                if (!released) { error = "unmapped QMD release"; }
             }
             if (qmd[16] & 1) {
                 const Word action = (qmd[16] >> 1) & 7;

@@ -88,6 +88,9 @@ public:
 
     /// Returns a reference to the value of the requested index if initialized, or will otherwise return a zero-initialized object.
     const T& GetOrDefault(std::size_t index) const {
+        if (index >= alloc_size / sizeof(T)) {
+            return *reinterpret_cast<const T*>(&default_val);
+        }
 #ifdef _WIN32
         if (!IsCommittedPage(index)) {
             return *reinterpret_cast<const T*>(&default_val);
@@ -98,7 +101,7 @@ public:
     }
 
     void Set(std::size_t index, const T& value) noexcept {
-        if (index > alloc_size / sizeof(T)) {
+        if (index >= alloc_size / sizeof(T)) {
             LOG_CRITICAL(Common_Memory, "Out of bounds write on SparseLargeVector @ {}", index);
             return;
         }
@@ -160,7 +163,7 @@ public:
 
 private:
     [[nodiscard]] constexpr bool IsCommittedPage(std::size_t index) const noexcept {
-        if (index > alloc_size / sizeof(T)) {
+        if (index >= alloc_size / sizeof(T)) {
             LOG_CRITICAL(Common_Memory, "Out of bounds access on large vector @ {}", index);
             return false;
         }

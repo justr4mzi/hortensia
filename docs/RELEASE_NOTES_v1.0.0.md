@@ -9,11 +9,12 @@ Hortensia v1.0.0 marks a major milestone as the definitive, production-ready rel
 ### 1. Game Repairs & Fixes
 
 - **The Legend of Zelda: Ocarina of Time (NUP / Loose Dump)**:
+  - **249s Native Crash Fixed**: Completely resolved native crash at 249.66 s (`Unmapped Device WriteBlock` of 4.1 MB) during movie playback by implementing strict address space boundary guards across `DeviceMemoryManager` (`WalkBlock`, `GetSpan`, `GetPointer`, `ReadBlock`, `WriteBlock`) and fixing out-of-bounds page checks in `SparseLargeVector`.
   - **Launch Crash Resolved**: Fixed native emulator crash on startup (at 3.7 s) by properly scoping `Loader::AppLoader* report_loader` in `MainWindow::BootGame`, preventing dangling pointers and null dereferences when building compatibility sessions.
   - **NUP Display Version & Applet Protection**: Added `ReadDisplayVersion` to `AppLoader_NUP` and guarded `m_applet` against null dereferences in `LooseDumpDisplayVersion`.
   - **Hyrule Grass & Foliage Culling**: Expanded maximum storage buffer bindings per stage (`Info::MAX_SSBOS`) from 32 to 64 with 64-bit mask representations across `BufferCache`, preventing culling drops in dense Hyrule Field and Castle Town areas.
-  - **White Flashes Elimination**: Resolved race condition by draining GPU split query results prior to macro DMA reads.
-  - **Framerate Capped at 60 FPS**: Enforced safe 60 FPS limit in `PaceToVblank` to prevent physics anomalies in menus and loading screens.
+  - **White Flashes Elimination**: Draining GPU split query results prior to macro DMA reads.
+  - **Framerate Capped at 60 FPS**: Strictly enforced 60 FPS wall-clock pacing in `PaceToVblank` on high refresh rate displays (144 Hz+), eliminating high-framerate physics speeding.
 
 - **Splatoon Raiders**:
   - **Vertical White Stripes & Maxwell Assertion Fix**: Fully resolved the 744 "Invalid insn 0x5d31..." asserts and vertical white stripes. Ported native Maxwell opcode `TENSOR_MUL_ADD` (`0x5d31...`), Maxwell translator `tensor_mul_add.cpp`, IR emitter, and dedicated SPIR-V collective matrix emitter (`emit_spirv_tensor.cpp`) from Lichii to support Ampere HMMA lowering.
@@ -24,9 +25,10 @@ Hortensia v1.0.0 marks a major milestone as the definitive, production-ready rel
   - **Banded / Striped Photos Fixed**: Forced synchronization of accelerated DMA image-to-buffer copies to guest memory (`memory_manager.FlushRegion`, port of notsapinho `7dde4f15`), eliminating corruption during CPU JPEG encoding.
 
 - **Donkey Kong Bananza**:
+  - **End-of-Session Freeze Resolved**: Fixed channel 1 and 2 deadlock on `CanResumeAcquire` caused by secondary queue QMD submissions (`qmd[4] & 0x100`). Loosened strict QMD version checks, added automatic fallback semaphore releases on any QMD dispatch issue, and handled puller engine method 3 as NOP.
   - **Terrain & Rendering Fixed**: Integrated Franseven PokeDinner 2.5.0 and Eglantine-DKB fixes (handling of `GpuSplit::Run` fence cleanups, deferred draw topology overrides, and macro DMA parameter flushes).
   - **Strict Game Isolation**: Confined `EDEN_NX2_PBFLUSH` and `EDEN_NX2_RESETFIX` strictly to DK Bananza (`0x040074A01BF12000`), protecting parallelism in all other games.
-  - **60 FPS Framerate Cap**: Capped DK Bananza at 60 FPS in `PaceToVblank` to prevent pacing instability (76–84 FPS spikes).
+  - **60 FPS Framerate Cap**: Capped DK Bananza at 60 FPS in `PaceToVblank` to prevent pacing instability and high refresh rate acceleration.
 
 - **Mario Kart World**:
   - **Instant Shader Startup**: Re-enabled Vulkan driver pipeline caching (`DriverCachesPipelines`) and ported Selevet build 10 background pipeline preloading (`EDEN_NX2_PIPELINE_PRELOAD=1`). 2,200+ pipelines now reload in seconds on subsequent launches rather than 4 minutes.

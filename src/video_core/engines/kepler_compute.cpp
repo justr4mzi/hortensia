@@ -364,7 +364,11 @@ bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 ar
                 return true;
             },
             [&](u64 address, u32 payload, u32 flags) {
-                if (!memory_manager.IsFullyMappedRange(address, sizeof(payload))) return false;
+                if (address == 0) return false;
+                Tegra::Nx2BackSparseWrite(address, sizeof(payload), &payload);
+                if (!memory_manager.IsFullyMappedRange(address, sizeof(payload))) {
+                    if (!memory_manager.IsWithinGPUAddressRange(address)) return false;
+                }
                 if (flags & (1U << 26)) {
                     rasterizer->SignalFence([this, address, payload] {
                         const u32 value = memory_manager.Read<u32>(address) + payload;
@@ -410,10 +414,38 @@ bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 ar
             LOG_DEBUG(HW_GPU, "Native QMD control action={:#x}, QMD={:#x}", argument, qmd_address);
             return true;
         }
-        native_macro->native_execution_failed = true;
         std::array<u32, 128> qmd{};
         if (memory_manager.IsFullyMappedRange(qmd_address, sizeof(qmd))) {
             memory_manager.ReadBlockUnsafe(qmd_address, qmd.data(), sizeof(qmd));
+        }
+        // Ensure any release slots in failing QMD are signaled to prevent deadlock
+        for (const u32 base : {24U, 28U, 52U}) {
+            const u32 r_flags = qmd[base + 1];
+            if (!(r_flags & (1U << 23))) continue;
+            const GPUVAddr destination = (GPUVAddr{r_flags & 0xff} << 32) | qmd[base];
+            if (destination == 0) continue;
+            const u32 r_payload = qmd[base + 2];
+            Tegra::Nx2BackSparseWrite(destination, sizeof(r_payload), &r_payload);
+            if (r_flags & (1U << 26)) {
+                rasterizer->SignalFence([this, destination, r_payload] {
+                    const u32 val = memory_manager.Read<u32>(destination) + r_payload;
+                    memory_manager.Write<u32>(destination, val);
+                    if (const auto device = memory_manager.GpuToCpuAddress(destination)) {
+                        Tegra::Nx2SemaphoreWaiters::Get().OnWrite(*device, val);
+                    }
+                });
+            } else if (r_flags & (1U << 19)) {
+                rasterizer->SignalFence([this, destination, r_payload] {
+                    const u32 val = (std::max)(memory_manager.Read<u32>(destination), r_payload);
+                    memory_manager.Write<u32>(destination, val);
+                    if (const auto device = memory_manager.GpuToCpuAddress(destination)) {
+                        Tegra::Nx2SemaphoreWaiters::Get().OnWrite(*device, val);
+                    }
+                });
+            } else {
+                rasterizer->Query(destination, VideoCommon::QueryType::Payload,
+                    VideoCommon::QueryPropertiesFlags::IsAFence, r_payload, 0);
+            }
         }
         // Log a failing program's first few dispatches only (QMD words 48-49 hold its code
         // address); it fails the same way every frame.

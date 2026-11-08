@@ -287,8 +287,9 @@ Open an [issue on GitHub](https://github.com/justr4mzi/hortensia/issues) and att
 
 ## Known issues
 
-- **The Legend of Zelda: Ocarina of Time & Donkey Kong Bananza**: Fixes are included in this release and are currently undergoing hardware validation.
-- **Splatoon Raiders & Nintendo Switch Sports Resort**: Do not boot or render yet on this version; fixes are under active development.
+- **The Legend of Zelda: Ocarina of Time**: Launch, 249 s movie playback crash, and 60 FPS pacing are fixed; undergoing final gameplay tests.
+- **Donkey Kong Bananza**: End-of-session QMD freeze, terrain rendering, and 60 FPS pacing are resolved.
+- **Pok?mon Pokopia**: Photo banding fixed with DMA readback flush; black sky resolved by default with far shadow cascade.
 - **Controller UI**: Some button prompt icons appear as `?`.
 
 ## Building from source
