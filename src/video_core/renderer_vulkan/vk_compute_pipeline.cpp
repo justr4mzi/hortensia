@@ -90,10 +90,7 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
         };
         // Only warp-level ops observe the subgroup size. Forcing 32 on other shaders makes Intel
         // compile SIMD32, which can spill a register-heavy kernel for minutes (Mario Kart World).
-        // A shader that lost a conditional barrier counts too: it relies on a whole warp running
-        // in step, and at a smaller subgroup size it reads stale shared memory, which shows as
-        // banding over the image in Mario Kart World on Intel's Windows driver.
-        const bool uses_warp_ops = info.UsesWarpOps();
+        const bool uses_warp_ops = info.UsesWarpOps() || info.uses_cooperative_matrix;
         VkPipelineCreateFlags flags{};
         if (device.IsKhrPipelineExecutablePropertiesEnabled() && Settings::values.renderer_debug.GetValue()) {
             flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
@@ -114,7 +111,10 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
                                  device.IsGuestWarpSizeSupported(VK_SHADER_STAGE_COMPUTE_BIT)
                              ? &subgroup_size_ci
                              : nullptr,
-                .flags = 0,
+                .flags = info.uses_cooperative_matrix
+                             ? VkPipelineShaderStageCreateFlags{
+                                   VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT}
+                             : VkPipelineShaderStageCreateFlags{},
                 .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                 .module = *spv_module,
                 .pName = "main",
