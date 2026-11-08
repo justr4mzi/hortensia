@@ -36,7 +36,6 @@
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vertex_repack.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
-#include "video_core/renderer_vulkan/vk_cooperative_hmma_test.h"
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -537,7 +536,6 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         .has_broken_unsigned_image_offsets = false,
         .has_broken_signed_operations = false,
         .has_broken_fp16_float_controls = driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY,
-        .max_compute_shared_memory_size = device.GetMaxComputeSharedMemorySize(),
         .has_broken_fp32_denorm_flush = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY,
         .ignore_nan_fp_comparisons = false,
         .has_broken_spirv_subgroup_mask_vector_extract_dynamic =
@@ -550,13 +548,6 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         .min_ssbo_alignment = device.GetStorageBufferAlignment(),
         .max_user_clip_distances = device.GetMaxUserClipDistances()
     };
-    profile.support_cooperative_hmma =
-        device.IsCooperativeHmmaSupported() && TestCooperativeHmma(device);
-    profile.support_cooperative_hmma_16x16x16 =
-        !profile.support_cooperative_hmma && device.IsCooperativeHmma16x16x16Supported();
-    if (profile.support_cooperative_hmma_16x16x16) {
-        LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
-    }
 
     host_info = Shader::HostTranslateInfo{
         .min_ssbo_alignment = device.GetStorageBufferAlignment(),
@@ -1277,12 +1268,6 @@ void PipelineCache::EvictUnusedPipelines() {
     if (device.IsMoltenVK()) {
         return;
     }
-    // EDEN_NX2_PRELOAD_ALL_PIPELINES asked for every cached pipeline built: evicting the ones not
-    // used yet threw the preload away after 9000 frames (Ocarina: 22,510 of 24,285, then rebuilt
-    // one by one in new places).
-    if (PreloadAllPipelines()) {
-        return;
-    }
     // Each built pipeline holds ~0.45 MB of driver memory and none was ever destroyed, so it grew
     // with every place a session went (title 1: 1,500 on its title screen alone). One unused for
     // this long is destroyed; it takes 2-3 ms to build again from the driver's pipeline cache.
@@ -1796,21 +1781,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
         file.read(cache_data.data(), cache_size);
 
         LOG_INFO(Render_Vulkan,
-                 "Loaded Vulkan driver pipeline cache: {}", Common::FS::PathToUTF8String(filename));
+                 "Loaded Vulkan driver pipeline cache: ", Common::FS::PathToUTF8String(filename));
 
-        try {
-            return create_pipeline_cache(cache_size, cache_data.data());
-        } catch (const vk::Exception& e) {
-            // The blob came from another driver or driver version (e.g. switching between
-            // MoltenVK and KosmicKrisp on macOS): the driver rejects it. Start empty instead of
-            // aborting, and drop the stale file so the next run doesn't retry it.
-            LOG_ERROR(Render_Vulkan,
-                      "Driver rejected the Vulkan pipeline cache file ({}), starting with an empty "
-                      "cache and deleting it",
-                      e.what());
-            Common::FS::RemoveFile(filename);
-            return create_pipeline_cache(0, nullptr);
-        }
+        return create_pipeline_cache(cache_size, cache_data.data());
 
     } catch (const std::ios_base::failure& e) {
         LOG_ERROR(Common_Filesystem, "{}", e.what());

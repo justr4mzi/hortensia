@@ -931,16 +931,9 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(Tegra::Memory
 
         for (s32 layer = 0; layer < info.resources.layers; ++layer) {
             const std::span<u8> dst = output.subspan(host_offset);
-            const size_t src_offset = guest_offset + guest_layer_offset;
-            if (src_offset >= input.size()) {
-                // No guest bytes behind this layer (an image over a range that read as empty):
-                // reading would start past the end of input, at null for an empty one.
-                std::fill_n(dst.begin(), (std::min<size_t>)(host_bytes_per_layer, dst.size()), u8{0});
-            } else {
-                UnswizzleTexture(dst, input.subspan(src_offset), 1U << bpp_log2, num_tiles.width,
-                                 num_tiles.height, num_tiles.depth, block.height, block.depth,
-                                 stride_alignment, gpu_memory.UsesNativeTiling());
-            }
+            const std::span<const u8> src = input.subspan(guest_offset + guest_layer_offset);
+            UnswizzleTexture(dst, src, 1U << bpp_log2, num_tiles.width, num_tiles.height,
+                             num_tiles.depth, block.height, block.depth, stride_alignment, gpu_memory.UsesNativeTiling());
             guest_layer_offset += layer_stride;
             host_offset += host_bytes_per_layer;
         }
