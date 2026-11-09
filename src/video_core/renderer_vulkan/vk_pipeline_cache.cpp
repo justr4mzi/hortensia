@@ -790,7 +790,6 @@ void PipelineCache::RefreshGraphicsKey() {
     graphics_key.state.attribute_types = VideoCommon::KeyedAttributeTypes(
         vertex_attribute_types, graphics_key.unique_hashes, vertex_attribute_masks);
 }
-}
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
 
