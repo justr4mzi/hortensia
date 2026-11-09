@@ -31,6 +31,7 @@
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 #include "common/settings.h"
+#include "video_core/nx2_debug_control.h"
 #include "video_core/nx2_profile.h"
 
 #if defined(__clang__) && defined(NDEBUG)
@@ -503,7 +504,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
                                  desc.size_shift, desc.handle_program, program, handle.first,
                                  handle.second, desc.cbuf_index, desc.cbuf_offset,
                                  desc.cbuf_index < cbufs.size() && cbufs[desc.cbuf_index].enabled
-                                     ? gpu_memory->ReadHandleWord(
+                                     ? gpu_memory->Read<u32>(
                                            cbufs[desc.cbuf_index].address + desc.cbuf_offset)
                                      : 0U);
                     }
