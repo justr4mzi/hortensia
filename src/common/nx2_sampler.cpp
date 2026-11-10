@@ -26,11 +26,6 @@
 #include <tlhelp32.h>
 #include <dbghelp.h>
 
-#include <fmt/format.h>
-#include <dynarmic/interface/jit_map.h>
-
-#include "core/core.h"
-
 namespace Nx2Sampler {
 namespace {
 
@@ -147,16 +142,6 @@ std::vector<Target> FindThreads(const std::vector<std::string>& patterns) {
     return targets;
 }
 
-#ifdef _M_ARM64
-DWORD64& PC(CONTEXT& context) {
-    return context.Pc;
-}
-#else
-DWORD64& PC(CONTEXT& context) {
-    return context.Rip;
-}
-#endif
-
 // Walks a suspended thread's stack from its context. Nothing here may allocate: the thread
 // could be paused holding the heap lock. A wrong unwind step (code with missing or wrong unwind
 // data) leaves a garbage stack pointer: reading through it crashed the process, so the walk
@@ -173,24 +158,20 @@ unsigned Walk(CONTEXT context, std::array<DWORD64, MaxDepth>& frames, const NT_T
     while (depth < MaxDepth && context.Rip != 0 && on_stack(context.Rsp)) {
         frames[depth++] = context.Rip;
         DWORD64 image_base{};
-        const PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(PC(context), &image_base, nullptr);
+        const PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context.Rip, &image_base, nullptr);
         if (function == nullptr) {
-            // A leaf function (no unwind data): its return address is on top of the stack (in LR
-            // on arm64). JIT code has none either; past the first frame, stop there.
+            // A leaf function (no unwind data): its return address is on top of the stack. JIT
+            // code has none either; past the first frame, stop there.
             if (depth != 1) {
                 break;
             }
-#ifdef _M_ARM64
-            context.Pc = context.Lr;
-#else
             context.Rip = *reinterpret_cast<const DWORD64*>(context.Rsp);
             context.Rsp += 8;
-#endif
             continue;
         }
         PVOID handler_data{};
         DWORD64 establisher_frame{};
-        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, PC(context), function, &context,
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, context.Rip, function, &context,
                          &handler_data, &establisher_frame, nullptr);
     }
     return depth;
@@ -257,16 +238,6 @@ struct Symbolizer {
             GetModuleFileNameA(module, path, sizeof(path));
             const char* base = std::strrchr(path, '\\');
             it->second = std::string{base != nullptr ? base + 1 : path} + "!?";
-        } else if (const auto block = Dynarmic::JitMapLookup(reinterpret_cast<const void*>(address))) {
-            // DYNARMIC_JIT_MAP=1: the guest block this JIT code came from, as main+offset.
-            u64 pc{};
-            if (std::sscanf(block->c_str(), "a64_%llx", reinterpret_cast<unsigned long long*>(&pc)) == 1) {
-                const u64 main = Core::g_main_module_base.load(std::memory_order_relaxed);
-                it->second = main != 0 && pc >= main ? fmt::format("(jit) main+{:#x}", pc - main)
-                                                     : fmt::format("(jit) {:#x}", pc);
-            } else {
-                it->second = "(jit) " + *block;
-            }
         } else {
             it->second = "(jit)";
         }
@@ -385,39 +356,11 @@ std::string SampleThreads(const std::vector<std::string>& patterns, double secon
     if (targets.empty()) {
         return "no thread matches";
     }
-    // EDEN_NX2_SAMPLE_SLICE=<s>: write a report every <s> seconds (<out>.<n>.txt and .folded)
-    // and start over, so a long play session can be cut into the parts worth reading.
-    const double slice = EnvSeconds("EDEN_NX2_SAMPLE_SLICE", 0.0);
     std::vector<Sample> samples;
-    samples.reserve(static_cast<size_t>((slice > 0 ? slice : seconds) * 1100.0) *
-                        (std::max)(targets.size(), patterns.size()) +
-                    16);
-    // DYNARMIC_BLOCK_COUNTS=1: count JIT block executions over the same window.
-    Dynarmic::ResetBlockCounts();
-    const auto window_start = std::chrono::steady_clock::now();
+    samples.reserve(static_cast<size_t>(seconds * 1100.0) * targets.size() + 16);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
-    auto slice_end = std::chrono::steady_clock::now() + std::chrono::duration<double>(slice);
-    unsigned slice_index = 0;
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (slice > 0 && std::chrono::steady_clock::now() >= slice_end) {
-            const std::string name = out + "." + std::to_string(slice_index++) + ".txt";
-            Report(targets, samples, name.c_str());
-            samples.clear();
-            // Threads started after the last look (the GPU split's back thread) join the next
-            // slice.
-            for (const auto& target : targets) {
-                CloseHandle(target.handle);
-            }
-            targets = FindThreads(patterns);
-            slice_end = std::chrono::steady_clock::now() + std::chrono::duration<double>(slice);
-        }
-        if (samples.size() + targets.size() > samples.capacity()) {
-            if (slice > 0) {
-                Sleep(1);
-                continue;
-            }
-            break;
-        }
+    while (std::chrono::steady_clock::now() < deadline &&
+           samples.size() + targets.size() <= samples.capacity()) {
         for (unsigned i = 0; i < targets.size(); ++i) {
             const HANDLE handle = targets[i].handle;
             if (SuspendThread(handle) == static_cast<DWORD>(-1)) {
@@ -441,43 +384,6 @@ std::string SampleThreads(const std::vector<std::string>& patterns, double secon
     std::string text = Report(targets, samples, out.c_str());
     report_lock.unlock();
     std::fprintf(stderr, "nx2 sampler: %zu samples written to %s\n", samples.size(), out.c_str());
-    // <out>.blocks.csv: each JIT block's executions in the window, with the main module's base.
-    if (const auto counts = Dynarmic::BlockCountsSnapshot(); !counts.empty()) {
-        if (std::FILE* const file = std::fopen((out + ".blocks.csv").c_str(), "w")) {
-            const double window =
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - window_start).count();
-            std::fprintf(file, "# main %#llx, %.3f s\npc,end,terminal,count\n",
-                         static_cast<unsigned long long>(
-                             Core::g_main_module_base.load(std::memory_order_relaxed)),
-                         window);
-            for (const auto& block : counts) {
-                std::fprintf(file, "%#llx,%#llx,%u,%llu\n", static_cast<unsigned long long>(block.pc),
-                             static_cast<unsigned long long>(block.end), block.terminal,
-                             static_cast<unsigned long long>(block.count));
-            }
-            std::fclose(file);
-        }
-        // <out>.blocks.code: the host code of the 40 most executed blocks, one per line as
-        // "pc count hex-bytes", to read what the JIT emitted for them.
-        auto top = counts;
-        std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.count > b.count; });
-        top.resize((std::min<size_t>)(top.size(), 40));
-        if (std::FILE* const file = std::fopen((out + ".blocks.code").c_str(), "w")) {
-            for (const auto& block : top) {
-                if (block.host == nullptr || block.host_size == 0 || block.host_size > 65536) {
-                    continue;
-                }
-                std::fprintf(file, "%#llx %llu ", static_cast<unsigned long long>(block.pc),
-                             static_cast<unsigned long long>(block.count));
-                const auto* bytes = static_cast<const unsigned char*>(block.host);
-                for (size_t i = 0; i < block.host_size; ++i) {
-                    std::fprintf(file, "%02x", bytes[i]);
-                }
-                std::fputc('\n', file);
-            }
-            std::fclose(file);
-        }
-    }
     for (const auto& target : targets) {
         CloseHandle(target.handle);
     }
