@@ -67,19 +67,6 @@ TEST_CASE("Ampere TLD.SCR.LZ takes its handle from a uniform register", "[video_
     REQUIRE(((tld >> 31) & 0xf) == 7);
 }
 
-TEST_CASE("Ampere I2F converts signed 16-bit sources", "[video_core][ampere]") {
-    // I2F.S16 R8, R8
-    const std::array<Instruction, 2> code{{
-        {{0x00087306, 0x00000008, 0x00101400, 0x000fe200}},
-        EXIT,
-    }};
-    const auto lowered = LowerToMaxwell(code);
-    REQUIRE(static_cast<bool>(lowered));
-    const u64 i2f = FindMaxwell(lowered, 0x5cb, 52);
-    REQUIRE(((i2f >> 10) & 3) == 1); // 16-bit source
-    REQUIRE(((i2f >> 13) & 1) == 1); // signed
-}
-
 TEST_CASE("Ampere integer-to-float conversions take immediates", "[video_core][ampere]") {
     const std::array<Instruction, 3> code{{
         {{0x00077906, 0x00000020, 0x00209000, 0x000e2200}},

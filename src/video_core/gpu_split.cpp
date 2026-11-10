@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <thread>
+#include <utility>
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -100,17 +101,40 @@ void GpuSplit::MaybeStart(Core::System& system_) {
         return;
     }
     // The front reads command lists straight from guest memory; a read that flushes the caches
-    // first (safe DMA, accurate GPU) would touch back-owned state. The settings can change
+    // first would touch back-owned state. Accurate GPU mode reads every command list that way to
+    // catch lists the GPU wrote; with the split, the front drains the back and flushes just the
+    // lists on GPU-written pages (DmaPusher::FlushGpuWrittenCommands), so it runs in both modes.
+    // Only an explicit "safe" DMA setting keeps everything on one thread. The settings can change
     // mid-game: hand the engines back to the front (and start again when they allow it).
-    const bool safe_reads = Settings::IsDMALevelDefault() ? Settings::IsGPULevelHigh()
-                                                          : Settings::IsDMALevelSafe();
-    const bool allowed = !safe_reads && !Settings::IsGPULevelHigh() &&
+    // EDEN_NX2_AB=split: off in the B windows, to compare in one run.
+    const bool ab_off = Core::Nx2AbExperiment() == Core::Nx2Experiment::Split &&
+                        Core::g_nx2_ab_variant_b.load(std::memory_order_relaxed);
+    const bool allowed = !Settings::IsDMALevelSafe() && !ab_off &&
                          Settings::values.renderer_backend.GetValue() == Settings::RendererBackend::Vulkan;
     if (active && !allowed) {
         Drain();
+        // From here on this thread runs the engines' methods and macros itself. The engines the
+        // front took over get back what their front copies held (a macro call still collecting
+        // parameters, which compute macro code is current, where the compute binds go); without
+        // that they kept dropping macro uploads and binds and a cut macro call lost its first
+        // parameters. That happens once the back thread is gone, so nothing else touches them.
+        auto engines = std::move(hand_backs);
+        hand_backs.clear();
         Stop();
-        LOG_INFO(HW_GPU, "GPU thread split: stopped, the accuracy settings need the caches on the front");
+        for (auto& hand_back : engines) {
+            hand_back();
+        }
+        LOG_INFO(HW_GPU, "GPU thread split: stopped ({}), {} engine(s) handed back to one thread",
+                 ab_off ? "A/B window" : "safe DMA or not Vulkan", engines.size());
         return;
+    }
+    if (!allowed) {
+        // Called by the GPU thread only. Say once why the split is off: it costs ~1.5x.
+        static bool reported = false;
+        if (!std::exchange(reported, true)) {
+            LOG_WARNING(HW_GPU, "GPU thread split: not started, it needs DMA accuracy not Safe and "
+                                "the Vulkan renderer");
+        }
     }
     if (active || !allowed) {
         return;
@@ -158,6 +182,11 @@ void GpuSplit::Stop() {
     publish_every = PublishEvery;
     front_engine = nullptr;
     back_engine = nullptr;
+    // At shutdown the engines go away with the session (and the ring may still hold their work):
+    // nothing to hand back.
+    hand_backs.clear();
+    // Positions in the old ring: after a restart they would look unfinished.
+    sent_releases.clear();
     front_macros = false;
     published.store(0, std::memory_order_relaxed);
     consumed.store(0, std::memory_order_relaxed);
@@ -541,7 +570,6 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
     const Common::DkbCpuTrace::Registration cpu_trace{Common::DkbCpuTrace::Role::GpuBack};
     const StutterTrace::ThreadScope stutter_thread{StutterTrace::Thread::Back};
     Common::SetCurrentThreadName("GPUBack");
-    on_back_thread = true;
     back_running.store(true, std::memory_order_release);
     Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
     Common::SetCurrentThreadToPerformanceCores();

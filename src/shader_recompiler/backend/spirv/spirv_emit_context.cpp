@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <climits>
+#include <utility>
 
 #include <boost/container/static_vector.hpp>
 
@@ -15,6 +17,7 @@
 
 #include "common/common_types.h"
 #include "common/div_ceil.h"
+#include "common/logging.h"
 #include "shader_recompiler/backend/nvn_storage_descriptor.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
@@ -79,8 +82,107 @@ spv::ImageFormat GetImageFormat(ImageFormat format) {
     throw InvalidArgument("Invalid image format {}", format);
 }
 
+/// The SPIR-V format of a bound texture's storage view (the image's own format, see
+/// ImageView::StorageView), and whether it is one of the extended formats. Unknown for formats
+/// without an exact SPIR-V match: sRGB and BGRA views, and signed integers (integer images are
+/// declared unsigned here, and the format's signedness must match).
+std::pair<spv::ImageFormat, bool> PixelFormatToSpirv(TexturePixelFormat format) {
+    using F = spv::ImageFormat;
+    switch (format) {
+    case TexturePixelFormat::A8B8G8R8_UNORM:
+        return {F::Rgba8, false};
+    case TexturePixelFormat::A8B8G8R8_SNORM:
+        return {F::Rgba8Snorm, false};
+    case TexturePixelFormat::A8B8G8R8_UINT:
+        return {F::Rgba8ui, false};
+    case TexturePixelFormat::R16G16B16A16_FLOAT:
+        return {F::Rgba16f, false};
+    case TexturePixelFormat::R16G16B16A16_UINT:
+        return {F::Rgba16ui, false};
+    case TexturePixelFormat::R32G32B32A32_FLOAT:
+        return {F::Rgba32f, false};
+    case TexturePixelFormat::R32G32B32A32_UINT:
+        return {F::Rgba32ui, false};
+    case TexturePixelFormat::R32_FLOAT:
+        return {F::R32f, false};
+    case TexturePixelFormat::R32_UINT:
+        return {F::R32ui, false};
+    case TexturePixelFormat::R16G16B16A16_UNORM:
+        return {F::Rgba16, true};
+    case TexturePixelFormat::R16G16B16A16_SNORM:
+        return {F::Rgba16Snorm, true};
+    case TexturePixelFormat::R32G32_FLOAT:
+        return {F::Rg32f, true};
+    case TexturePixelFormat::R32G32_UINT:
+        return {F::Rg32ui, true};
+    case TexturePixelFormat::R16G16_FLOAT:
+        return {F::Rg16f, true};
+    case TexturePixelFormat::R16G16_UNORM:
+        return {F::Rg16, true};
+    case TexturePixelFormat::R16G16_SNORM:
+        return {F::Rg16Snorm, true};
+    case TexturePixelFormat::R16G16_UINT:
+        return {F::Rg16ui, true};
+    case TexturePixelFormat::R16_FLOAT:
+        return {F::R16f, true};
+    case TexturePixelFormat::R16_UNORM:
+        return {F::R16, true};
+    case TexturePixelFormat::R16_SNORM:
+        return {F::R16Snorm, true};
+    case TexturePixelFormat::R16_UINT:
+        return {F::R16ui, true};
+    case TexturePixelFormat::R8G8_UNORM:
+        return {F::Rg8, true};
+    case TexturePixelFormat::R8G8_SNORM:
+        return {F::Rg8Snorm, true};
+    case TexturePixelFormat::R8G8_UINT:
+        return {F::Rg8ui, true};
+    case TexturePixelFormat::R8_UNORM:
+        return {F::R8, true};
+    case TexturePixelFormat::R8_SNORM:
+        return {F::R8Snorm, true};
+    case TexturePixelFormat::R8_UINT:
+        return {F::R8ui, true};
+    case TexturePixelFormat::B10G11R11_FLOAT:
+        return {F::R11fG11fB10f, true};
+    case TexturePixelFormat::A2B10G10R10_UNORM:
+        return {F::Rgb10A2, true};
+    case TexturePixelFormat::A2B10G10R10_UINT:
+        return {F::Rgb10a2ui, true};
+    default:
+        return {F::Unknown, false};
+    }
+}
+
+/// The format a storage image is declared with. A typeless image is declared Unknown, unless the
+/// host cannot read without a format: then the bound texture's format, when SPIR-V has it.
+spv::ImageFormat DeclaredImageFormat(EmitContext& ctx, const ImageDescriptor& desc) {
+    if (desc.format != ImageFormat::Typeless || !desc.has_pixel_format ||
+        ctx.profile.support_typeless_image_loads) {
+        return GetImageFormat(desc.format);
+    }
+    const auto [format, extended] = PixelFormatToSpirv(desc.pixel_format);
+    if (format == spv::ImageFormat::Unknown) {
+        return format;
+    }
+    if (extended) {
+        if (!ctx.profile.support_storage_image_extended_formats) {
+            return spv::ImageFormat::Unknown;
+        }
+        ctx.AddCapability(spv::Capability::StorageImageExtendedFormats);
+    }
+    // Once per format: shows in a log that the host needed it, and for which formats.
+    static std::array<std::atomic<bool>, 256> logged{};
+    if (const size_t index = static_cast<size_t>(desc.pixel_format);
+        index < logged.size() && !logged[index].exchange(true)) {
+        LOG_INFO(Shader_SPIRV, "Typeless image reads of format {} declared with SPIR-V format {}",
+                 static_cast<u32>(desc.pixel_format), static_cast<u32>(format));
+    }
+    return format;
+}
+
 Id ImageType(EmitContext& ctx, const ImageDescriptor& desc, Id sampled_type) {
-    const spv::ImageFormat format{GetImageFormat(desc.format)};
+    const spv::ImageFormat format{DeclaredImageFormat(ctx, desc)};
     switch (desc.type) {
     case TextureType::Color1D:
         return ctx.TypeImage(sampled_type, spv::Dim::Dim1D, false, false, false, 2, format);
@@ -478,6 +580,14 @@ EmitContext::EmitContext(const Profile& profile_, const RuntimeInfo& runtime_inf
       requires_coherent_image_memory{program.info.requires_coherent_image_memory},
       stage{program.stage}, texture_rescaling_index{bindings.texture_scaling_index},
       image_rescaling_index{bindings.image_scaling_index} {
+    if (requires_coherent_global_memory) {
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 16) {
+            LOG_INFO(Shader_SPIRV, "Coherent storage buffers: a {} program reads global memory "
+                                   "other workgroups write (strong LDG)",
+                     program.stage == Stage::Compute ? "compute" : "graphics");
+        }
+    }
     const bool is_unified{profile.unified_descriptor_binding};
     u32& uniform_binding{is_unified ? bindings.unified : bindings.uniform_buffer};
     u32& storage_binding{is_unified ? bindings.unified : bindings.storage_buffer};
@@ -908,13 +1018,13 @@ void EmitContext::DefineAttributeMemAccess(const Info& info) {
 }
 
 void EmitContext::DefineWriteStorageCasLoopFunction(const Info& info) {
-    // Must match the conditions in EmitWriteStorage{U,S}{8,16}: the CAS loop is also used when
-    // storage buffer 8/16-bit access or descriptor aliasing is unavailable (e.g. Qualcomm).
-    const bool direct_int8{profile.support_int8 && profile.support_storage_buffer_8bit &&
-                           profile.support_descriptor_aliasing};
-    const bool direct_int16{profile.support_int16 && profile.support_storage_buffer_16bit &&
-                            profile.support_descriptor_aliasing};
-    if ((direct_int8 || !info.uses_int8) && (direct_int16 || !info.uses_int16)) {
+    // Same conditions as the 8/16-bit storage writes that call it (emit_spirv_memory.cpp): drivers
+    // with broken descriptor aliasing (Qualcomm) take the loop even with 8/16-bit storage.
+    const bool direct_8bit = profile.support_int8 && profile.support_storage_buffer_8bit &&
+                             profile.support_descriptor_aliasing;
+    const bool direct_16bit = profile.support_int16 && profile.support_storage_buffer_16bit &&
+                              profile.support_descriptor_aliasing;
+    if (!(info.uses_int8 && !direct_8bit) && !(info.uses_int16 && !direct_16bit)) {
         return;
     }
 
@@ -1026,15 +1136,22 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         }};
         if (info.native_global_bounds) {
             // Native pointers carry no NVN size word. The address belongs to the candidate buffer
-            // whose base is the closest one at or below it (bounds come from the binding).
+            // whose base is the closest one at or below it and whose bound length still holds
+            // the accessed element; an address in no binding is not accessed. Robust buffer
+            // access does not keep a write inside the binding the shader picked.
             std::vector<Id> bases(num_buffers);
             Id best_index{Const(~0U)};
             Id best_distance{Constant(U64, ~u64{0})};
             for (size_t index = 0; index < num_buffers; ++index) {
                 bases[index] = base_address(index);
                 const Id distance{OpISub(U64, addr, bases[index])};
-                const Id better{OpLogicalAnd(U1, OpUGreaterThanEqual(U1, addr, bases[index]),
-                                             OpULessThan(U1, distance, best_distance))};
+                const Id element{OpShiftRightLogical(U64, distance, Const(shift))};
+                const Id length{OpUConvert(U64, OpArrayLength(U32[1], ssbos[index].*ssbo_member,
+                                                              0U))};
+                const Id in_bounds{OpLogicalAnd(U1, OpUGreaterThanEqual(U1, addr, bases[index]),
+                                                OpULessThan(U1, element, length))};
+                const Id better{
+                    OpLogicalAnd(U1, in_bounds, OpULessThan(U1, distance, best_distance))};
                 best_distance = OpSelect(U64, better, distance, best_distance);
                 best_index = OpSelect(U32[1], better, Const(static_cast<u32>(index)), best_index);
             }
@@ -1562,21 +1679,26 @@ void EmitContext::DefineTextureBuffers(const Info& info, u32& binding) {
         return;
     }
     const spv::ImageFormat format{spv::ImageFormat::Unknown};
-    image_buffer_type = TypeImage(F32[1], spv::Dim::Buffer, 0U, false, false, 1, format);
-
-    const Id type{TypePointer(spv::StorageClass::UniformConstant, image_buffer_type)};
     texture_buffers.reserve(info.texture_buffer_descriptors.size());
     for (const TextureBufferDescriptor& desc : info.texture_buffer_descriptors) {
         if (desc.count != 1) {
             throw NotImplementedException("Array of texture buffers");
         }
+        // The sampled type has to match the numeric type of the view's format (float, unsigned
+        // or signed integer), which is the descriptor's format.
+        const Id sampled_type{desc.is_integer ? (desc.is_signed ? S32[1] : U32[1]) : F32[1]};
+        const Id image_type{TypeImage(sampled_type, spv::Dim::Buffer, 0U, false, false, 1, format)};
+        const Id type{TypePointer(spv::StorageClass::UniformConstant, image_type)};
         const Id id{AddGlobalVariable(type, spv::StorageClass::UniformConstant)};
         Decorate(id, spv::Decoration::Binding, binding);
         Decorate(id, spv::Decoration::DescriptorSet, 0U);
         Name(id, NameOf(stage, desc, "texbuf"));
         texture_buffers.push_back({
             .id = id,
+            .image_type = image_type,
             .count = desc.count,
+            .is_integer = desc.is_integer,
+            .is_signed = desc.is_signed,
         });
         if (profile.supported_spirv >= 0x00010400) {
             interfaces.push_back(id);
@@ -1664,6 +1786,8 @@ void EmitContext::DefineImages(const Info& info, u32& binding, u32& scaling_inde
             .pointer_type = pointer_type,
             .count = desc.count,
             .is_integer = desc.is_integer,
+            .declared_format = desc.format == ImageFormat::Typeless &&
+                               DeclaredImageFormat(*this, desc) != spv::ImageFormat::Unknown,
         });
         if (profile.supported_spirv >= 0x00010400) {
             interfaces.push_back(id);

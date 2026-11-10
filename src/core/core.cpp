@@ -3,6 +3,8 @@
 
 #include <array>
 #include <cstdlib>
+#include <string_view>
+#include <thread>
 #include <atomic>
 #include <memory>
 #include <new>
@@ -19,6 +21,9 @@
 #include "common/settings_enums.h"
 #include "common/string_util.h"
 #include "core/arm/exclusive_monitor.h"
+#ifdef HAS_HYPERVISOR
+#include "core/arm/hypervisor/hv_vm.h"
+#endif
 #include "core/core.h"
 
 #include "launch_timestamp_cache.h"
@@ -85,6 +90,23 @@ static_assert(std::atomic<u64>::is_always_lock_free);
 std::array<std::atomic<u64>, 4096> g_nx2_present_times_ns{};
 std::atomic<u32> g_nx2_present_time_services{};
 
+Nx2Experiment Nx2AbExperiment() {
+    static const Nx2Experiment experiment = [] {
+        const char* value = std::getenv("EDEN_NX2_AB");
+        if (value == nullptr) {
+            return Nx2Experiment::None;
+        }
+        const std::string_view name{value};
+        return name == "spin"        ? Nx2Experiment::Spin
+               : name == "hostcores" ? Nx2Experiment::HostCores
+               : name == "poke"      ? Nx2Experiment::Poke
+               : name == "split"     ? Nx2Experiment::Split
+               : name == "sleep"     ? Nx2Experiment::Sleep
+                                     : Nx2Experiment::None;
+    }();
+    return experiment;
+}
+
 FileSys::VirtualFile GetGameFileFromPath(const FileSys::VirtualFilesystem& vfs,
                                          const std::string& path) {
     // To account for split 00+01+etc files.
@@ -126,8 +148,13 @@ FileSys::VirtualFile GetGameFileFromPath(const FileSys::VirtualFilesystem& vfs,
 
 namespace {
 
-// Detect the platform before initializing the kernel memory layout and guest clock.
+// Switch 2 titles boot as a loose ExeFS (main.npdm next to main), a NUP or an NSP. Detect the
+// platform before initializing the kernel memory layout and guest clock.
 bool IsSwitch2Program(const FileSys::VirtualFile& file, u64 program_id, std::size_t program_index) {
+    if (!file) {
+        return false;
+    }
+
     FileSys::ProgramMetadata metadata;
     if (FileSys::NupContainer::IsNupFile(file)) {
         FileSys::NupContainer nup{file};
@@ -181,7 +208,7 @@ bool IsSwitch2Program(const FileSys::VirtualFile& file, u64 program_id, std::siz
         return npdm != nullptr && metadata.Load(npdm) == Loader::ResultStatus::Success &&
                metadata.IsSwitch2();
     }
-    const auto dir = file != nullptr ? file->GetContainingDirectory() : nullptr;
+    const auto dir = file->GetContainingDirectory();
     const auto npdm = dir != nullptr ? dir->GetFile("main.npdm") : nullptr;
     return npdm != nullptr && metadata.Load(npdm) == Loader::ResultStatus::Success &&
            metadata.IsSwitch2();
@@ -232,6 +259,8 @@ struct System::Impl {
     }
 
     void ReinitializeIfNecessary(System& system) {
+        // Device memory is as large as the memory layout: any change of layout needs it again
+        // (Switch 2 titles switch to 12 GiB at load; from 8 GiB the kernel mapped past its end).
         const bool must_reinitialize =
             !device_memory.has_value() ||
             is_multicore != Settings::values.use_multi_core.GetValue() ||
@@ -351,6 +380,12 @@ struct System::Impl {
     SystemResultStatus InitializeKernel(System& system) {
         LOG_DEBUG(Core, "initialized OK");
 
+        // ShutdownMainProcess releases it after a Switch 2 game; create it before the check below
+        // so an empty slot alone does not rerun the full Initialize.
+        if (!device_memory.has_value()) {
+            device_memory.emplace();
+        }
+
         // Setting changes may require a full system reinitialization (e.g., disabling multicore).
         ReinitializeIfNecessary(system);
         if (!device_memory) {
@@ -405,6 +440,16 @@ struct System::Impl {
             LOG_INFO(Core, "Switch 2 program: using the 12 GiB memory layout");
             Settings::values.memory_layout_mode.SetGlobal(false);
             Settings::values.memory_layout_mode.SetValue(Settings::MemoryLayout::Memory_12Gb);
+        }
+
+        // GPU accuracy stays as configured: the GPU thread split runs under high accuracy too
+        // (gpu_split.cpp), and Switch 2 titles default to immediate fences (Nx2DelayFences).
+        // Read traps, which replace reactive flushing when it is off, miss GPU writes that Pokemon
+        // Pokopia reads back for its sky and exposure (black sky, desktop and Android).
+        if (switch2_program && !Settings::values.use_reactive_flushing.GetValue()) {
+            LOG_INFO(Core, "Switch 2 program: reactive flushing on (read traps miss GPU writes)");
+            Settings::values.use_reactive_flushing.SetGlobal(false);
+            Settings::values.use_reactive_flushing.SetValue(true);
         }
 
         // The Switch 2 counter runs at 31.25 MHz and its SDK converts ticks with that constant
@@ -469,6 +514,22 @@ struct System::Impl {
         // Expose program id to dump sites and other global readers.
         Settings::SetCurrentProgramID(params.program_id);
 
+        // EDEN_NX2_THREAD_DUMP_AFTER=<seconds>[,...] (diagnostic): dump the guest threads that long
+        // after loading, for hangs before the first present.
+        if (const char* after = std::getenv("EDEN_NX2_THREAD_DUMP_AFTER")) {
+            std::thread([&system, times = std::string{after},
+                         start = std::chrono::steady_clock::now()] {
+                for (const char* v = times.c_str(); v && *v;) {
+                    std::this_thread::sleep_until(start +
+                                                  std::chrono::seconds(std::strtoull(v, nullptr, 10)));
+                    Service::DumpGuestThreads(
+                        system, fmt::format("{} s after loading", std::strtoull(v, nullptr, 10)));
+                    v = std::strchr(v, ',');
+                    if (v) ++v;
+                }
+            }).detach();
+        }
+
         // Track launch time for frontend launches
         LaunchTimestampCache::SaveLaunchTimestamp(params.program_id);
 
@@ -503,10 +564,14 @@ struct System::Impl {
             }
         }
 
-        perf_stats.emplace(params.program_id);
-        // Reset counters and set time origin to current frame
-        GetAndResetPerfStats();
-        perf_stats->BeginSystemFrame();
+        {
+            // Frontend timers poll GetAndResetPerfStats from their own threads.
+            std::scoped_lock lk{perf_stats_mutex};
+            perf_stats.emplace(params.program_id);
+            // Reset counters and set time origin to current frame
+            perf_stats->GetAndResetStats(core_timing.GetGlobalTimeUs());
+            perf_stats->BeginSystemFrame();
+        }
 
         const FileSys::PatchManager pm(params.program_id, system.GetFileSystemController(), system.GetContentProvider());
         auto const metadata = pm.GetControlMetadata();
@@ -546,8 +611,12 @@ struct System::Impl {
         stop_event.request_stop();
         core_timing.SyncPause(false);
         Network::CancelPendingSocketOperations();
+        LOG_INFO(Core, "Shutdown phase: suspend guest and close services");
+        Common::Log::Flush();
         kernel.SuspendEmulation(true);
         kernel.CloseServices();
+        LOG_INFO(Core, "Shutdown phase: stop guest cores");
+        Common::Log::Flush();
         kernel.ShutdownCores();
         services.reset();
         service_manager.reset();
@@ -556,9 +625,16 @@ struct System::Impl {
         core_timing.ClearPendingEvents();
         app_loader.reset();
         audio_core.reset();
+        LOG_INFO(Core, "Shutdown phase: destroy renderer and GPU resources");
+        Common::Log::Flush();
         gpu_core.reset();
         host1x_core.reset();
-        perf_stats.reset();
+        {
+            std::scoped_lock lk{perf_stats_mutex};
+            perf_stats.reset();
+        }
+        LOG_INFO(Core, "Shutdown phase: stop CPU manager and kernel");
+        Common::Log::Flush();
         cpu_manager.Shutdown();
         debugger.reset();
         kernel.Shutdown();
@@ -573,7 +649,20 @@ struct System::Impl {
         // Reset all glue registrations
         arp_manager.ResetAll();
 
-        LOG_DEBUG(Core, "Shutdown OK");
+        // The guest RAM section keeps every page the game touched until it is destroyed (up to
+        // 12 GiB), and the next Load reuses it. Switch 2 only: Switch 1 keeps its behaviour.
+        // InitializeKernel creates it again, sized for the next game.
+        if (Settings::CurrentProgramIsSwitch2()) {
+#ifdef HAS_HYPERVISOR
+            // The hypervisor VM maps the section: unmap it first, so that a new section at the
+            // same address is mapped again rather than taken for the freed one.
+            Core::Hv::Vm::Get().ReleaseBacking();
+#endif
+            device_memory.reset();
+        }
+
+        LOG_INFO(Core, "Shutdown complete");
+        Common::Log::Flush();
     }
 
     bool IsShuttingDown() const {
@@ -589,6 +678,7 @@ struct System::Impl {
     }
 
     PerfStatsResults GetAndResetPerfStats() {
+        std::scoped_lock lk{perf_stats_mutex};
         if (!perf_stats) {
             return {};
         }
@@ -623,6 +713,7 @@ struct System::Impl {
     std::optional<Service::KernelHelpers::ServiceContext> general_channel_context;
     std::optional<Service::Event> general_channel_event;
     std::optional<Core::PerfStats> perf_stats;
+    std::mutex perf_stats_mutex;
     std::optional<Tegra::Host1x::Host1x> host1x_core;
     std::optional<Core::DeviceMemory> device_memory;
     std::optional<AudioCore::AudioCore> audio_core;

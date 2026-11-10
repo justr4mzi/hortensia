@@ -181,7 +181,6 @@ IPlatformServiceManager::IPlatformServiceManager(Core::System& system_, const ch
         const FontRegion region{u32(offset + 8), u32((font_data_u32.size() * sizeof(u32)) - 8)};
         DecryptSharedFont(font_data_u32, impl->shared_font, offset);
         impl->shared_font_regions.push_back(region);
-        type_regions[font_index] = region;
     }
 
     // Switch 2 titles look the controller button icons up in the standard font. The firmware's has

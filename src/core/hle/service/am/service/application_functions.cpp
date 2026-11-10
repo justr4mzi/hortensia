@@ -125,7 +125,8 @@ IApplicationFunctions::IApplicationFunctions(Core::System& system_, std::shared_
         {230, &IApplicationFunctions::StubReplyZeroed, "Unknown230"},
         {300, &IApplicationFunctions::StubReplyInterface, "CreateMovieWriter"}, // [19.0.0+]
         {310, &IApplicationFunctions::StubReplyZeroed, "Unknown310"}, // [20.0.0+]
-        {320, D<&IApplicationFunctions::Unknown320>, "Unknown320"}, // [20.0.0+]
+        {320, D<&IApplicationFunctions::GetScreenShotAndContinuousRecordingInitiallyEnabled>,
+         "GetScreenShotAndContinuousRecordingInitiallyEnabled"},
         {321, D<&IApplicationFunctions::Unknown321>, "Unknown321"}, // Switch 2
         {330, D<&IApplicationFunctions::Unknown330>, "Unknown330"}, // [20.0.0+]
         {500, &IApplicationFunctions::StubReplyEvent, "StartContinuousRecordingFlushForDebug"},

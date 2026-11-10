@@ -22,7 +22,7 @@ Only the Qt frontend supports the following arguments:
 - `-qlaunch`: Launch QLaunch.
 - `-hlaunch`: Launch homebrew launcher `nx-hbloader`.
     - Requires a copy of Atmosphere to be extracted onto `sdmc`.
-    - This is a shorthand for `<eden folder>/sdmc/atmosphere/hbl.nsp`.
+    - This is a shorthand for `<data folder>/sdmc/atmosphere/hbl.nsp`.
 - `-setup`: Launch setup applet.
 
 `eden` (provided with `--room`), and `hortensia-room` supports the following options as well:

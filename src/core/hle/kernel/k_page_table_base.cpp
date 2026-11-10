@@ -90,8 +90,8 @@ void InvalidateInstructionCache(KernelCore& kernel, KPageTableBase* table, Addre
 }
 
 void ClearBackingRegion(Core::System& system, KPhysicalAddress addr, u64 size, u32 fill_value) {
-    system.DeviceMemory().buffer.ClearBackingRegion(GetInteger(addr) - Core::DramMemoryMap::Base,
-                                                    size, fill_value);
+    system.Kernel().MemoryManager().FillAllocatedPages(addr, size / PageSize,
+                                                       static_cast<u8>(fill_value));
 }
 
 template <typename AddressType>
@@ -117,7 +117,8 @@ constexpr Common::MemoryPermission ConvertToMemoryPermission(KMemoryPermission p
     if (True(perm & KMemoryPermission::UserWrite)) {
         perms |= Common::MemoryPermission::Write;
     }
-#ifdef HAS_NCE
+#if defined(HAS_NCE) || defined(HAS_HYPERVISOR)
+    // Native execution (NCE, or Hypervisor.framework on macOS) needs code pages executable.
     if (True(perm & KMemoryPermission::UserExecute)) {
         perms |= Common::MemoryPermission::Execute;
     }
@@ -239,7 +240,7 @@ Result KPageTableBase::InitializeForProcess(Svc::CreateProcessFlag as_type, bool
     size_t kernel_map_region_size;
     if (m_address_space_width == 39) {
         alias_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Alias);
-        heap_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Heap);
+        heap_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Heap) + extra_heap_region_size;
         stack_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Stack);
         kernel_map_region_size = GetSpaceSize(KAddressSpaceInfo::Type::MapSmall);
         m_code_region_start = m_address_space_start + aslr_space_start +
@@ -2155,8 +2156,10 @@ Result KPageTableBase::SetHeapSize(KProcessAddress* out, size_t size) {
 
         // Validate that setting heap size is possible at all.
         R_UNLESS(!m_is_kernel, ResultOutOfMemory);
-        R_UNLESS(size <= static_cast<size_t>(m_heap_region_end - m_heap_region_start),
-                 ResultOutOfMemory);
+        if (m_max_heap_size <= static_cast<size_t>(m_heap_region_end - m_heap_region_start)) {
+            R_UNLESS(size <= static_cast<size_t>(m_heap_region_end - m_heap_region_start),
+                     ResultOutOfMemory);
+        }
         R_UNLESS(size <= m_max_heap_size, ResultOutOfMemory);
 
         if (size < static_cast<size_t>(m_current_heap_end - m_heap_region_start)) {

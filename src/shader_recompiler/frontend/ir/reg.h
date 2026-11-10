@@ -271,9 +271,7 @@ enum class Reg : u64 {
 static_assert(static_cast<int>(Reg::RZ) == 255);
 
 constexpr size_t NUM_USER_REGS = 255;
-// Native lowering keeps shadowed guest registers and borrowed scratch registers in two more banks
-// of 256 (R256-R767). Only native register copies (a MOV form Maxwell code never uses) reach them.
-constexpr size_t NUM_REGS = 768;
+constexpr size_t NUM_REGS = 256;
 
 [[nodiscard]] constexpr Reg operator+(Reg reg, int num) {
     if (reg == Reg::RZ) {
@@ -324,8 +322,7 @@ struct fmt::formatter<Shader::IR::Reg> {
     auto format(const Shader::IR::Reg& reg, FormatContext& ctx) const {
         if (reg == Shader::IR::Reg::RZ) {
             return fmt::format_to(ctx.out(), "RZ");
-        } else if (static_cast<int>(reg) >= 0 &&
-                   static_cast<int>(reg) < static_cast<int>(Shader::IR::NUM_REGS)) {
+        } else if (static_cast<int>(reg) >= 0 && static_cast<int>(reg) < 255) {
             return fmt::format_to(ctx.out(), "R{}", static_cast<int>(reg));
         } else {
             throw Shader::LogicError("Invalid register with raw value {}", static_cast<int>(reg));

@@ -36,6 +36,10 @@ inline NvResult Nx2UnknownIoctl(const char* device, Ioctl command, std::span<con
 // the memory at GPU address == CPU address, and NormalMapGpuMemory4K (211) maps a memory handle at
 // a chosen GPU address (also in sparse regions). Every nvhost-as-gpu address space applies each
 // mapping, including ones made before the address space existed.
+//
+// Listeners run under the registry's lock, which the GPU thread takes too (BackSparse, when it
+// first writes a lazily backed sparse block): they queue their GPU work in order and must not
+// wait for the GPU thread.
 class Nx2GpuMemoryRegistry {
 public:
     using Listener = std::function<void(u64 gpu_address, u64 cpu_address, u64 size)>;
@@ -72,7 +76,18 @@ public:
     }
 
     // NormalUnmapGpuMemory4K, or destroying the memory: the GPU range stops reaching it.
-    void Unmap(u64 gpu_address, u64 size) {
+    u64 Unmap(u64 gpu_address, u64 size) {
+        {
+            std::scoped_lock lk{handle_mutex};
+            const u64 end = gpu_address + size;
+            for (auto& [handle, ranges] : handle_mappings) {
+                std::erase_if(ranges, [gpu_address, end](const HandleRange& r) {
+                    const u64 r_end = r.gpu_address + r.size;
+                    return r_end > gpu_address && r.gpu_address < end;
+                });
+            }
+        }
+
         std::scoped_lock lk{mutex};
         TrimMappings(gpu_address, size);
         for (auto& [owner, listener] : listeners) {
@@ -171,54 +186,37 @@ public:
         {
             std::scoped_lock lk{device_mutex};
             device_ranges.clear();
-            shared_ranges.clear();
+        }
+        {
+            std::scoped_lock lk{handle_mutex};
+            handle_mappings.clear();
         }
         std::scoped_lock lk{mutex};
         mappings.clear();
         sparse_regions.clear();
     }
 
-    // Device (SMMU) range of a mapping outside the heap, shared by every address space of one
-    // process: the caches key memory by device address, so a range per address space made separate
-    // copies of the same memory, and presentation could read one the game never drew into. The
-    // first address space to map the range allocates it with `allocate` (0: out of space); every
-    // call takes a reference.
-    u64 AcquireDeviceRange(size_t asid, u64 cpu_address, u64 size,
-                           const std::function<u64()>& allocate) {
-        std::scoped_lock lk{device_mutex};
-        const SharedRangeKey key{asid, cpu_address, size};
-        if (const auto it = shared_ranges.find(key); it != shared_ranges.end()) {
-            ++it->second.references;
-            return it->second.device_address;
-        }
-        const u64 device_address = allocate();
-        if (device_address != 0) {
-            shared_ranges.emplace(key, SharedRange{device_address, 1});
-        }
-        return device_address;
-    }
-
-    // Drops a reference. True for the last one: the caller frees the range.
-    bool ReleaseDeviceRange(size_t asid, u64 cpu_address, u64 size) {
-        std::scoped_lock lk{device_mutex};
-        const auto it = shared_ranges.find(SharedRangeKey{asid, cpu_address, size});
-        if (it == shared_ranges.end() || --it->second.references != 0) {
-            return false;
-        }
-        shared_ranges.erase(it);
-        return true;
-    }
-
-    // The process's session closed and its ASID can be reused: stop sharing its ranges.
-    void ForgetDeviceRanges(size_t asid) {
-        std::scoped_lock lk{device_mutex};
-        std::erase_if(shared_ranges, [asid](const auto& entry) { return entry.first.asid == asid; });
-    }
-
     // Device (SMMU) address of a CPU range an address space mapped; used to present images.
     void RecordDeviceRange(u64 cpu_address, u64 size, u64 device_address) {
         std::scoped_lock lk{device_mutex};
         device_ranges[cpu_address] = {size, device_address};
+    }
+
+    // Device address for a CPU range already backed by an address space mapping, if any. Used to
+    // keep one identity per backing across the process's several GPU address spaces.
+    std::optional<u64> DeviceAddressOfRange(u64 cpu_address, u64 size) {
+        std::scoped_lock lk{device_mutex};
+        auto it = device_ranges.upper_bound(cpu_address);
+        if (it == device_ranges.begin()) {
+            return std::nullopt;
+        }
+        --it;
+        const auto& [start, range] = *it;
+        const u64 offset = cpu_address - start;
+        if (offset > range.first || size > range.first - offset) {
+            return std::nullopt;
+        }
+        return range.second + offset;
     }
 
     std::optional<u64> DeviceAddressOf(u64 cpu_address) {
@@ -280,11 +278,12 @@ private:
 
     struct Mapping {
         u64 gpu_address;
-        u64 cpu_address;
         u64 size;
         u32 handle;
         u64 offset;
     };
+    std::mutex handle_mutex;
+    std::map<u32, std::vector<HandleRange>> handle_mappings;
 
     struct Listeners {
         Listener map;

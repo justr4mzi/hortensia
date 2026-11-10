@@ -71,6 +71,10 @@ void MemoryManager::SetNativeSyncpointShim(GPUVAddr address) {
 MemoryManager::~MemoryManager() = default;
 
 MemoryManager::EntryType MemoryManager::GetEntry(size_t position, bool is_big_page) const {
+    // Ranges that run past the address space (Mario Kart World asks for some) are unmapped there.
+    if (position >= address_space_size) [[unlikely]] {
+        return EntryType::Free;
+    }
     if (is_big_page) {
         position = position >> big_page_bits;
         const u64 entry_mask = big_entries[position / 32];
@@ -103,6 +107,20 @@ void MemoryManager::SetEntry(size_t position, MemoryManager::EntryType entry, bo
 PTEKind MemoryManager::GetPageKind(GPUVAddr gpu_addr) const {
     std::unique_lock<std::mutex> lock(guard);
     return kind_map.GetValueAt(gpu_addr);
+}
+
+bool MemoryManager::ModifyKind(GPUVAddr gpu_addr, size_t size, PTEKind kind) {
+    if (size == 0 || gpu_addr >= address_space_size || size > address_space_size - gpu_addr ||
+        (gpu_addr & 0xfff) != 0 || (size & 0xfff) != 0 || kind == PTEKind::INVALID ||
+        !IsFullyMappedRange(gpu_addr, size)) {
+        return false;
+    }
+    // Preserve dirty GPU data before changing how subsequent accesses interpret the mapping.
+    FlushRegion(gpu_addr, size);
+    InvalidateRegion(gpu_addr, size);
+    std::scoped_lock lock{guard};
+    kind_map.Map(gpu_addr, gpu_addr + size, kind);
+    return true;
 }
 
 inline bool MemoryManager::IsBigPageContinuous(size_t big_page_index) const {
@@ -239,6 +257,12 @@ void MemoryManager::BindRasterizer(VideoCore::RasterizerInterface* rasterizer_) 
 }
 
 GPUVAddr MemoryManager::Map(GPUVAddr gpu_addr, DAddr dev_addr, std::size_t size, PTEKind kind, bool is_big_pages) {
+    // A Switch 2 mapping can reach every address space, including smaller ones it lies past.
+    if (gpu_addr >= address_space_size || size > address_space_size - gpu_addr) [[unlikely]] {
+        LOG_WARNING(HW_GPU, "Ignoring GPU mapping {:#x}+{:#x} past the {:#x}-byte address space",
+                    gpu_addr, size, address_space_size);
+        return gpu_addr;
+    }
     if (is_big_pages)
         return BigPageTableOp(gpu_addr, dev_addr, size, kind, EntryType::Mapped);
     return PageTableOp(gpu_addr, dev_addr, size, kind, EntryType::Mapped);
@@ -251,7 +275,7 @@ GPUVAddr MemoryManager::MapSparse(GPUVAddr gpu_addr, std::size_t size, bool is_b
 }
 
 void MemoryManager::Unmap(GPUVAddr gpu_addr, std::size_t size) {
-    if (size == 0) {
+    if (size == 0 || gpu_addr >= address_space_size || size > address_space_size - gpu_addr) {
         return;
     }
     GetSubmappedRangeImpl<false>(gpu_addr, size, page_stash);
@@ -643,6 +667,22 @@ void MemoryManager::FlushRegion(GPUVAddr gpu_addr, size_t size,
         GPUVAddr base = (page_index << big_page_bits) + offset;
         MemoryOperation(base, copy_amount, false, mapped_normal, do_nothing, do_nothing);
     };
+    // A range spanning several buffers (or several pages of one) would wait for the GPU once per
+    // piece. When only the buffer cache is asked, queue every piece and wait once at the end.
+    const bool is_buffer_only = which == VideoCommon::CacheType::BufferCache;
+    struct FlushBatchGuard {
+        VideoCore::RasterizerInterface* batched;
+        ~FlushBatchGuard() {
+            if (batched != nullptr) {
+                batched->EndFlushBatch();
+            }
+        }
+    };
+    VideoCore::RasterizerInterface* const batched = is_buffer_only ? rasterizer : nullptr;
+    if (batched != nullptr) {
+        batched->BeginFlushBatch();
+    }
+    const FlushBatchGuard batch_guard{batched};
     MemoryOperation(gpu_addr, size, true, mapped_big, do_nothing, flush_short_pages);
 }
 

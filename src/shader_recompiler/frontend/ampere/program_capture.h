@@ -11,6 +11,15 @@ public:
     static constexpr u32 MaximumInstructions = 65536;
 
     Result Observe(const Instruction& instruction, u32 index) {
+        if (index < prefix.size()) {
+            prefix[index] = instruction;
+            // Extended instruction modes make it another instruction, as for the exit setup below.
+            if (index + 1 == prefix.size() &&
+                std::all_of(prefix.begin(), prefix.end(), [](const Instruction& setup) {
+                    return (setup.words[3] & 0xc00001ffU) == 0;
+                }))
+                atexit_target = StaticAtexitTarget(prefix);
+        }
         const u32 opcode = instruction.Bits(0, 12);
         if (index < exit_setup.size()) {
             exit_setup[index] = instruction;
@@ -61,6 +70,8 @@ public:
         }
         if (opcode == 0x949 || opcode == 0x958) computed_branch = true;
         if (computed_branch) return Result::Continue;
+        if (opcode == 0x94d && atexit_target && index * 16 < *atexit_target)
+            return Result::Continue;
         if (opcode == 0x94d && instruction.Bits(12, 4) == 7 && index >= last_forward_target) {
             if (index >= last_call_target) return Result::Complete;
             main_exited = true;
@@ -72,6 +83,8 @@ public:
     }
 
 private:
+    std::array<Instruction, 5> prefix{};
+    std::optional<u32> atexit_target;
     std::array<Instruction, 5> exit_setup{};
     u32 last_call_target{};
     u32 last_forward_target{};

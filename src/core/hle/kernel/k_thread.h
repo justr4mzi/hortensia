@@ -291,14 +291,6 @@ public:
         m_last_scheduled_tick = tick;
     }
 
-    bool HasEnteredKernel() const {
-        return m_entered_kernel.load(std::memory_order_acquire);
-    }
-
-    void SetEnteredKernel() {
-        m_entered_kernel.store(true, std::memory_order_release);
-    }
-
     void AddCpuTime(s32 core_id, s64 amount) {
         m_cpu_time += amount;
         // TODO(bunnei): Debug kernels track per-core tick counts. Should we?
@@ -311,6 +303,10 @@ public:
     s32 GetActiveCore() const {
         return m_core_id;
     }
+
+    // EDEN_NX2_SLEEP_STATS: when the timer ended this thread's sleep, and whether its core was idle.
+    s64 m_nx2_woken_ns{};
+    bool m_nx2_woken_on_idle_core{};
 
     void SetActiveCore(s32 core) {
         m_core_id = core;

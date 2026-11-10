@@ -20,6 +20,7 @@
 #include <string>
 #include <type_traits>
 #include "common/container/unordered_map.h"
+#include "common/container/unordered_set.h"
 #include <vector>
 
 #include "common/common_types.h"
@@ -272,6 +273,30 @@ private:
     GraphicsPipelineCacheKey graphics_key{};
     GraphicsPipeline* current_pipeline{};
 
+    /// What the last full lookup saw: while the engine's pipeline state stays clean
+    /// (Maxwell3D::pipeline_state_dirty) and these match, graphics_key is what it was and
+    /// current_pipeline is still the pipeline for it. EDEN_NX2_PIPELINE_SKIP=0 always looks up.
+    struct PipelineSkip {
+        const Tegra::Engines::Maxwell3D* maxwell3d{};
+        const GraphicsPipeline* pipeline{};
+        std::array<u64, 6> unique_hashes{};
+        Tegra::Engines::Maxwell3D::Regs::PrimitiveTopology topology{};
+        Tegra::Engines::Maxwell3D::EngineHint engine_state{};
+        bool valid{};
+    } pipeline_skip;
+    /// EDEN_NX2_PIPELINE_SKIP=verify: looks up anyway and compares (counts, mismatches).
+    void VerifyPipelineSkip(bool would_skip, bool dirty_only, u32 dirty_method,
+                            const GraphicsPipelineCacheKey& before);
+    struct PipelineSkipStats {
+        u64 lookups{};
+        u64 would_skip{};
+        u64 mismatches{};
+        u64 false_dirty{};
+        std::unordered_map<u32, u64> false_dirty_methods;
+    } pipeline_skip_stats;
+
+    /// Declared before the pipelines, which may have been linked from its libraries.
+    GraphicsPipelineLibraryCache pipeline_libraries;
     /// Destroys graphics pipelines unused for a while, once the GPU is done with them.
     void EvictUnusedPipelines();
     u64 frame_count{};
@@ -288,6 +313,23 @@ private:
     std::deque<std::pair<u64, std::unique_ptr<ComputePipeline>>> retired_compute_pipelines;
     ::Common::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
 
+    /// A pipeline built for other storage buffer pointer answers than the one in the cache.
+    template <typename Pipeline>
+    struct NativeVariant {
+        /// The answers of the cached pipeline's slots (in NativePointerSlots order) it was built
+        /// for.
+        std::vector<bool> answers;
+        std::unique_ptr<Pipeline> pipeline; ///< Null when the build failed.
+        std::exception_ptr rejection;       ///< A tensor shader the device rejected (compute).
+    };
+    /// Never in transitions, which eviction clears for graphics_cache only. Graphics variants go
+    /// with their key's pipeline when it is evicted, and past 16 per key the least recently used.
+    ::Common::unordered_map<GraphicsPipelineCacheKey, std::vector<NativeVariant<GraphicsPipeline>>>
+        graphics_variants;
+    ::Common::unordered_map<ComputePipelineCacheKey, std::vector<NativeVariant<ComputePipeline>>>
+        compute_variants;
+    bool current_pipeline_is_variant{};
+
     ShaderPools main_pools;
     std::mutex spare_pools_mutex;
     std::vector<std::shared_ptr<ShaderPools>> spare_pools;
@@ -297,9 +339,10 @@ private:
 
     std::filesystem::path pipeline_cache_filename;
 
-    /// Key hashes of the graphics pipelines in the disk cache. Only those a recent session used
-    /// (used_pipelines) are built at boot; the rest are built when first needed, and not stored
-    /// again. Each built pipeline holds driver memory (title 1: 6.5k cached, a quarter used).
+    /// Key hashes of the graphics pipelines in the disk cache, less those whose build at boot
+    /// failed. Only those a recent session used (used_pipelines) are built at boot; the rest are
+    /// built when first needed, and not stored again. Each built pipeline holds driver memory
+    /// (title 1: 6.5k cached, a quarter used).
     std::unordered_set<u64> disk_pipelines;
     std::unordered_map<u64, u8> used_pipelines; ///< Key hash -> sessions since it was last used
     std::unordered_set<const GraphicsPipeline*> used_this_session;

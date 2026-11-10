@@ -226,6 +226,10 @@ public:
         return configure_func(this, is_indexed);
     }
 
+    [[nodiscard]] const GraphicsPipelineCacheKey& Key() const noexcept {
+        return key;
+    }
+
     [[nodiscard]] GraphicsPipeline* Next(const GraphicsPipelineCacheKey& current_key) noexcept {
         if (key == current_key) {
             return this;
@@ -349,7 +353,31 @@ private:
     bool ConfigureDraw(const RescalingPushConstant& rescaling,
                        const RenderAreaPushConstant& render_are);
 
-    void MakePipeline(VkRenderPass render_pass);
+    struct DriverPipeline {
+        vk::Pipeline pipeline;
+        bool fast_linked{}; ///< Linked from VK_EXT_graphics_pipeline_library parts.
+    };
+
+    enum class LinkMode {
+        None,            ///< Compile the pipeline whole.
+        Link,            ///< Link it from library_cache's parts, compiling those missing; compile
+                         ///< it whole when the parts cannot express its state.
+        CachedPartsOnly, ///< Link it if every part is compiled already, else create nothing.
+    };
+
+    DriverPipeline MakePipeline(VkRenderPass render_pass, LinkMode link_mode);
+
+    /// Builds the pipeline on the calling thread if it can be linked from parts compiled already.
+    bool LinkFromCachedParts(RenderPassCache& render_pass_cache,
+                             VideoCore::ShaderNotify* shader_notify);
+
+    /// Compiles the pipeline whole on optimize_worker, then draws switch to it.
+    void QueueOptimizedPipeline(VkRenderPass render_pass);
+
+    /// The pipeline to bind: the optimized one once it is ready, else `pipeline`.
+    VkPipeline BoundPipeline() const noexcept {
+        return optimized_ready.load(std::memory_order_acquire) ? *optimized_pipeline : *pipeline;
+    }
 
     void Validate();
 
@@ -375,6 +403,7 @@ private:
     std::array<vk::ShaderModule, NUM_STAGES> spv_modules;
 
     std::array<Shader::Info, NUM_STAGES> stage_infos;
+    std::vector<NativePointerSlot> native_pointer_slots;
     std::array<u32, 5> enabled_uniform_buffer_masks{};
     VideoCommon::UniformBufferSizes uniform_buffer_sizes{};
     u32 num_descriptor_entries{};
@@ -413,6 +442,19 @@ private:
     vk::PipelineLayout pipeline_layout;
     vk::DescriptorUpdateTemplate descriptor_update_template;
     vk::Pipeline pipeline;
+
+    /// Null when pipelines are compiled whole (no VK_EXT_graphics_pipeline_library, disk cache
+    /// replay at boot).
+    GraphicsPipelineLibraryCache* library_cache{};
+    /// Null when fast-linked pipelines are kept as they are.
+    Common::ThreadWorker* optimize_worker{};
+    /// Written once by optimize_worker, then published by optimized_ready. The fast-linked
+    /// `pipeline` stays alive with it: command buffers still in flight may use it.
+    vk::Pipeline optimized_pipeline;
+    std::atomic_bool optimized_ready{false};
+    /// Worker jobs queued with this pipeline (HasPendingJobs). Each job's last access to it is
+    /// its decrement; the build's comes after it queued the optimized compile.
+    std::atomic<u32> pending_jobs{0};
 
     DescriptorBufferLayout descriptor_buffer_layout;
     std::vector<DescriptorUpdateEntry> last_descriptor_payload;

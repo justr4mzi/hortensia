@@ -20,6 +20,7 @@
 #include "core/hle/service/nvdrv/core/heap_mapper.h"
 #include "core/hle/service/nvdrv/core/nvmap.h"
 #include "core/hle/service/nvdrv/devices/ioctl_serialization.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/hle/service/nvdrv/devices/nvhost_as_gpu.h"
 #include "core/hle/service/nvdrv/devices/nvhost_gpu.h"
 #include "core/hle/service/nvdrv/devices/nx2_stub_device.h"
@@ -39,13 +40,6 @@ nvhost_as_gpu::nvhost_as_gpu(Core::System& system_, Module& module_, NvCore::Con
 
 nvhost_as_gpu::~nvhost_as_gpu() {
     Nx2GpuMemoryRegistry::Get().RemoveListener(this);
-    // Leave shared ranges to the process's other address spaces; like this address space's own
-    // ranges, one nobody else maps stays allocated.
-    for (const auto& [key, range] : nx2_device_ranges) {
-        if (range.shared) {
-            Nx2GpuMemoryRegistry::Get().ReleaseDeviceRange(range.asid, key.first, key.second);
-        }
-    }
 }
 
 NvResult nvhost_as_gpu::Ioctl1(DeviceFD fd, Ioctl command, std::span<const u8> input,
@@ -67,7 +61,12 @@ NvResult nvhost_as_gpu::Ioctl1(DeviceFD fd, Ioctl command, std::span<const u8> i
             return WrapFixed(this, &nvhost_as_gpu::GetVARegions1, input, output);
         case 0x9: {
             const auto result = WrapFixed(this, &nvhost_as_gpu::AllocAsEx, input, output);
-            if (result == NvResult::Success && g_nx2_driver) {
+            // Only a Switch 2 program's address spaces take its GPU mappings: an address space
+            // another process opens (Kirby Air Riders has a 37-bit one) maps them under that
+            // process's ASID, where the program's memory isn't.
+            const auto* session = container.GetSession(nx2_session);
+            if (result == NvResult::Success && g_nx2_driver && session != nullptr &&
+                session->process != nullptr && session->process->IsSwitch2()) {
                 Nx2GpuMemoryRegistry::Get().AddListener(
                     this,
                     [this](u64 gpu_address, u64 cpu_address, u64 size) {
@@ -151,28 +150,45 @@ void nvhost_as_gpu::Nx2Map(u64 gpu_address, u64 cpu_address, u64 size) {
     } else if (session->has_preallocated_area && session->mapper->IsInBounds(cpu_address, size)) {
         range = {session->mapper->Map(cpu_address, size), true};
     } else {
-        const auto allocate = [&]() -> u64 {
-            auto& smmu = system.Host1x().MemoryManager();
-            const DAddr address = smmu.Allocate(Common::AlignUp(size, 0x20000));
-            if (address != 0) {
-                smmu.Map(address, cpu_address, size, session->asid, true);
+        // The same backing is registered under several CPU ranges (the range a memory object
+        // reports and the ranges each GPU mapping used). An existing mapping that covers this
+        // request must be reused, so a surface is reachable at one device address.
+        for (const auto& [range, mapped] : nx2_device_ranges) {
+            const u64 offset = cpu_address - range.first;
+            if (cpu_address >= range.first && offset <= range.second &&
+                size <= range.second - offset) {
+                device_address = mapped.address + offset;
+                heap = mapped.heap;
+                shared = true;
+                reused = true;
+                break;
             }
-            return address;
-        };
-        // EDEN_NX2_PRIVATE_DEVICE_RANGES=1 (A/B aid): a range per address space.
-        static const bool private_ranges = std::getenv("EDEN_NX2_PRIVATE_DEVICE_RANGES") != nullptr;
-        if (private_ranges) {
-            range = {allocate(), false};
-        } else {
-            range = {Nx2GpuMemoryRegistry::Get().AcquireDeviceRange(session->asid.id, cpu_address,
-                                                                    size, allocate),
-                     false, true, session->asid.id};
         }
-        if (range.address == 0) {
+    }
+    if (!reused) {
+        // Another address space may already back this CPU range: reuse its SMMU identity so a
+        // surface written through one address space is the same memory in every other.
+        if (const auto existing =
+                Nx2GpuMemoryRegistry::Get().DeviceAddressOfRange(cpu_address, size)) {
+            device_address = *existing;
+            shared = true;
+            reused = true;
+        }
+    }
+    if (reused) {
+        // Already backed by an address space mapping.
+    } else if (session->has_preallocated_area && session->mapper->IsInBounds(cpu_address, size)) {
+        device_address = session->mapper->Map(cpu_address, size);
+        heap = true;
+    } else {
+        auto& smmu = system.Host1x().MemoryManager();
+        device_address = smmu.Allocate(Common::AlignUp(size, 0x20000));
+        if (device_address == 0) {
             LOG_CRITICAL(Service_NVDRV, "Switch 2 GPU memory {:#x}+{:#x}: out of SMMU space",
                          cpu_address, size);
             return;
         }
+        smmu.Map(device_address, cpu_address, size, session->asid, true);
     }
     const DAddr device_address = range.address;
     nx2_device_ranges[{cpu_address, size}] = range;

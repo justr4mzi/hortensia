@@ -79,6 +79,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Every build is clang with profile-guided optimization (PGO), the fastest build of the
+        # emulator, against the repo's eglantine.profdata: our profile, trained on Pokémon Pokopia
+        # with tools/pgo/train-profile.ps1. (Eden's profile, from Switch 1 games, ran Mario Kart
+        # World at about half the speed.) Windows uses MSYS2's MinGW clang, which mangles names like
+        # the Linux builds: MSVC cannot read an LLVM .profdata file.
+        # The x86_64 Linux job runs on a boat.dev sandbox (8 vCPU, 16 GB: https://docs.boat.dev/ci)
+        # started from the eglantine-ci snapshot, which has every package, clang, CMake and Qt
+        # installed (tools/ci/boat-snapshot.sh). boat has no Windows or Arm machines, so those
+        # jobs stay on GitHub's runners.
+        # The x86_64 builds target x86-64-v3 (YUZU_BUILD_PRESET v3: AVX2, BMI2, FMA; Intel Haswell
+        # and AMD Ryzen or newer). On an older CPU the programs show a message and quit instead of
+        # crashing (src/common/x64/cpu_requirements.cpp). The aarch64 build keeps the default.
         include:
           - platform: linux-x86_64
             runner: ubuntu-24.04
@@ -109,8 +121,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      # On the boat snapshot every dependency is already installed and this takes a second
+      # (tools/ci/linux-deps.sh); on a plain runner it installs them.
       - name: Install Linux dependencies
-        if: startsWith(matrix.platform, 'linux')
+        id: linux-deps
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
@@ -145,7 +160,7 @@ jobs:
           version: "6.8.3"
           host: linux
           target: desktop
-          arch: linux_gcc_64
+          arch: ${{ runner.arch == 'ARM64' && 'linux_gcc_arm64' || 'linux_gcc_64' }}
           modules: qtcharts
           cache: true
 
@@ -256,7 +271,7 @@ jobs:
             objects-${{ matrix.platform }}${{ matrix.profile && format('-{0}', hashFiles(matrix.profile)) || '' }}-v2-
 
       - name: Configure Linux
-        if: startsWith(matrix.platform, 'linux')
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -277,6 +292,11 @@ jobs:
             -DLICHII_BUILD_PLATFORM=${{ matrix.platform }}
             -DUSE_DISCORD_PRESENCE=OFF
             -DUSE_CCACHE=ON
+            "-DYUZU_BUILD_PRESET=${{ matrix.preset }}"
+            "-DCMAKE_C_COMPILER=clang-$PGO_LLVM_VERSION"
+            "-DCMAKE_CXX_COMPILER=clang++-$PGO_LLVM_VERSION"
+            -DENABLE_LTO=ON
+            "-DCMAKE_EXE_LINKER_FLAGS=-B/usr/lib/llvm-$PGO_LLVM_VERSION/bin -fuse-ld=lld -Wl,--thinlto-cache-dir=$PWD/.ltocache -Wl,--thinlto-jobs=all"
           )
           if [ '${{ matrix.pgo }}' = 'true' ]; then
             # Same flags Eden's CI passes for its clang PGO build.

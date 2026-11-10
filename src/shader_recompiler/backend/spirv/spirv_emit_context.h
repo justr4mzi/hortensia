@@ -46,7 +46,10 @@ struct TextureDefinition {
 
 struct TextureBufferDefinition {
     Id id;
+    Id image_type;
     u32 count;
+    bool is_integer;
+    bool is_signed;
 };
 
 struct ImageBufferDefinition {
@@ -63,6 +66,9 @@ struct ImageDefinition {
     Id pointer_type;
     u32 count;
     bool is_integer;
+    /// A typeless image declared with its bound texture's format (DeclaredImageFormat): reads
+    /// need no StorageImageReadWithoutFormat.
+    bool declared_format{};
 };
 
 struct UniformDefinitions {
@@ -230,6 +236,8 @@ public:
     const bool requires_coherent_global_memory;
     const bool requires_coherent_image_memory;
     Stage stage{};
+    /// Info::requires_coherent_global_memory: barriers also order storage buffer memory.
+    bool requires_coherent_global_memory{};
 
     Id void_id{};
     Id U1{};
@@ -268,7 +276,6 @@ public:
     Id output_f32{};
     Id output_u32{};
 
-    Id image_buffer_type{};
     Id image_u32{};
 
     std::array<UniformDefinitions, Info::MAX_CBUFS> cbufs{};

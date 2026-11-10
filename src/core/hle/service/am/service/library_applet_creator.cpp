@@ -27,6 +27,18 @@ namespace Service::AM {
 
 namespace {
 
+// Switch 2 titles ask for the Switch 1 applets by new ids.
+AppletId FromNx2AppletId(AppletId applet_id) {
+    switch (applet_id) {
+    case AppletId::SoftwareKeyboardNx2:
+        return AppletId::SoftwareKeyboard;
+    case AppletId::ControllerNx2:
+        return AppletId::Controller;
+    default:
+        return applet_id;
+    }
+}
+
 bool ShouldCreateGuestApplet(AppletId applet_id) {
 #define X(Name, name)                                                                              \
     if (applet_id == AppletId::Name &&                                                             \

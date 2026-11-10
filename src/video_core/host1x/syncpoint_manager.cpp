@@ -7,6 +7,8 @@
 #include "common/logging.h"
 #include "video_core/host1x/syncpoint_manager.h"
 
+#include "common/logging.h"
+
 namespace Tegra {
 
 namespace Host1x {
@@ -73,10 +75,18 @@ void SyncpointManager::IncrementHost(u32 syncpoint_id) {
 }
 
 void SyncpointManager::WaitGuest(u32 syncpoint_id, u32 expected_value) {
+    if (syncpoint_id >= NUM_MAX_SYNCPOINTS) {
+        LOG_ERROR(HW_GPU, "WaitGuest with invalid syncpoint id {}, ignored", syncpoint_id);
+        return;
+    }
     Wait(syncpoints_guest[syncpoint_id], wait_guest_cv, expected_value);
 }
 
 void SyncpointManager::WaitHost(u32 syncpoint_id, u32 expected_value) {
+    if (syncpoint_id >= NUM_MAX_SYNCPOINTS) {
+        LOG_ERROR(HW_GPU, "WaitHost with invalid syncpoint id {}, ignored", syncpoint_id);
+        return;
+    }
     Wait(syncpoints_host[syncpoint_id], wait_host_cv, expected_value);
 }
 

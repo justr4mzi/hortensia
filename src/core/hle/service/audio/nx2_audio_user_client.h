@@ -21,8 +21,13 @@ namespace Service::Audio {
 // keeps unknown commands auto-stubbed and logged.
 class INx2AudioUserClient final : public ServiceFramework<INx2AudioUserClient> {
 public:
-    explicit INx2AudioUserClient(Core::System& system_)
-        : ServiceFramework{system_, "nx2:aud:u"} {
+    // The managers are the audout:u and audren:u instances: their sessions point into the manager
+    // that opened them, so it has to outlive them like those named services do.
+    explicit INx2AudioUserClient(Core::System& system_,
+                                 std::shared_ptr<IAudioOutManager> audio_out_manager_,
+                                 std::shared_ptr<IAudioRendererManager> audio_renderer_manager_)
+        : ServiceFramework{system_, "nx2:aud:u"}, audio_out_manager{std::move(audio_out_manager_)},
+          audio_renderer_manager{std::move(audio_renderer_manager_)} {
         // clang-format off
         static const FunctionInfo functions[] = {
             {0, &INx2AudioUserClient::GetAudioInManager, "GetAudioInManager"},
@@ -73,6 +78,9 @@ private:
         rb.PushIpcInterface<IAudioRendererManager>(
             ctx, SharedManager<IAudioRendererManager>("audren:u"));
     }
+
+    std::shared_ptr<IAudioOutManager> audio_out_manager;
+    std::shared_ptr<IAudioRendererManager> audio_renderer_manager;
 };
 
 } // namespace Service::Audio

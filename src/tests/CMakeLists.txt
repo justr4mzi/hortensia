@@ -147,6 +147,7 @@ add_executable(tests
     common/multi_level_page_table.cpp
     common/page_table.cpp
     common/param_package.cpp
+    common/path_defaults.cpp
     common/range_map.cpp
     common/ring_buffer.cpp
     common/scratch_buffer.cpp
@@ -181,6 +182,32 @@ add_executable(tests
     video_core/ampere_geometry.cpp
     video_core/ampere_i2f.cpp
     video_core/ampere_returns.cpp
+    video_core/guardband.cpp
+    video_core/ampere_gather.cpp
+    video_core/ampere_sample.cpp
+    video_core/native_clip.cpp
+    video_core/native_qmd.cpp
+    video_core/ampere_tensor.cpp
+    video_core/native_video.cpp
+    video_core/ampere_f2i.cpp
+    video_core/compute_storage_buffers.cpp
+    video_core/cooperative_matrix.cpp
+    video_core/ampere_kirby.cpp
+    video_core/ampere_geometry_lowering.cpp
+    video_core/ampere_geometry_exit.cpp
+    video_core/ampere_uniform_lea.cpp
+    video_core/ampere_integer_multiply.cpp
+    video_core/ampere_integer_add.cpp
+    video_core/ampere_program_override.cpp
+    video_core/x8d24_conversion.cpp
+    video_core/ampere_bindless_tex.cpp
+    video_core/ampere_sured.cpp
+    video_core/ampere_release_guards.cpp
+    video_core/ampere_release_f2i.cpp
+    video_core/usage_tracker.cpp
+    video_core/sparse_tiles.cpp
+    video_core/descriptor_table.cpp
+    video_core/shader_invalidation.cpp
     video_core/ampere_guarded_ulea.cpp
     video_core/ampere_compute_lowering.cpp
     video_core/ampere_uniform_immediate_shift.cpp
@@ -196,7 +223,6 @@ add_executable(tests
     video_core/global_address_tracking.cpp
     video_core/global_atomic_routing.cpp
     video_core/nvn_storage_descriptor.cpp
-    video_core/ampere_f2i.cpp
     video_core/ampere_ldc.cpp
     video_core/ampere_vote.cpp
     video_core/shader_attributes.cpp
@@ -205,10 +231,25 @@ add_executable(tests
     input_common/calibration_configuration_job.cpp
 )
 
+# The SSL backend's tests, which make their own certificates with OpenSSL, and the cert store's,
+# which needs the backend to take a private server CA
+if (TARGET OpenSSL::SSL)
+    target_sources(tests PRIVATE
+        core/hle/service/ssl/cert_store.cpp
+        core/hle/service/ssl/handshake.cpp
+        core/hle/service/ssl/private_server_ca.h
+        core/hle/service/ssl/server_pki.cpp
+    )
+    target_link_libraries(tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
+
 create_target_directory_groups(tests)
 
 target_link_libraries(tests PRIVATE common core audio_core input_common video_core frontend_common)
 target_link_libraries(tests PRIVATE ${PLATFORM_LIBRARIES} Catch2::Catch2WithMain Threads::Threads)
+if (TARGET dynarmic)
+    target_link_libraries(tests PRIVATE dynarmic)
+endif()
 
 if (TARGET dynarmic::dynarmic)
     target_sources(tests PRIVATE core/window_trace.cpp)

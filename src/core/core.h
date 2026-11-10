@@ -124,6 +124,19 @@ extern std::atomic<u64> g_nx2_present_count;
 extern std::array<std::atomic<u64>, 4096> g_nx2_present_times_ns;
 extern std::atomic<u32> g_nx2_present_time_services;
 
+/// Where the application's main module was loaded (for debug peeks at game data).
+inline std::atomic<u64> g_main_module_base{0};
+
+/// EDEN_NX2_AB=<experiment>: A/B comparison inside one run. The variant flips every 600 presents
+/// (the present statistics say which ran), so both see the same scene and conditions; separate
+/// runs of Pokopia drifted by up to 20% (its world follows the real clock). Experiments: "spin"
+/// (EDEN_NX2_AB_SPIN_US idle spin in B), "hostcores" (timing thread on efficiency cores in B),
+/// "poke" (EDEN_NX2_AB_POKE instruction words written into the main module at each flip) and
+/// "split" (the GPU thread split off in B).
+enum class Nx2Experiment { None, Spin, HostCores, Poke, Split, Sleep };
+Nx2Experiment Nx2AbExperiment();
+inline std::atomic<bool> g_nx2_ab_variant_b{false};
+
 class CpuManager;
 class Debugger;
 class DeviceMemory;

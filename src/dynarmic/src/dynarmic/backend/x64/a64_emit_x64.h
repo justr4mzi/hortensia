@@ -9,6 +9,7 @@
 #pragma once
 
 #include <array>
+#include <deque>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -39,6 +40,10 @@ struct A64EmitContext final : public EmitContext {
     }
 
     const A64::UserConfig& conf;
+    /// The instruction emitted just before the current one, and whether the current one is the
+    /// block's last and the CheckBit terminal follows it with nothing that changes the host flags.
+    const IR::Inst* previous_inst = nullptr;
+    bool check_bit_terminal_next = false;
 };
 
 class A64EmitX64 final : public EmitX64 {
@@ -97,6 +102,8 @@ public:
     FakeCall FastmemCallback(u64 rip);
 
     // Memory access helpers
+    void FindFoldedAddresses(A64EmitContext& ctx);
+    void DropDeadNZCVStore(IR::Block& block);
     void EmitCheckMemoryAbort(A64EmitContext& ctx, IR::Inst* inst, Xbyak::Label* end = nullptr);
     template<std::size_t bitsize, auto callback>
     void EmitMemoryRead(A64EmitContext& ctx, IR::Inst* inst);
@@ -122,8 +129,14 @@ public:
     void EmitPatchJmp(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr = nullptr) override;
     void EmitPatchMovRcx(CodePtr target_code_ptr = nullptr) override;
 
+    /// Where the CheckBit terminal finds the check bit: in the stack layout, or in the host flags
+    /// when the block's last instruction set it (NotZF after a test of the bit; ZF and CF are the
+    /// flags of the IsZero or TestBit it came from).
+    enum class CheckBitLocation : u8 { Stack, NotZF, ZF, CF };
+
 //data
     const A64::UserConfig conf;
+    CheckBitLocation check_bit_location = CheckBitLocation::Stack;
     RegAlloc reg_alloc; //reusable reg alloc
     BlockRangeInformation<u64> block_ranges;
     std::array<FastDispatchEntry, fast_dispatch_table_size> fast_dispatch_table;
@@ -135,6 +148,22 @@ public:
     boost::container::stable_vector<Xbyak::Label> shared_labels;
     const void* terminal_handler_pop_rsb_hint = nullptr;
     const void* terminal_handler_fast_dispatch_hint = nullptr;
+    /// The same handlers entered with rbx already holding the location hash of the pc stored in
+    /// A64JitState: a block that cannot have changed the FPCR builds it from its own.
+    const void* terminal_handler_pop_rsb_hint_rbx = nullptr;
+    const void* terminal_handler_fast_dispatch_hint_rbx = nullptr;
+    /// An indirect branch's own one-entry cache missed: entered with rbx the location hash and rsi
+    /// the branch's entry in site_caches, which it fills from the fast dispatch table.
+    const void* terminal_handler_fast_dispatch_site_miss = nullptr;
+    /// One entry per indirect branch emitted (BR, BLR): the last target it went to, so that each
+    /// branch has its own indirect jump for the host's predictor and skips the table's hashing.
+    /// Cleared with the fast dispatch table's entries when blocks go.
+    std::deque<FastDispatchEntry> site_caches;
+    /// While emitting a terminal: the block has nothing that changes the FPCR (MSR FPCR, a
+    /// supervisor call or an exception), so the FPCR at its end is the one in its location.
+    bool fpcr_is_block_fpcr = false;
+    /// DropDeadNZCVStore removed the block's last SetNZCV.
+    bool dropped_nzcv_store = false;
     FastDispatchEntry& (*fast_dispatch_table_lookup)(u64) = nullptr;
     A64::Jit* jit_interface = nullptr;
     void (*memory_read_128)() = nullptr;

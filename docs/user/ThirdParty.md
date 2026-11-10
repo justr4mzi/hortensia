@@ -1,36 +1,14 @@
 # User Handbook - Third party tools and extras
 
-The Eden emulator by itself lacks some functionality - or otherwise requires external files (such as packaging) to operate correctly in a given OS. Addendum to that some repositories provide nightly or specialized builds of the emulator.
+Eglantine by itself lacks some functionality - or otherwise requires external files (such as packaging) to operate correctly in a given OS.
 
 While most of the links mentioned in this guide are relatively "safe"; we urge users to use their due diligence and appropriately verify the integrity of all files downloaded and ensure they're not compromised.
 
-- [NixOS Eden Flake](https://github.com/Grantimatter/eden-flake)
 - [ES-DE Frontend Support](https://github.com/GlazedBelmont/es-de-android-custom-systems)
 
-## Mirrors
+## Repository
 
-The main origin repository is always at <https://git.eden-emu.dev/eden-emu/eden>.
-
-- <https://github.com/eden-emulator/mirror>
-- <https://git.crueter.xyz/mirror/eden>
-- <https://codeberg.org/eden-emu/eden>
-- <https://collective.taymaerz.de/eden/eden>
-
-Other mirrors obviously exist on the internet, but we can't guarantee their reliability and/or availability.
-
-If you're someone wanting to make a mirror, simply setup Forgejo and automatically mirror from the origin repository. Or you could mirror a mirror to save us bandwidth... your choice!
-
-## Configuring Obtainium
-
-Very nice handy app, here's a quick rundown how to configure:
-
-1. Copy the URL: <https://git.eden-emu.dev/eden-emu/eden/> (or one of your favorite mirrors)
-2. Open Obtainium and tap `Add App`.
-3. Paste the URL into the `App Source URL` field.
-4. Override Source: Look for the `Override Source` dropdown menu and select `Forgejo (Codeberg)`.
-5. Click `Add:` Obtainium should now be able to parse the releases and find the APK files.
-
-Note: Even though the site isn't Codeberg, it uses the same Forgejo/Gitea backend, and this setting tells Obtainium how to read the release data.
+Eglantine's repository is <https://github.com/notsapinho/Eglantine>, where its releases are published too. It has no official mirrors.
 
 ## Configuring ES-DE
 
@@ -38,7 +16,7 @@ Note: Even though the site isn't Codeberg, it uses the same Forgejo/Gitea backen
 
 1. Download the ZIP from [GitHub](https://github.com/GlazedBelmont/es-de-android-custom-systems)
 2. Unzip the file and extract `es_systems.xml` and `es_find_rules.xml` to `\Odin2\Internal shared storage\ES-DE\custom_systems`.
-3. Press `Start -> Other Settings -> Alternative Emulators` and set it to Eden (Standalone).
+3. Press `Start -> Other Settings -> Alternative Emulators` and set it to Eden (Standalone). The entry is named after Eden; Eglantine's Android app uses the same package name, `dev.eden.eden_emulator`.
 
 ### Method 2
 

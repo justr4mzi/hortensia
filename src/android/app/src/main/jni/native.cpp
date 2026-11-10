@@ -7,6 +7,8 @@
 #define VMA_IMPLEMENTATION
 #include "video_core/vulkan_common/vma.h"
 
+#include <atomic>
+#include <chrono>
 #include <codecvt>
 #include <cstdio>
 #include <cstring>

@@ -243,6 +243,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, frame_gen_type, tr("Frame Generation Type"), QString());
     INSERT(Settings, frame_gen_multiplier, tr("Frame Generation Multiplier"), QString());
     INSERT(Settings, frame_gen_target_rate, tr("Target Frame Rate"), QString());
+    INSERT(Settings, nx2_refresh_rate, tr("FPS Limit (FPS mods):"),
+           tr("The most frames per second a Switch 2 game can show. It has nothing to do with your "
+              "monitor's refresh rate.\nLeave it at 60, the console's own limit, unless the game "
+              "has a frame-rate mod.\nWith a mod, set it to the frame rate the mod targets, best in "
+              "that game's Properties so other games stay at 60."));
     INSERT(Settings, frame_gen_flow_scale_auto, tr("Auto Flow Scale"), QString());
     INSERT(Settings, frame_gen_flow_scale, tr("Flow Scale"), QString());
     INSERT(Settings, frame_gen_queue_target, tr("Queue Target"), QString());
@@ -340,12 +345,18 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Run the game at normal speed during video playback, even when the framerate is "
               "unlocked."));
     INSERT(Settings, mkw_30fps, tr("Mario Kart World: 30 FPS mode"),
-           tr("Forces the game to use its native 30 FPS mode at normal game speed. "
-              "Takes effect after restarting the game."));
+           tr("Keeps Mario Kart World in its own 30 FPS mode: steady 30 fps at normal game speed "
+              "instead of a slowed-down game when 60 fps can't be held.\nTakes effect at the "
+              "next game launch."));
     INSERT(Settings, mkw_dynamic_fps, tr("Mario Kart World: dynamic FPS (experimental)"),
-           tr("Lets the game adjust between 30 and 60 FPS using whole-frame timing to maintain "
-              "normal game speed. Takes effect after restarting the game and takes precedence over "
-              "the 30 FPS mode."));
+           tr("Normal game speed whatever the frame rate: below 60 fps the game advances two "
+              "vblanks on slow frames instead of slowing down, and it never runs faster than "
+              "60. Takes precedence over the 30 FPS mode.\nTakes effect at the next game "
+              "launch."));
+    INSERT(Settings, mkw_smooth, tr("Mario Kart World: smoother 30 FPS (experimental)"),
+           tr("With the 30 FPS mode, lets the game prepare one more frame ahead, which removes "
+              "most drops to 20 fps. Adds about 33 ms of input delay. Experimental: if the game "
+              "freezes, turn it off."));
     INSERT(Settings, barrier_feedback_loops, tr("Barrier feedback loops"),
            tr("Improves rendering of transparency effects in specific games."));
     INSERT(Settings, enable_buffer_history, tr("Enable buffer history"),
@@ -375,6 +386,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the seed of the random number generator.\nMainly used for speedrunning."));
     INSERT(Settings, rng_seed_enabled, QString(), QString());
     INSERT(Settings, device_name, tr("Device Name"), tr("The name of the console."));
+    INSERT(Settings, fetch_release_news, tr("Fetch news from GitHub"),
+           tr("Shows Eglantine's release notes in the News applet. The release list is fetched "
+              "from GitHub the first time a game opens the news; when off, the applet is empty "
+              "and nothing is sent."));
     INSERT(Settings, program_args, tr("Homebrew Args"),
            tr("Command-line arguments passed to homebrew at launch (e.g. -noglsl)."));
     INSERT(Settings, custom_rtc, tr("Custom RTC Date:"),
@@ -533,6 +548,9 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                           {
                               PAIR(CpuBackend, Dynarmic, tr("Dynarmic")),
                               PAIR(CpuBackend, Nce, tr("NCE")),
+#ifdef HAS_HYPERVISOR
+                              PAIR(CpuBackend, Hypervisor, tr("Hypervisor (native)")),
+#endif
                           }});
     translations->insert({Settings::EnumMetadata<Settings::FullscreenMode>::Index(),
                           {

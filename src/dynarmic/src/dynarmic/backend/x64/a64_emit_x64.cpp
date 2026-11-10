@@ -23,6 +23,7 @@
 #include "dynarmic/backend/x64/emit_x64.h"
 #include "dynarmic/backend/x64/nzcv_util.h"
 #include "dynarmic/backend/x64/perf_map.h"
+#include "dynarmic/common/jit_map.h"
 #include "dynarmic/backend/x64/stack_layout.h"
 #include "dynarmic/frontend/A64/a64_location_descriptor.h"
 #include "dynarmic/frontend/A64/a64_types.h"
@@ -37,6 +38,19 @@
 namespace Dynarmic::Backend::X64 {
 
 using namespace Xbyak::util;
+
+// The operations that set the host flags for a GetNZCVFromOp of theirs (EmitAdd, EmitSub).
+static bool IsAddOrSub(IR::Opcode opcode) {
+    switch (opcode) {
+    case IR::Opcode::Add32:
+    case IR::Opcode::Add64:
+    case IR::Opcode::Sub32:
+    case IR::Opcode::Sub64:
+        return true;
+    default:
+        return false;
+    }
+}
 
 A64EmitContext::A64EmitContext(const A64::UserConfig& conf, RegAlloc& reg_alloc, IR::Block& block, boost::container::stable_vector<Xbyak::Label>& shared_labels)
     : EmitContext(reg_alloc, block, shared_labels)
@@ -87,13 +101,34 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) noexcept {
         return gprs;
     }(), any_xmm};
 
+    DropDeadNZCVStore(block);
     A64EmitContext ctx{conf, reg_alloc, block, shared_labels};
+    FindFoldedAddresses(ctx);
+    host_carry_is_borrow = false;
+    scalars_stay_in_xmm = !::Dynarmic::Common::AbOff(::Dynarmic::Common::AbScalarsInXmm, ctx.Location().Experiment());
 
     // Start emitting.
     code.align();
     const auto* const entrypoint = code.getCurr();
-    code.mov(code.qword[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, abi_base_pointer)], rbp);
-    code.lea(rbp, code.ptr[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, abi_base_pointer) - 8]);
+    // rbp is the JIT frame pointer for every block, set once on entry (BlockOfCode::GenRunCode).
+    // DYNARMIC_BLOCK_COUNTS=1: count this block's executions (no host register is live at entry).
+    unsigned long long* counter = nullptr;
+    if (::Dynarmic::Common::BlockCountsEnabled()) [[unlikely]] {
+        counter = ::Dynarmic::Common::BlockCountsRegister(
+            A64::LocationDescriptor{block.Location()}.PC(), A64::LocationDescriptor{block.EndLocation()}.PC(),
+            [&] {
+                // Leaf terminals as 10 + their index (none, ReturnToDispatch, LinkBlock,
+                // LinkBlockFast, PopRSBHint, FastDispatchHint); If, CheckBit and CheckHalt as 2-4.
+                // DYNARMIC_AB phase 1 blocks have 0x100 added.
+                const unsigned phase = A64::LocationDescriptor{block.Location()}.Experiment() ? 0x100 : 0;
+                if (const auto* leaf = std::get_if<IR::Term::LeafTerminal>(&block.terminal)) {
+                    return static_cast<unsigned>(10 + leaf->index()) | phase;
+                }
+                return static_cast<unsigned>(block.terminal.index()) | phase;
+            }());
+        code.mov(rax, reinterpret_cast<u64>(counter));
+        code.inc(code.qword[rax]);
+    }
 
     DEBUG_ASSERT(block.GetCondition() == IR::Cond::AL);
     typedef void (EmitX64::*EmitHandlerFn)(EmitContext& context, IR::Inst* inst);
@@ -117,8 +152,40 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) noexcept {
 #undef A64OPC
     };
 
+    // Whether the host flags hold the guest NZCV last stored: an add or subtract materializes them
+    // (GetNZCVFromOp right after it) or GetNZCVFromOp tests a value itself (logical operations, C
+    // and V clear), SetNZCV stores that value, and only register writes (plain movs) follow until
+    // the terminal.
+    const IR::Inst* previous_inst = nullptr;
+    const IR::Inst* flags_from = nullptr;
+    bool flags_hold_nzcv = false;
+    // The host flags hold the compare fp_compare_for_terminal set them to, for the terminal.
+    bool flags_hold_fp_compare = false;
+    bool fpcr_may_change = false;
+    const bool logical_flags_off = ::Dynarmic::Common::AbOff(::Dynarmic::Common::AbLogicalHostFlags, ctx.Location().Experiment());
+    // Nothing between the last instruction and a CheckBit terminal changes the host flags (cycle
+    // counting would subtract).
+    const IR::Inst* const check_bit_from_flags_at =
+        std::holds_alternative<IR::Term::CheckBit>(block.terminal) && !block.instructions.empty() &&
+                !conf.enable_cycle_counting && !conf.very_verbose_debugging_output
+            ? &block.instructions.back()
+            : nullptr;
+    check_bit_location = CheckBitLocation::Stack;
     for (auto& inst : block.instructions) {
         auto const opcode = inst.GetOpcode();
+        ctx.previous_inst = previous_inst;
+        ctx.check_bit_terminal_next = &inst == check_bit_from_flags_at;
+        // An add or subtract sets the flags of its GetNZCVFromOp itself (they hold only right
+        // after it); otherwise GetNZCVFromOp tests the value (EmitGetNZCVFromOp).
+        const bool nzcv_from_add_sub = opcode == IR::Opcode::GetNZCVFromOp && !inst.GetArg(0).IsImmediate() &&
+                                       IsAddOrSub(inst.GetArg(0).GetInst()->GetOpcode());
+        const bool nzcv_from_op = opcode == IR::Opcode::GetNZCVFromOp &&
+                                  (nzcv_from_add_sub ? inst.GetArg(0).GetInst() == previous_inst : !logical_flags_off);
+        // A select on the guest flags tests the host flags directly while they hold them.
+        const bool select_on_host_flags = flags_hold_nzcv && (opcode == IR::Opcode::ConditionalSelect32 ||
+                                                              opcode == IR::Opcode::ConditionalSelect64 ||
+                                                              opcode == IR::Opcode::ConditionalSelectNZCV);
+        nzcv_in_host_flags = select_on_host_flags;
         // Call the relevant Emit* member function.
         switch (opcode) {
 #define OPCODE(name, type, ...) case IR::Opcode::name: goto opcode_branch;
@@ -138,17 +205,88 @@ a64_branch:
         (this->*a64_handlers[size_t(opcode) - std::size(opcode_handlers)])(ctx, &inst);
 finish_this_inst:
         ctx.reg_alloc.EndOfAllocScope();
+        switch (opcode) {
+        case IR::Opcode::GetNZCVFromOp:
+            flags_from = nzcv_from_op ? &inst : nullptr;
+            // Left without uses by DropDeadNZCVStore, it stands for the SetNZCV that went: the
+            // host flags hold the NZCV (in them only) from here.
+            flags_hold_nzcv = nzcv_from_op && !inst.HasUses();
+            break;
+        case IR::Opcode::A64SetNZCV:
+            flags_hold_nzcv = flags_from != nullptr && !inst.GetArg(0).IsImmediate() &&
+                              inst.GetArg(0).GetInst() == flags_from;
+            flags_hold_fp_compare = fp_compare_for_terminal != nullptr && !inst.GetArg(0).IsImmediate() &&
+                                    inst.GetArg(0).GetInst() == fp_compare_for_terminal && previous_inst == fp_compare_for_terminal;
+            break;
+        case IR::Opcode::FPCompare32:
+        case IR::Opcode::FPCompare64:
+            flags_from = nullptr;
+            flags_hold_nzcv = false;
+            // Without uses its SetNZCV went (DropDeadNZCVStore): the flags are for the terminal.
+            flags_hold_fp_compare = &inst == fp_compare_for_terminal && !inst.HasUses();
+            break;
+        case IR::Opcode::A64SetW:
+        case IR::Opcode::A64SetX:
+        case IR::Opcode::A64SetSP:
+        case IR::Opcode::A64GetW:
+        case IR::Opcode::A64GetX:
+            break;  // plain moves
+        case IR::Opcode::ConditionalSelect32:
+        case IR::Opcode::ConditionalSelect64:
+        case IR::Opcode::ConditionalSelectNZCV:
+            if (!select_on_host_flags) {
+                flags_from = nullptr;
+                flags_hold_nzcv = false;
+            }
+            break;  // cmov keeps the flags (and a cmc for HI or LS is undone)
+        case IR::Opcode::A64SetFPCR:
+        case IR::Opcode::A64CallSupervisor:
+        case IR::Opcode::A64ExceptionRaised:
+            fpcr_may_change = true;
+            flags_from = nullptr;
+            flags_hold_nzcv = false;
+            break;
+        default:
+            flags_from = nullptr;
+            flags_hold_nzcv = false;
+            break;
+        }
+        switch (opcode) {
+        case IR::Opcode::A64SetNZCV:
+        case IR::Opcode::FPCompare32:
+        case IR::Opcode::FPCompare64:
+        case IR::Opcode::A64SetW:
+        case IR::Opcode::A64SetX:
+        case IR::Opcode::A64SetSP:
+        case IR::Opcode::A64GetW:
+        case IR::Opcode::A64GetX:
+            break;
+        default:
+            flags_hold_fp_compare = false;
+            break;
+        }
+        previous_inst = &inst;
 #ifndef NDEBUG
         if (conf.very_verbose_debugging_output)
             EmitVerboseDebuggingOutput(reg_alloc);
 #endif
     }
 
+    nzcv_in_host_flags = false;
     reg_alloc.AssertNoMoreUses();
     if (conf.enable_cycle_counting)
         EmitAddCycles(block.CycleCount());
-    code.mov(rbp, code.qword[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, abi_base_pointer)]);
+    nzcv_in_host_flags = flags_hold_nzcv && !conf.enable_cycle_counting;
+    fp_compare_in_host_flags = flags_hold_fp_compare && !conf.enable_cycle_counting;
+    // The guest NZCV was not stored: the terminal must find it in the host flags.
+    ASSERT(!dropped_nzcv_store || nzcv_in_host_flags || fp_compare_in_host_flags);
+    fpcr_is_block_fpcr = !fpcr_may_change && !::Dynarmic::Common::AbOff(::Dynarmic::Common::AbReturnHash, ctx.Location().Experiment());
     EmitTerminal(block.terminal, ctx.Location().SetSingleStepping(false), ctx.IsSingleStep());
+    nzcv_in_host_flags = false;
+    fp_compare_in_host_flags = false;
+    fp_compare_for_terminal = nullptr;
+    fpcr_is_block_fpcr = false;
+    scalars_stay_in_xmm = false;
     code.int3();
     for (auto& deferred_emit : ctx.deferred_emits)
         deferred_emit();
@@ -163,15 +301,92 @@ finish_this_inst:
     block_ranges.AddRange(range, descriptor);
 
     auto bdesc = RegisterBlock(descriptor, entrypoint, size);
+    if (counter != nullptr) [[unlikely]] {
+        ::Dynarmic::Common::BlockCountsSetHost(counter, entrypoint, size);
+    }
     code.DisableWriting();
     shared_labels.clear();
     return bdesc;
+}
+
+// A block whose NZCV no successor reads (IR::Block::nzcv_dead_at_exit) and whose conditional
+// branch tests it in the host flags need not store it: its last SetNZCV goes, so that the
+// GetNZCVFromOp it stored is left without uses and the flags are computed in the host flags only.
+// Only plain register moves may follow (as for the host-flag test in Emit), and an add or subtract
+// must set the flags right before their GetNZCVFromOp.
+// When a float compare right before the SetNZCV sets them, the terminal tests that compare's flags
+// (fp_compare_for_terminal), and a dead SetNZCV goes too.
+void A64EmitX64::DropDeadNZCVStore(IR::Block& block) {
+    fp_compare_for_terminal = nullptr;
+    dropped_nzcv_store = false;
+    if (conf.enable_cycle_counting || conf.very_verbose_debugging_output ||
+        !std::holds_alternative<IR::Term::If>(block.terminal) || block.instructions.empty()) {
+        return;
+    }
+    const IR::Cond cond = std::get<IR::Term::If>(block.terminal).if_;
+    auto set_nzcv = block.instructions.end();
+    do {
+        --set_nzcv;
+        switch (set_nzcv->GetOpcode()) {
+        case IR::Opcode::A64SetW:
+        case IR::Opcode::A64SetX:
+        case IR::Opcode::A64SetSP:
+        case IR::Opcode::A64GetW:
+        case IR::Opcode::A64GetX:
+            continue;
+        case IR::Opcode::A64SetNZCV:
+            break;
+        default:
+            return;
+        }
+        break;
+    } while (set_nzcv != block.instructions.begin());
+    if (set_nzcv->GetOpcode() != IR::Opcode::A64SetNZCV || set_nzcv == block.instructions.begin() ||
+        set_nzcv->GetArg(0).IsImmediate()) {
+        return;
+    }
+    const auto from_op = std::prev(set_nzcv);
+    if ((from_op->GetOpcode() == IR::Opcode::FPCompare32 || from_op->GetOpcode() == IR::Opcode::FPCompare64) &&
+        set_nzcv->GetArg(0).GetInst() == &*from_op && cond != IR::Cond::AL && cond != IR::Cond::NV &&
+        !::Dynarmic::Common::AbOff(::Dynarmic::Common::AbFpCompareFlags, A64::LocationDescriptor{block.Location()}.Experiment())) {
+        fp_compare_for_terminal = &*from_op;
+        fp_compare_cond = cond;
+        if (block.nzcv_dead_at_exit) {
+            set_nzcv->Invalidate();
+            block.instructions.erase(set_nzcv);
+            dropped_nzcv_store = true;
+        }
+        return;
+    }
+    if (!block.nzcv_dead_at_exit) {
+        return;
+    }
+    if (set_nzcv->GetArg(0).GetInst() != &*from_op || from_op->GetOpcode() != IR::Opcode::GetNZCVFromOp ||
+        from_op->UseCount() != 1) {
+        return;
+    }
+    const IR::Value operand = from_op->GetArg(0);
+    if (!operand.IsImmediate() && IsAddOrSub(operand.GetInst()->GetOpcode())) {
+        IR::Inst* const op = operand.GetInst();
+        if (from_op == block.instructions.begin() || op != &*std::prev(from_op) ||
+            op->GetAssociatedPseudoOperation(IR::Opcode::GetCarryFromOp) ||
+            op->GetAssociatedPseudoOperation(IR::Opcode::GetOverflowFromOp)) {
+            return;
+        }
+    } else if (::Dynarmic::Common::AbOff(::Dynarmic::Common::AbLogicalHostFlags, A64::LocationDescriptor{block.Location()}.Experiment())) {
+        // GetNZCVFromOp tests the value itself: the flags are the NZCV only with that on.
+        return;
+    }
+    set_nzcv->Invalidate();
+    block.instructions.erase(set_nzcv);
+    dropped_nzcv_store = true;
 }
 
 void A64EmitX64::ClearCache() {
     EmitX64::ClearCache();
     block_ranges.ClearCache();
     ClearFastDispatchTable();
+    site_caches.clear();
     fastmem_patch_info.clear();
 }
 
@@ -198,6 +413,9 @@ void A64EmitX64::GenTerminalHandlers() {
         code.and_(ebx, A64::LocationDescriptor::fpcr_mask);
         code.shl(rbx, A64::LocationDescriptor::fpcr_shift);
         code.or_(rbx, rcx);
+        if (::Dynarmic::Common::AbEnabled()) {
+            code.or_(rbx, qword[code.ABI_JIT_PTR + offsetof(A64JitState, experiment_bits)]);
+        }
     };
 
     Xbyak::Label fast_dispatch_cache_miss;
@@ -206,6 +424,12 @@ void A64EmitX64::GenTerminalHandlers() {
     code.align();
     terminal_handler_pop_rsb_hint = code.getCurr<const void*>();
     calculate_location_descriptor();
+    terminal_handler_pop_rsb_hint_rbx = code.getCurr<const void*>();
+    // Forward branches skip the halt check (TranslatorVisitor's LinkTo), so returns check
+    // instead: a halt is seen within one function body even when it has no loop. The return
+    // already stored its target in pc, which the dispatcher continues from.
+    code.cmp(dword[code.ABI_JIT_PTR + offsetof(A64JitState, halt_reason)], 0);
+    code.jne(code.GetReturnFromRunCodeAddress());
     code.mov(eax, dword[code.ABI_JIT_PTR + offsetof(A64JitState, rsb_ptr)]);
     code.sub(eax, 1);
     code.and_(eax, u32(A64JitState::RSB_PTR_MASK));
@@ -224,6 +448,7 @@ void A64EmitX64::GenTerminalHandlers() {
         code.align();
         terminal_handler_fast_dispatch_hint = code.getCurr<const void*>();
         calculate_location_descriptor();
+        terminal_handler_fast_dispatch_hint_rbx = code.getCurr<const void*>();
         code.L(rsb_cache_miss);
         code.mov(r8, u64(fast_dispatch_table.data()));
         //code.mov(r12, qword[code.ABI_JIT_PTR + offsetof(A64JitState, pc)]);
@@ -242,6 +467,25 @@ void A64EmitX64::GenTerminalHandlers() {
         code.mov(ptr[r12 + offsetof(FastDispatchEntry, code_ptr)], rax);
         code.jmp(rax);
         PerfMapRegister(terminal_handler_fast_dispatch_hint, code.getCurr(), "a64_terminal_handler_fast_dispatch_hint");
+
+        // A site cache missed: look in the table and, when the block is there, fill the site's
+        // entry too (a table miss compiles the block and fills the site on a later pass).
+        code.align();
+        terminal_handler_fast_dispatch_site_miss = code.getCurr<const void*>();
+        code.mov(r8, u64(fast_dispatch_table.data()));
+        code.mov(r12, rbx);
+        if (code.HasHostFeature(HostFeature::SSE42)) {
+            code.crc32(r12, r8);
+        }
+        code.and_(r12d, fast_dispatch_table_mask);
+        code.lea(r12, ptr[r8 + r12]);
+        code.cmp(rbx, qword[r12 + offsetof(FastDispatchEntry, location_descriptor)]);
+        code.jne(fast_dispatch_cache_miss, code.T_NEAR);
+        code.mov(rax, qword[r12 + offsetof(FastDispatchEntry, code_ptr)]);
+        code.mov(qword[rsi + offsetof(FastDispatchEntry, location_descriptor)], rbx);
+        code.mov(qword[rsi + offsetof(FastDispatchEntry, code_ptr)], rax);
+        code.jmp(rax);
+        PerfMapRegister(terminal_handler_fast_dispatch_site_miss, code.getCurr(), "a64_terminal_handler_fast_dispatch_site_miss");
 
         code.align();
         fast_dispatch_table_lookup = code.getCurr<FastDispatchEntry& (*)(u64)>();
@@ -266,6 +510,28 @@ void A64EmitX64::EmitPushRSB(EmitContext& ctx, IR::Inst* inst) {
 
 void A64EmitX64::EmitA64SetCheckBit(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    if (ctx.check_bit_terminal_next) {
+        // Only the CheckBit terminal right after this reads the bit: leave it in the host flags.
+        const IR::Value bit = inst->GetArg(0);
+        if (!bit.IsImmediate() && bit.GetInst() == ctx.previous_inst) {
+            // The flags are still those of the test (sete/setc and movzx keep them).
+            switch (bit.GetInst()->GetOpcode()) {
+            case IR::Opcode::IsZero32:
+            case IR::Opcode::IsZero64:
+                check_bit_location = CheckBitLocation::ZF;
+                return;
+            case IR::Opcode::TestBit:
+                check_bit_location = CheckBitLocation::CF;
+                return;
+            default:
+                break;
+            }
+        }
+        const Xbyak::Reg8 to_test = ctx.reg_alloc.UseGpr(code, args[0]).cvt8();
+        code.test(to_test, to_test);
+        check_bit_location = CheckBitLocation::NotZF;
+        return;
+    }
     const Xbyak::Reg8 to_store = ctx.reg_alloc.UseGpr(code, args[0]).cvt8();
     code.mov(code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], to_store);
 }
@@ -391,8 +657,16 @@ void A64EmitX64::EmitA64SetW(A64EmitContext& ctx, IR::Inst* inst) {
     const auto addr = qword[code.ABI_JIT_PTR + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)];
     if (args[1].FitsInImmediateS32()) {
         code.mov(addr, args[1].GetImmediateS32());
+    } else if (IsZeroExtendedResult(inst->GetArg(1))) {
+        code.mov(addr, ctx.reg_alloc.UseGpr(code, args[1]));
+    } else if (args[1].IsInGpr(ctx.reg_alloc) && !ctx.reg_alloc.IsLastUseInGpr(args[1])) {
+        // Zero-extend into another register rather than copying the value first.
+        const Xbyak::Reg64 value = ctx.reg_alloc.UseGpr(code, args[1]);
+        const Xbyak::Reg64 to_store = ctx.reg_alloc.ScratchGpr(code);
+        code.mov(to_store.cvt32(), value.cvt32());
+        code.mov(addr, to_store);
     } else {
-        // TODO: zext tracking, xmm variant
+        // TODO: xmm variant
         const Xbyak::Reg64 to_store = ctx.reg_alloc.UseScratchGpr(code, args[1]);
         code.mov(to_store.cvt32(), to_store.cvt32());
         code.mov(addr, to_store);
@@ -670,18 +944,81 @@ bool EmitTerminalImpl(A64EmitX64& e, IR::Term::LinkBlockFast terminal, IR::Locat
     return true;
 }
 
-bool EmitTerminalImpl(A64EmitX64& e, IR::Term::PopRSBHint, IR::LocationDescriptor, bool is_single_step) {
+// rbx = the location hash (A64::LocationDescriptor::UniqueHash) of the pc stored in A64JitState,
+// with the FPCR of the block's own location: what the handlers would compute when the block did
+// not change the FPCR, without loading it.
+void EmitLocationHashOfStoredPC(A64EmitX64& e, IR::LocationDescriptor block_location) {
+    constexpr int pc_shift = 64 - int(A64::LocationDescriptor::pc_bit_count);
+    const u64 upper_bits = A64::LocationDescriptor{block_location}.SetPC(0).UniqueHash();
+    e.code.mov(rbx, qword[e.code.ABI_JIT_PTR + offsetof(A64JitState, pc)]);
+    e.code.shl(rbx, pc_shift);
+    e.code.shr(rbx, pc_shift);
+    if (upper_bits != 0) {
+        e.code.mov(rcx, upper_bits);
+        e.code.or_(rbx, rcx);
+    }
+}
+
+bool EmitTerminalImpl(A64EmitX64& e, IR::Term::PopRSBHint, IR::LocationDescriptor initial_location, bool is_single_step) {
     if (e.conf.HasOptimization(OptimizationFlag::ReturnStackBuffer) && !is_single_step) {
-        e.code.jmp(e.terminal_handler_pop_rsb_hint);
+        if (e.fpcr_is_block_fpcr && e.terminal_handler_fast_dispatch_hint_rbx &&
+            !::Dynarmic::Common::AbOff(::Dynarmic::Common::AbInlineReturn, A64::LocationDescriptor{initial_location}.Experiment())) {
+            // The handler's work inline, so that each return has its own indirect jump.
+            EmitLocationHashOfStoredPC(e, initial_location);
+            e.code.cmp(dword[e.code.ABI_JIT_PTR + offsetof(A64JitState, halt_reason)], 0);
+            e.code.jne(e.code.GetReturnFromRunCodeAddress());
+            e.code.mov(eax, dword[e.code.ABI_JIT_PTR + offsetof(A64JitState, rsb_ptr)]);
+            e.code.sub(eax, 1);
+            e.code.and_(eax, u32(A64JitState::RSB_PTR_MASK));
+            e.code.mov(dword[e.code.ABI_JIT_PTR + offsetof(A64JitState, rsb_ptr)], eax);
+            e.code.cmp(rbx, qword[e.code.ABI_JIT_PTR + offsetof(A64JitState, rsb_location_descriptors) + rax * sizeof(u64)]);
+            e.code.jne(e.terminal_handler_fast_dispatch_hint_rbx);
+            e.code.jmp(ptr[e.code.ABI_JIT_PTR + offsetof(A64JitState, rsb_codeptrs) + rax * sizeof(u64)]);
+        } else if (e.fpcr_is_block_fpcr) {
+            EmitLocationHashOfStoredPC(e, initial_location);
+            e.code.jmp(e.terminal_handler_pop_rsb_hint_rbx);
+        } else {
+            e.code.jmp(e.terminal_handler_pop_rsb_hint);
+        }
     } else {
         e.code.ReturnFromRunCode();
     }
     return true;
 }
 
-bool EmitTerminalImpl(A64EmitX64& e, IR::Term::FastDispatchHint, IR::LocationDescriptor, bool is_single_step) {
+// The check a backward LinkBlock makes, for indirect branches: forward branches skip theirs
+// (TranslatorVisitor's LinkTo), so without it a loop that goes back only through BR or BLR (a
+// threaded interpreter's handlers) never sees HaltExecution or the end of its cycles. The branch
+// already stored its target in pc, where the next Run starts.
+void EmitIndirectBranchHaltCheck(A64EmitX64& e) {
+    if (e.conf.enable_cycle_counting) {
+        e.code.cmp(qword[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, cycles_remaining)], 0);
+        e.code.jng(e.code.GetForceReturnFromRunCodeAddress());
+    } else {
+        e.code.cmp(dword[e.code.ABI_JIT_PTR + offsetof(A64JitState, halt_reason)], 0);
+        e.code.jne(e.code.GetForceReturnFromRunCodeAddress());
+    }
+}
+
+bool EmitTerminalImpl(A64EmitX64& e, IR::Term::FastDispatchHint, IR::LocationDescriptor initial_location, bool is_single_step) {
     if (!e.conf.HasOptimization(OptimizationFlag::FastDispatch) || is_single_step) {
         e.code.ReturnFromRunCode();
+        return true;
+    }
+    // Here rather than in the handlers: a return that missed the RSB enters them after its own.
+    EmitIndirectBranchHaltCheck(e);
+    if (e.fpcr_is_block_fpcr &&
+        !::Dynarmic::Common::AbOff(::Dynarmic::Common::AbIndirectSiteCache, A64::LocationDescriptor{initial_location}.Experiment())) {
+        // This branch's own entry: the block it went to last, else the table (which fills it).
+        const auto& entry = e.site_caches.emplace_back();
+        EmitLocationHashOfStoredPC(e, initial_location);
+        e.code.mov(rsi, reinterpret_cast<u64>(&entry));
+        e.code.cmp(rbx, qword[rsi + offsetof(A64EmitX64::FastDispatchEntry, location_descriptor)]);
+        e.code.jne(e.terminal_handler_fast_dispatch_site_miss);
+        e.code.jmp(ptr[rsi + offsetof(A64EmitX64::FastDispatchEntry, code_ptr)]);
+    } else if (e.fpcr_is_block_fpcr) {
+        EmitLocationHashOfStoredPC(e, initial_location);
+        e.code.jmp(e.terminal_handler_fast_dispatch_hint_rbx);
     } else {
         e.code.jmp(e.terminal_handler_fast_dispatch_hint);
     }
@@ -706,8 +1043,21 @@ bool EmitTerminalImpl(A64EmitX64& e, IR::Term::If terminal, IR::LocationDescript
 
 bool EmitTerminalImpl(A64EmitX64& e, IR::Term::CheckBit terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     Xbyak::Label fail;
-    e.code.cmp(e.code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], u8(0));
-    e.code.jz(fail);
+    switch (std::exchange(e.check_bit_location, A64EmitX64::CheckBitLocation::Stack)) {
+    case A64EmitX64::CheckBitLocation::Stack:
+        e.code.cmp(e.code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], u8(0));
+        e.code.jz(fail);
+        break;
+    case A64EmitX64::CheckBitLocation::NotZF:
+        e.code.jz(fail);
+        break;
+    case A64EmitX64::CheckBitLocation::ZF:
+        e.code.jnz(fail);
+        break;
+    case A64EmitX64::CheckBitLocation::CF:
+        e.code.jnc(fail);
+        break;
+    }
     e.EmitLeafTerminal(terminal.then_, initial_location, is_single_step);
     e.code.L(fail);
     e.EmitLeafTerminal(terminal.else_, initial_location, is_single_step);
@@ -800,6 +1150,12 @@ void A64EmitX64::Unpatch(const IR::LocationDescriptor& location) {
         code.DisableWriting();
         (*fast_dispatch_table_lookup)(location.Value()) = {};
         code.EnableWriting();
+        // Any branch's own entry may hold the block that goes.
+        for (FastDispatchEntry& entry : site_caches) {
+            if (entry.location_descriptor == location.Value()) {
+                entry = {};
+            }
+        }
     }
 }
 

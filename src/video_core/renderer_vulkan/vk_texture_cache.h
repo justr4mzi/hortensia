@@ -15,6 +15,7 @@
 #include "video_core/texture_cache/texture_cache_base.h"
 
 #include "shader_recompiler/shader_info.h"
+#include "video_core/renderer_vulkan/transcode_budget_policy.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_dlss_network_probe.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
@@ -88,6 +89,12 @@ public:
     void Finish();
 
     StagingBufferRef UploadStagingBuffer(size_t size, bool deferred = false);
+
+    /// Reads `size` bytes of guest memory at device address `address` into `dst` (mapped staging
+    /// memory) on the worker thread, in order with the commands recorded around it: the GPU
+    /// thread hands the copy off instead of making it.
+    void DeferGuestRead(u8* dst, Tegra::MaxwellDeviceMemoryManager& memory, DAddr address,
+                        size_t size);
 
     StagingBufferRef DownloadStagingBuffer(size_t size, bool deferred = false);
 
@@ -187,6 +194,10 @@ public:
     void AccelerateImageUpload(Image&, const StagingBufferRef&,
                                std::span<const VideoCommon::SwizzleParameters>,
                                u32 z_start, u32 z_count);
+
+    /// True when AccelerateImageUploadLayers can refresh some layers of the image alone (ASTC the
+    /// GPU decodes to RGBA8, not the BCn transcode).
+    bool CanUploadLayers(const VideoCommon::ImageInfo& info) const noexcept;
 
     /// Decodes only `layers` of an ASTC array; the staging buffer holds those layers in order.
     void AccelerateImageUploadLayers(Image&, const StagingBufferRef&,
@@ -297,6 +308,7 @@ public:
     /// Temporary decode images, reusable once the GPU is past `tick`.
     struct PendingTranscode {
         u64 tick;
+        u64 bytes;
         vk::Image image;
         std::vector<vk::ImageView> views;
         u32 width;
@@ -304,10 +316,23 @@ public:
         u32 levels;
         u32 layers;
         u32 unused_frames;
+        u64 last_use;
     };
     std::deque<PendingTranscode> pending_transcodes;
+    void ReclaimCompletedTranscodes();
+    [[nodiscard]] u64 TranscodeBudgetBytes() const noexcept;
+    u64 pending_transcode_bytes{};
+    u64 peak_transcode_bytes{};
+    u64 transcode_budget_waits{};
+    u64 transcode_wait_us{};
+    u64 transcode_early_submits{};
+    TranscodeSubmissionBatch transcode_submission_batch;
+    u64 transcode_frames{};
     /// Decode images the GPU is done with, for the next texture of the same shape.
     std::vector<PendingTranscode> free_transcodes;
+
+    /// Orders the decode images by use, for evicting the least recently used free one.
+    u64 transcode_use_counter{};
 
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;
     const Settings::ResolutionScalingInfo& resolution;
@@ -565,6 +590,14 @@ public:
     /// Device memory BindLayers has bound to the image's layers (an unbacked image has no other).
     u64 SparseBoundBytes() const noexcept {
         return sparse_layers.bound_bytes;
+    }
+
+    [[nodiscard]] u64 MemoryBytes() const noexcept {
+        return original_image ? original_image.DeviceMemorySize() + sparse_layers.bound_bytes : 0;
+    }
+
+    [[nodiscard]] u64 ScaledMemoryBytes() const noexcept {
+        return scaled_image.DeviceMemorySize();
     }
 
     bool IsRescaled() const noexcept;

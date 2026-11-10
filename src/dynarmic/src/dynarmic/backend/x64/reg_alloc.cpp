@@ -299,9 +299,25 @@ HostLoc RegAlloc::UseScratchImpl(BlockOfCode& code, IR::Value use_value, std::bi
     if (HostLocIsRegister(current_location) && desired_locations.test(size_t(current_location)) && !LocInfo(current_location).IsLocked()) {
         if (LocInfo(current_location).IsLastUse()) {
             LocInfo(current_location).is_set_last_use = true;
-        } else {
-            MoveOutOfTheWay(code, current_location);
+            LocInfo(current_location).WriteLock();
+            return current_location;
         }
+        // The value is still needed: modify a copy in a free register rather than spilling the
+        // value to the stack and reloading it at every later use (a base address used by several
+        // loads and stores with offsets went through memory each time).
+        for (size_t i = 0; i < desired_locations.size(); ++i) {
+            const HostLoc candidate = HostLoc(i);
+            if (!desired_locations.test(i) || candidate == current_location || candidate == HostLoc::RBP ||
+                (candidate >= HostLoc::R13 && candidate <= HostLoc::R15)) {
+                continue;
+            }
+            if (LocInfo(candidate).IsEmpty() && !LocInfo(candidate).IsLocked()) {
+                CopyToScratch(code, bit_width, candidate, current_location);
+                LocInfo(candidate).WriteLock();
+                return candidate;
+            }
+        }
+        MoveOutOfTheWay(code, current_location);
         LocInfo(current_location).WriteLock();
         return current_location;
     }
@@ -518,6 +534,22 @@ void RegAlloc::Exchange(BlockOfCode& code, HostLoc a, HostLoc b) noexcept {
 void RegAlloc::MoveOutOfTheWay(BlockOfCode& code, HostLoc reg) noexcept {
     ASSERT(!LocInfo(reg).IsLocked());
     if (!LocInfo(reg).IsEmpty()) {
+        if (HostLocIsGPR(reg)) {
+            // An empty callee-saved register keeps the values without a store to the stack and a
+            // load at their next use (and a host call, which clears the caller-saved registers one
+            // after the other, does not have to move them again).
+            for (size_t i = 0; i < 16; ++i) {
+                const HostLoc candidate = HostLoc(i);
+                if (candidate == reg || !ABI_ALL_CALLEE_SAVE.test(i) || !gpr_order.test(i) ||
+                    candidate == HostLoc::RBP || candidate == HostLoc::RSP || (candidate >= HostLoc::R13 && candidate <= HostLoc::R15)) {
+                    continue;
+                }
+                if (LocInfo(candidate).IsEmpty()) {
+                    Move(code, candidate, reg);
+                    return;
+                }
+            }
+        }
         SpillRegister(code, reg);
     }
 }
@@ -565,7 +597,7 @@ HostLoc RegAlloc::LoadImmediate(BlockOfCode& code, IR::Value imm, HostLoc host_l
     if (HostLocIsGPR(host_loc)) {
         const Xbyak::Reg64 reg = HostLocToReg64(host_loc);
         const u64 imm_value = imm.GetImmediateAsU64();
-        if (imm_value == 0) {
+        if (imm_value == 0 && !preserve_host_flags) {
             code.xor_(reg.cvt32(), reg.cvt32());
         } else {
             code.mov(reg, imm_value);

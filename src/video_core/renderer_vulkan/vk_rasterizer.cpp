@@ -14,6 +14,7 @@
 #include <limits>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <filesystem>
 #include <tuple>
 #include <set>
@@ -33,6 +34,7 @@
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
+#include "core/core.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 #include "video_core/control/channel_state.h"
@@ -1129,7 +1131,13 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         ++fast_draw_stats.prepare_draws[index];
     }
     static u32 native_capture_count{};
+    static u64 native_capture_draw{};
+    static const u64 native_capture_skip = [] {
+        const char* value = std::getenv("EDEN_NATIVE_DRAW_CAPTURE_SKIP");
+        return value ? std::strtoull(value, nullptr, 10) : 0ULL;
+    }();
     if (maxwell3d->GetNativeMacroEngine().native_turing &&
+        native_capture_draw++ >= native_capture_skip &&
         native_capture_count < 16 && [] {
             static const bool capture = std::getenv("EDEN_NATIVE_DRAW_CAPTURE") != nullptr;
             return capture;
@@ -1149,7 +1157,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         const auto& regs = maxwell3d->regs;
         const auto& rt = regs.rt[0];
         const size_t size = static_cast<size_t>(rt.array_pitch) * 4;
-        if (size && size <= 16 * 1024 * 1024) {
+        if (size && size <= 64 * 1024 * 1024) {
             if (const auto address = gpu_memory->GpuToCpuAddress(rt.Address(), size)) {
                 LOG_INFO(HW_GPU, "Native draw {} render target physical address={:#x}", capture, *address);
                 texture_cache.DownloadMemory(*address, size);
@@ -1158,14 +1166,24 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         }
         std::ofstream registers(prefix + "-registers.bin", std::ios::binary);
         registers.write(reinterpret_cast<const char*>(&regs), sizeof(regs));
+        const auto& draw_state = maxwell3d->draw_manager.draw_state;
+        LOG_INFO(HW_GPU, "Native draw capture {} indexed={} base_vertex={} first={} count={} index_address={:#x} index_format={}",
+                 capture, is_indexed, draw_state.base_index, draw_state.index_buffer.first,
+                 draw_state.index_buffer.count, draw_state.index_buffer.StartAddress(),
+                 static_cast<u32>(draw_state.index_buffer.format));
+        if (is_indexed) {
+            dump("-indices", draw_state.index_buffer.IndexStart(),
+                 std::min<size_t>(draw_state.index_buffer.count *
+                                  draw_state.index_buffer.FormatSizeInBytes(), 512));
+        }
         for (size_t stream = 0; stream < 4; ++stream) {
             if (regs.vertex_streams[stream].IsEnabled())
-                dump(fmt::format("-vertex-{}", stream), regs.vertex_streams[stream].Address(), 128);
+                dump(fmt::format("-vertex-{}", stream), regs.vertex_streams[stream].Address(), 512);
         }
         for (size_t stage : {0U, 4U}) {
-            for (size_t bank : {2U, 3U}) {
+            for (size_t bank : {2U, 3U, 6U, 7U, 8U, 9U, 10U, 11U}) {
                 const auto& cb = maxwell3d->state.shader_stages[stage].const_buffers[bank];
-                if (cb.enabled) dump(fmt::format("-cbuf-{}-{}", stage, bank), cb.address, std::min<size_t>(cb.size, 128));
+                if (cb.enabled) dump(fmt::format("-cbuf-{}-{}", stage, bank), cb.address, std::min<size_t>(cb.size, 0x10000));
             }
         }
     }
@@ -1251,6 +1269,38 @@ void TraceWindowTarget(const Tegra::Engines::Maxwell3D& maxwell3d, Tegra::Memory
         }
     }
 }
+// EDEN_NX2_TRACE_DUMP=<dir>: with a draw trace (EDEN_NX2_TRACE_FRAME or _TRACE_VS), save the guest
+// bytes of each traced texture's first level once per address, named with its TIC format and
+// tiling, for tools/nx2/image_decode.py. Texture addresses change between runs, so the dump has to
+// come from the same run as the trace that names them.
+void DumpTracedTexture(Tegra::MemoryManager& memory, const Tegra::Texture::TICEntry& tic) {
+    static const char* const directory = std::getenv("EDEN_NX2_TRACE_DUMP");
+    static std::set<GPUVAddr> dumped;
+    if (directory == nullptr || !tic.IsBlockLinear() || dumped.size() >= 256 ||
+        !dumped.insert(tic.Address()).second) {
+        return;
+    }
+    const u32 format = static_cast<u32>(tic.format.Value());
+    // BC1/BC4 are 8 bytes per 4x4 block, the other BC formats 16; A8B8G8R8 is 4 per texel.
+    const bool compressed = (format >= 0x24 && format <= 0x28) || format == 0x17 ||
+                            format == 0x10 || format == 0x11;
+    const u32 element = compressed ? 4 : 1;
+    const u32 bytes_per_element = (format == 0x24 || format == 0x27) ? 8 : compressed ? 16 : format == 0x08 ? 4 : 16;
+    const u64 width = (tic.Width() + element - 1) / element;
+    const u64 height = (tic.Height() + element - 1) / element;
+    const u32 block_height = tic.block_height;
+    const u64 stride = (width * bytes_per_element + 63) & ~u64{63};
+    const u64 rows = (height + (u64{8} << block_height) - 1) & ~((u64{8} << block_height) - 1);
+    std::vector<u8> bytes(stride * rows);
+    memory.ReadBlockUnsafe(tic.Address(), bytes.data(), bytes.size());
+    const std::string path =
+        fmt::format("{}/tex-{:x}-{}x{}-tic{:02x}-bh{}-native{}.bin", directory, tic.Address(),
+                    tic.Width(), tic.Height(), format, block_height, memory.UsesNativeTiling() ? 1 : 0);
+    if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(bytes.data(), 1, bytes.size(), file);
+        std::fclose(file);
+    }
+}
 } // Anonymous namespace
 
 void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
@@ -1322,12 +1372,35 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
             Tegra::Engines::g_nx2_trace_draws_after_upscale = 1;
         }
     }
+    // EDEN_NX2_TRACE_FRAME=<present>[,<draws>]: describe every draw (up to <draws>, default 2000)
+    // from that present on, as EDEN_NX2_TRACE_VS does for one shader: a scene's full draw list.
+    static const std::pair<u64, u32> trace_frame = [] {
+        const char* value = std::getenv("EDEN_NX2_TRACE_FRAME");
+        if (value == nullptr) {
+            return std::pair<u64, u32>{0, 0};
+        }
+        char* end = nullptr;
+        const u64 frame = std::strtoull(value, &end, 10);
+        const u32 draws = *end == ',' ? static_cast<u32>(std::strtoul(end + 1, nullptr, 10)) : 2000U;
+        return std::pair<u64, u32>{frame, draws};
+    }();
+    if (trace_frame.first != 0) {
+        static bool triggered = false;
+        const u64 present = Core::g_nx2_present_count.load(std::memory_order_relaxed);
+        if (!triggered && present >= trace_frame.first) {
+            triggered = true;
+            LOG_INFO(HW_GPU, "trace frame: describing the next {} draws from present {}",
+                     trace_frame.second, present);
+            Tegra::Engines::g_nx2_trace_draws_after_upscale = trace_frame.second;
+        }
+    }
     if (Tegra::Engines::g_nx2_trace_draws_after_upscale > 0) {
         --Tegra::Engines::g_nx2_trace_draws_after_upscale;
         const auto& regs = maxwell3d->regs;
         const u64 vs = (u64{regs.pipelines[1].reserved[0] & 0xff} << 32) | regs.pipelines[1].reserved[1];
         const u64 ps = (u64{regs.pipelines[5].reserved[0] & 0xff} << 32) | regs.pipelines[5].reserved[1];
-        LOG_INFO(HW_GPU, "after upscale: draw rt0 {:#x} {}x{} fmt {:#x} block {}/{}/{} pitch_linear {} depth {} array_pitch {:#x} ctrl {:#x} vs {:#x} ps {:#x}",
+        LOG_INFO(HW_GPU, "after upscale: present {} draw rt0 {:#x} {}x{} fmt {:#x} block {}/{}/{} pitch_linear {} depth {} array_pitch {:#x} ctrl {:#x} vs {:#x} ps {:#x}",
+                 Core::g_nx2_present_count.load(std::memory_order_relaxed),
                  regs.rt[0].Address(), regs.rt[0].width, regs.rt[0].height,
                  static_cast<u32>(regs.rt[0].format), regs.rt[0].tile_mode.block_width.Value(),
                  regs.rt[0].tile_mode.block_height.Value(), regs.rt[0].tile_mode.block_depth.Value(),
@@ -1342,8 +1415,16 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
                 Tegra::Texture::TICEntry tic{};
                 gpu_memory->ReadBlockUnsafe(regs.tex_header.Address() + u64{handle & 0xfffff} * sizeof(tic),
                                             &tic, sizeof(tic));
-                LOG_INFO(HW_GPU, "  fs handle[{}] = {:#x}: {:#x} {}x{} format {:#x}", i, handle,
-                         tic.Address(), tic.Width(), tic.Height(), static_cast<u32>(tic.format.Value()));
+                // types: component types r/g/b/a (1 SNORM 2 UNORM 3 SINT 4 UINT 7 FLOAT);
+                // swizzle: sources x/y/z/w (0 zero 2 R 3 G 4 B 5 A 6/7 one).
+                LOG_INFO(HW_GPU, "  fs handle[{}] = {:#x}: {:#x} {}x{} format {:#x} types {}{}{}{} swizzle {}{}{}{} srgb {}",
+                         i, handle, tic.Address(), tic.Width(), tic.Height(),
+                         static_cast<u32>(tic.format.Value()), static_cast<u32>(tic.r_type.Value()),
+                         static_cast<u32>(tic.g_type.Value()), static_cast<u32>(tic.b_type.Value()),
+                         static_cast<u32>(tic.a_type.Value()), static_cast<u32>(tic.x_source.Value()),
+                         static_cast<u32>(tic.y_source.Value()), static_cast<u32>(tic.z_source.Value()),
+                         static_cast<u32>(tic.w_source.Value()), tic.srgb_conversion.Value());
+                DumpTracedTexture(*gpu_memory, tic);
             }
         }
         const auto& bt = regs.blend_per_target[0];
@@ -1770,6 +1851,7 @@ void RasterizerVulkan::DrawTexture() {
         gpu.TickWork();
     };
     FlushWork();
+    gpu_memory->FlushCaching();
 
     std::scoped_lock l{texture_cache.mutex};
     texture_cache.SynchronizeDescriptors(false);
@@ -2665,6 +2747,38 @@ void RasterizerVulkan::WaitForIdle() {
     fence_manager.SignalOrdering();
 }
 
+void RasterizerVulkan::Nx2Membar() {
+#ifdef _WIN32
+    if (device.GetDriverID() != VK_DRIVER_ID_AMD_PROPRIETARY) {
+        return;
+    }
+
+    VkPipelineStageFlags flags =
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |
+        VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT |
+        VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if (device.IsExtTransformFeedbackSupported()) {
+        flags |= VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT;
+    }
+
+    query_cache.NotifyWFI();
+    scheduler.RequestOutsideRenderPassOperationContext();
+    scheduler.Record([event = *wfi_event, flags](vk::CommandBuffer cmdbuf) {
+        static constexpr VkMemoryBarrier memory_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+        };
+        cmdbuf.SetEvent(event, flags);
+        cmdbuf.WaitEvents(event, flags, flags, memory_barrier, {}, {});
+    });
+    fence_manager.SignalOrdering();
+#endif
+}
+
 void RasterizerVulkan::FragmentBarrier() {
     // The next draw breaks the render pass only if it reads what this one wrote (#161): Ocarina
     // ended ~5,900 render passes a second here.
@@ -3238,6 +3352,43 @@ void RasterizerVulkan::TickFrame() {
         std::scoped_lock lock{buffer_cache.mutex};
         buffer_cache.TickFrame();
     }
+    // EDEN_NX2_PROBE=<gpu address>[:<bytes>][,...] (hex address, default 512 bytes): every 30
+    // frames, flush those ranges from the texture and buffer caches and log the words as
+    // floats. GPU-written values (an exposure target, say) never reach guest memory otherwise.
+    // The words are in the tiled (block-linear) order of the image.
+    static const std::vector<std::pair<GPUVAddr, u32>> probes = [] {
+        std::vector<std::pair<GPUVAddr, u32>> list;
+        if (const char* value = std::getenv("EDEN_NX2_PROBE")) {
+            for (const char* p = value; *p;) {
+                char* end = nullptr;
+                const GPUVAddr address = std::strtoull(p, &end, 16);
+                u32 bytes = 512;
+                if (*end == ':') {
+                    bytes = static_cast<u32>(std::strtoul(end + 1, &end, 10));
+                }
+                if (address != 0) {
+                    list.emplace_back(address, bytes);
+                }
+                p = *end ? end + 1 : end;
+            }
+        }
+        return list;
+    }();
+    static u64 probe_tick = 0;
+    if (!probes.empty() && gpu_memory != nullptr && (probe_tick++ % 30) == 0) {
+        for (const auto& [address, bytes] : probes) {
+            const auto device_address = gpu_memory->GpuToCpuAddress(address, bytes);
+            if (!device_address) {
+                continue;
+            }
+            FlushRegion(*device_address, bytes, VideoCommon::CacheType::All);
+            std::vector<f32> words(bytes / 4);
+            gpu_memory->ReadBlockUnsafe(address, words.data(), words.size() * 4);
+            LOG_INFO(HW_GPU, "probe present {} {:#x}: {}",
+                     Core::g_nx2_present_count.load(std::memory_order_relaxed), address,
+                     fmt::join(words, " "));
+        }
+    }
 }
 
 bool RasterizerVulkan::AccelerateConditionalRendering() {
@@ -3476,7 +3627,7 @@ bool AccelerateDMA::DmaBufferImageCopy(const Tegra::DMA::ImageCopy& copy_info,
                                        const Tegra::DMA::BufferOperand& buffer_operand,
                                        const Tegra::DMA::ImageOperand& image_operand) {
     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
-    const auto image_id = texture_cache.DmaImageId(image_operand, IS_IMAGE_UPLOAD);
+    const auto image_id = texture_cache.DmaImageId(image_operand, IS_IMAGE_UPLOAD, copy_info, buffer_operand);
     if (image_id == VideoCommon::NULL_IMAGE_ID) {
         return false;
     }

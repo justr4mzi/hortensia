@@ -11,6 +11,10 @@
 #include "core/arm/dynarmic/dynarmic_exclusive_monitor.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
+#ifdef HAS_HYPERVISOR
+#include "core/arm/hypervisor/arm_hypervisor.h"
+#include "core/arm/hypervisor/hv_vm.h"
+#endif
 #include "core/hle/kernel/k_scoped_resource_reservation.h"
 #include "core/hle/kernel/k_shared_memory.h"
 #include "core/hle/kernel/k_shared_memory_info.h"
@@ -27,6 +31,10 @@
 namespace Kernel {
 
 namespace {
+
+// Switch 2 titles size their heap as total memory minus ~6.3 GiB (~9.5 GiB), past the 8 GiB
+// 39-bit heap region of the Switch 1 layout.
+constexpr size_t Switch2ExtraHeapRegionSize = 8ULL << 30;
 
 Result TerminateChildren(KernelCore& kernel, KProcess* process, const KThread* thread_to_not_terminate) {
     // Request that all children threads terminate.
@@ -1313,6 +1321,34 @@ void KProcess::LoadModule(KernelCore& kernel, CodeSet code_set, KProcessAddress 
 void KProcess::InitializeInterfaces(KernelCore& kernel) {
     m_exclusive_monitor =
         Core::MakeExclusiveMonitor(this->GetMemory(), Core::Hardware::NUM_CPU_CORES);
+
+#ifdef HAS_HYPERVISOR
+    // cpu_backend = Hypervisor: run the application natively when its VM is ready (Core::Memory
+    // attached it to this page table at initialization); otherwise say why and use Dynarmic.
+    if (this->IsApplication() && Core::Hv::IsRequested()) {
+        auto& vm = Core::Hv::Vm::Get();
+        const bool attached = vm.IsAttached(this->GetPageTable().GetImpl()) && vm.IsReady();
+        if (attached && this->Is64Bit() && kernel.IsMulticore()) {
+            for (size_t i = 0; i < Core::Hardware::NUM_CPU_CORES; i++) {
+                m_arm_interfaces[i] =
+                    std::make_unique<Core::ArmHypervisor>(kernel.System(), this, i);
+            }
+            LOG_INFO(Kernel, "CPU backend: Hypervisor (application code runs natively)");
+            return;
+        }
+        std::string reason = vm.UnavailableReason();
+        if (reason.empty()) {
+            reason = !this->Is64Bit()         ? "it runs only 64-bit applications"
+                     : !kernel.IsMulticore() ? "it needs multicore CPU emulation (use_multi_core)"
+                                             : "the VM is not attached or not ready";
+        }
+        vm.Detach(reason);
+        LOG_WARNING(Kernel, "CPU backend: Hypervisor unavailable ({}); falling back to Dynarmic",
+                    reason);
+    } else if (this->IsApplication() && Core::Hv::IsTurnedOffByEnvironment()) {
+        LOG_INFO(Kernel, "CPU backend: Dynarmic (EDEN_NX2_HYPERVISOR=0 overrides cpu_backend)");
+    }
+#endif
 
 #ifdef HAS_NCE
     if (this->IsApplication() && Settings::IsNceEnabled()) {

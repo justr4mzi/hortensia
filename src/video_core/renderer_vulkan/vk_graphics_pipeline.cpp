@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -23,7 +24,9 @@
 #include "common/bit_field.h"
 #include "common/scope_exit.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/nx2_draw_census.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
+#include "video_core/renderer_vulkan/pipeline_stats.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_frame_dump.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
@@ -410,6 +413,9 @@ GraphicsPipeline::GraphicsPipeline(
         num_image_elements += Shader::NumDescriptors(info->texture_descriptors);
         num_image_elements += Shader::NumDescriptors(info->image_descriptors);
         num_descriptor_entries += NumDescriptorEntries(*info);
+        for (const Shader::NativePointerSlot& slot : info->native_pointer_slots) {
+            native_pointer_slots.push_back({.stage = static_cast<u32>(stage), .slot = slot});
+        }
     }
     fragment_has_color0_output = stage_infos[NUM_STAGES - 1].stores_frag_color[0];
     // The guest leaves render target components the fragment shader doesn't output untouched,
@@ -616,6 +622,12 @@ GraphicsPipeline::GraphicsPipeline(
                          spv_modules[3] ? 1 : 0, key.state.patch_control_points_minus_one.Value() + 1,
                          device.GetMaxTessellationPatchSize());
             throw;
+        }
+        // The modules are only needed to create the pipeline. Kept, the driver holds every
+        // pipeline's SPIR-V for the whole session (thousands of pipelines from the disk cache).
+        // A fast-linked pipeline still needs them for its optimized compile, which drops them.
+        if (!fast_linked) {
+            spv_modules = {};
         }
         if (pipeline_statistics) {
             pipeline_statistics->Collect(device, *pipeline);
@@ -930,6 +942,35 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     }
     if (captured_delta) {
         kept_image_entries.clear();
+    }
+    static const bool scanout_diagnostics = std::getenv("EDEN_NX2_SCANOUT_DIAG") != nullptr;
+    if (scanout_diagnostics && maxwell3d->GetNativeMacroEngine().native_turing) {
+        static std::set<std::pair<u64, u64>> reported;
+        const u64 ps = (u64{regs.pipelines[5].reserved[0] & 0xff} << 32) |
+                       regs.pipelines[5].reserved[1];
+        if (reported.size() < 64 && reported.emplace(ps, regs.rt[0].Address()).second) {
+            LOG_INFO(HW_GPU, "Native draw inputs: ps={:#x} rt={:#x} {}x{} textures={}",
+                     ps, regs.rt[0].Address(), regs.rt[0].width, regs.rt[0].height, views.size());
+            for (const auto& entry : views) {
+                const auto& view = texture_cache.GetImageView(entry.id);
+                LOG_INFO(HW_GPU, "  texture index={} address={:#x} {}x{} format={}",
+                         entry.index, view.GpuAddr(), view.size.width, view.size.height, view.format);
+            }
+            const auto describe_buffer = [&](u32 stage, u32 bank, u32 offset, u32 words) {
+                const auto& buffer = maxwell3d->state.shader_stages[stage].const_buffers[bank];
+                std::array<u32, 16> values{};
+                if (buffer.enabled && buffer.size >= offset + words * sizeof(u32) &&
+                    gpu_memory->IsFullyMappedRange(buffer.address + offset, words * sizeof(u32))) {
+                    gpu_memory->ReadBlockUnsafe(buffer.address + offset, values.data(), words * sizeof(u32));
+                }
+                LOG_INFO(HW_GPU, "  stage={} c[{}] address={:#x} enabled={} size={:#x} offset={:#x}: {:08x}",
+                         stage, bank, buffer.address, buffer.enabled, buffer.size, offset,
+                         fmt::join(std::span(values.data(), words), " "));
+            };
+            describe_buffer(0, 6, 0x70, 16);
+            describe_buffer(4, 11, 0x320, 4);
+            describe_buffer(4, 7, 0x20c, 1);
+        }
     }
 
     if constexpr (Spec::has_texture_buffers || Spec::has_image_buffers) {
@@ -1258,6 +1299,12 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         return false;
     }
     const void* const descriptor_data{guest_descriptor_queue.UpdateData()};
+    if (Nx2DrawCensus::Enabled()) [[unlikely]] {
+        Nx2DrawCensus::NotePayload(this, descriptor_data,
+                                   descriptor_data != nullptr
+                                       ? num_descriptor_entries * sizeof(DescriptorUpdateEntry)
+                                       : 0);
+    }
 
     VkDeviceSize descriptor_buffer_offset{};
     u32 descriptor_buffer_chunk{};
@@ -1475,7 +1522,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             if (!pipeline || build->Failed()) {
                 return;
             }
-            cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline);
+            cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
         }
         const VkShaderStageFlags push_stages =
             mesh_emulation ? VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT
@@ -2069,6 +2116,42 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         );
         GPU::Logging::GPULogger::GetInstance().LogPipelineStateChange(pipeline_info);
     }
+    return result;
+}
+
+void GraphicsPipeline::QueueOptimizedPipeline(VkRenderPass render_pass) {
+    if (optimize_worker == nullptr) {
+        spv_modules = {};
+        return;
+    }
+    // A fast-linked pipeline may run slower on the GPU than one compiled whole, where the driver
+    // optimizes across stages. The monolithic compile also stores in the VkPipelineCache what the
+    // disk cache replay at the next boot asks for.
+    // Everything MakePipeline reads is immutable once the pipeline is built, and the pool is
+    // destroyed before the pipelines (PipelineCache member order). The cache's eviction keeps
+    // the pipeline until the job is done (HasPendingJobs).
+    pending_jobs.fetch_add(1, std::memory_order_relaxed);
+    optimize_worker->QueueWork([this, render_pass] {
+        const PipelineStats::ScopedRole stats_role{PipelineStats::Role::Opt};
+        try {
+            const PipelineStats::ScopedTimer stats_timer{PipelineStats::Kind::Graphics,
+                                                         PipelineStats::Stage::Optimize};
+            optimized_pipeline = MakePipeline(render_pass, LinkMode::None).pipeline;
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan,
+                        "Optimized graphics pipeline {:016X} failed ({}), keeping the linked one",
+                        key.Hash(), exception.what());
+            spv_modules = {};
+            pending_jobs.fetch_sub(1, std::memory_order_release);
+            return;
+        }
+        spv_modules = {};
+        // Draws recorded from now on bind it (BoundPipeline, read on the command thread).
+        optimized_ready.store(true, std::memory_order_release);
+        PipelineStats::NoteLibrary(PipelineStats::Registry::LibraryEvent::Optimized);
+        // The job's last access to the pipeline: from here the cache may destroy it.
+        pending_jobs.fetch_sub(1, std::memory_order_release);
+    });
 }
 
 void GraphicsPipeline::Validate() {

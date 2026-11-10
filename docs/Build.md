@@ -23,7 +23,7 @@ First, you must [install some dependencies](Deps.md).
 Next, you will want to clone Eglantine via the terminal:
 
 ```sh
-git clone https://github.com/Djihads80/Eglantine.git
+git clone https://github.com/notsapinho/Eglantine.git
 cd Eglantine
 ```
 
@@ -164,7 +164,7 @@ If your initial configure failed:
 - Evaluate the error and find any related settings
 - See the [CPM docs](CPMUtil.md) to see if you may need to forcefully bundle any packages
 
-Otherwise, feel free to ask for help in Stoat or Discord.
+Otherwise, feel free to ask for help on the [Discord](https://discord.gg/jCCZ58VExk).
 
 ## Caveats
 
@@ -192,4 +192,4 @@ Your compiled executable will be in:
 
 ## Scripts
 
-Take a look at our [CI scripts](https://github.com/Eglantine-CI/Workflow). You can use `.ci/common/configure.sh` on any POSIX-compliant shell, but you are heavily encouraged to instead write your own based. It's not really that hard, provided you can read CMake.
+The release builds are configured in [`.github/workflows/release-binaries.yml`](../.github/workflows/release-binaries.yml): its configure steps list the CMake flags each platform's build uses. Write your own script from them if you like; it's not hard, provided you can read CMake.

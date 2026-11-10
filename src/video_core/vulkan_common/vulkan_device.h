@@ -66,6 +66,7 @@ VK_DEFINE_HANDLE(VmaPool)
     FEATURE(EXT, ExtendedDynamicState, EXTENDED_DYNAMIC_STATE, extended_dynamic_state)             \
     FEATURE(EXT, ExtendedDynamicState2, EXTENDED_DYNAMIC_STATE_2, extended_dynamic_state2)         \
     FEATURE(EXT, ExtendedDynamicState3, EXTENDED_DYNAMIC_STATE_3, extended_dynamic_state3)         \
+    FEATURE(EXT, GraphicsPipelineLibrary, GRAPHICS_PIPELINE_LIBRARY, graphics_pipeline_library)    \
     FEATURE(EXT, 4444Formats, 4444_FORMATS, format_a4b4g4r4)                                       \
     FEATURE(EXT, IndexTypeUint8, INDEX_TYPE_UINT8, index_type_uint8)                               \
     FEATURE(EXT, LineRasterization, LINE_RASTERIZATION, line_rasterization)                        \
@@ -82,6 +83,8 @@ VK_DEFINE_HANDLE(VmaPool)
     FEATURE(KHR, PipelineBinary, PIPELINE_BINARY, pipeline_binary)                                 \
     FEATURE(KHR, PipelineExecutableProperties, PIPELINE_EXECUTABLE_PROPERTIES,                     \
             pipeline_executable_properties)                                                        \
+    FEATURE(KHR, ShaderMaximalReconvergence, SHADER_MAXIMAL_RECONVERGENCE,                         \
+            shader_maximal_reconvergence)                                                          \
     FEATURE(KHR, ShaderQuadControl, SHADER_QUAD_CONTROL, shader_quad_control)                      \
     FEATURE(KHR, ShaderMaximalReconvergence, SHADER_MAXIMAL_RECONVERGENCE,                        \
             shader_maximal_reconvergence)                                                        \
@@ -118,6 +121,7 @@ VK_DEFINE_HANDLE(VmaPool)
     EXTENSION(KHR, MAINTENANCE_3, maintenance3)                                                    \
     EXTENSION(KHR, MAINTENANCE_7, maintenance7)                                                    \
     EXTENSION(KHR, MAINTENANCE_8, maintenance8)                                                    \
+    EXTENSION(KHR, PIPELINE_LIBRARY, pipeline_library)                                             \
     EXTENSION(NV, DEVICE_DIAGNOSTICS_CONFIG, device_diagnostics_config)                            \
     EXTENSION(NV, GEOMETRY_SHADER_PASSTHROUGH, geometry_shader_passthrough)                        \
     EXTENSION(NV, VIEWPORT_ARRAY2, viewport_array2)                                                \
@@ -371,7 +375,7 @@ public:
 
     /// Whether a sparse image may bind the same memory to several of its blocks.
     bool IsSparseResidencyAliasedSupported() const {
-        return IsSparseResidencyImage2DSupported() && features.features.sparseResidencyAliased;
+        return IsSparseResidencyImageSupported(VK_IMAGE_TYPE_2D) && features.features.sparseResidencyAliased;
     }
 
     /// Whether images with no memory bound may be sampled and used as attachments. AMD's drivers
@@ -656,6 +660,13 @@ FN_MAX_LIMIT_LIST
     /// Returns true if the device supports VK_KHR_push_descriptor.
     bool IsKhrPushDescriptorSupported() const {
         return extensions.push_descriptor;
+    }
+
+    /// Returns true if graphics pipelines can be fast-linked from VK_EXT_graphics_pipeline_library
+    /// libraries: the extension, fast linking and independent interpolation decorations are all
+    /// supported, and EDEN_NX2_GPL is not 0.
+    bool IsExtGraphicsPipelineLibrarySupported() const {
+        return extensions.graphics_pipeline_library;
     }
 
     /// Returns true if VK_KHR_pipeline_executable_properties is enabled.
@@ -1085,6 +1096,11 @@ FN_MAX_LIMIT_LIST
     }
 
     u64 GetDeviceMemoryUsage() const;
+
+    [[nodiscard]] bool TracksMemoryHeap(size_t heap) const noexcept {
+        return std::find(valid_heap_memory.begin(), valid_heap_memory.end(), heap) !=
+               valid_heap_memory.end();
+    }
 
     /// The driver's current memory budget for this process (VK_EXT_memory_budget), in
     /// GetDeviceMemoryUsage() terms: the usage at which the main device-local heap reaches its

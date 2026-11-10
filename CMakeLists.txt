@@ -116,7 +116,7 @@ if(ENABLE_WERROR)
 endif()
 
 
-# Lossless Scaling frame generation. Only Android.
+# Frame generation: Lossless Scaling's LSFG and the built-in FSR 3 style one.
 option(ENABLE_LSFG "Enable frame generation (LSFG and FSR 3 Fluid Motion)" ON)
 
 option(ENABLE_RESHADE "Enable ReShade FX post-processing effects" ON)
@@ -338,6 +338,13 @@ if (ARCHITECTURE_arm64 AND (ANDROID OR LINUX))
     add_compile_definitions(HAS_NCE=1)
 endif()
 
+# Apple silicon: application code can run natively through Hypervisor.framework (the default CPU
+# backend there). Defined for every target, so the settings know the backend exists.
+if (ARCHITECTURE_arm64 AND APPLE)
+    set(HAS_HYPERVISOR 1)
+    add_compile_definitions(HAS_HYPERVISOR=1)
+endif()
+
 if (YUZU_ROOM)
     add_compile_definitions(YUZU_ROOM)
 endif()
@@ -396,6 +403,12 @@ if (CXX_GCC OR CXX_CLANG)
     if (DEFINED march AND DEFINED mtune)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=${march} -mtune=${mtune}")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=${march} -mtune=${mtune}")
+    endif()
+
+    # These presets use AVX2: the program refuses an older CPU with a message at startup instead
+    # of crashing on the first such instruction (src/common/x64/cpu_requirements.cpp).
+    if (ARCHITECTURE_x86_64 AND NOT MSVC AND "${march}" MATCHES "^(x86-64-v3|znver2|znver4)$")
+        set(YUZU_REQUIRE_X86_64_V3 ON)
     endif()
 endif()
 

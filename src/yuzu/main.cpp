@@ -24,12 +24,105 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <sys/sysctl.h>
+#include <sys/types.h>
 #endif
 
+#include "common/fs/fs_paths.h"
+#include "common/logging.h"
+#include "common/x64/cpu_requirements.h"
 #include "main_window.h"
+#include "qt_common/render/emu_thread.h"
 
 #ifdef _WIN32
+#include <atomic>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
 #include <QScreen>
+#include <windows.h>
+#include "common/fs/path_util.h"
+
+// Crash report for the Qt frontend (eden-cli has EDEN_NX2_CRASH_DUMP): on an unhandled exception
+// or abort(), write eden-crash-<pid>.txt (fault and stack as module+offset, resolve with the
+// module's PDB) and eden-crash-<pid>.dmp to the crash_dumps folder. The log is written
+// asynchronously, so a crash cuts it short and says nothing. Fastmem faults are handled before.
+static char g_crash_dir[MAX_PATH];
+
+static void PrintCodeAddress(std::FILE* out, const char* label, const void* address) {
+    HMODULE module{};
+    char name[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(address), &module)) {
+        GetModuleFileNameA(module, name, sizeof(name));
+    }
+    const char* base_name = std::strrchr(name, '\\');
+    std::fprintf(out, "  %s %p %s+%#llx\n", label, address, base_name ? base_name + 1 : name,
+                 static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address) -
+                                                 reinterpret_cast<uintptr_t>(module)));
+}
+
+static void WriteCrashReport(EXCEPTION_POINTERS* exception) {
+    static std::atomic<bool> written{};
+    if (g_crash_dir[0] == '\0' || written.exchange(true)) {
+        return;
+    }
+    char path[MAX_PATH];
+    std::snprintf(path, sizeof(path), "%s\\eden-crash-%lu.txt", g_crash_dir, GetCurrentProcessId());
+    if (std::FILE* out = std::fopen(path, "w")) {
+        if (exception != nullptr) {
+            const EXCEPTION_RECORD& record = *exception->ExceptionRecord;
+            std::fprintf(out, "Unhandled exception %#lx on thread %lu, info %#llx %#llx\n",
+                         record.ExceptionCode, GetCurrentThreadId(),
+                         static_cast<unsigned long long>(record.NumberParameters > 0 ? record.ExceptionInformation[0] : 0),
+                         static_cast<unsigned long long>(record.NumberParameters > 1 ? record.ExceptionInformation[1] : 0));
+            PrintCodeAddress(out, "at", record.ExceptionAddress);
+        } else {
+            std::fprintf(out, "abort() on thread %lu\n", GetCurrentThreadId());
+        }
+        void* frames[48];
+        const USHORT count = RtlCaptureStackBackTrace(0, 48, frames, nullptr);
+        for (USHORT i = 0; i < count; ++i) {
+            PrintCodeAddress(out, "frame", frames[i]);
+        }
+        std::fclose(out);
+    }
+    struct ExceptionInformation {
+        DWORD thread_id;
+        EXCEPTION_POINTERS* exception_pointers;
+        BOOL client_pointers;
+    };
+    using MiniDumpWriteDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, int, const ExceptionInformation*,
+                                              const void*, const void*);
+    const HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+    const auto write = dbghelp ? reinterpret_cast<MiniDumpWriteDumpFn>(
+                                     GetProcAddress(dbghelp, "MiniDumpWriteDump"))
+                               : nullptr;
+    std::snprintf(path, sizeof(path), "%s\\eden-crash-%lu.dmp", g_crash_dir, GetCurrentProcessId());
+    const HANDLE file = write ? CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                            FILE_ATTRIBUTE_NORMAL, nullptr)
+                              : INVALID_HANDLE_VALUE;
+    if (file != INVALID_HANDLE_VALUE) {
+        const ExceptionInformation information{GetCurrentThreadId(), exception, FALSE};
+        // MiniDumpWithThreadInfo, as eden-cli: larger dump types fail on Eden's address space.
+        write(GetCurrentProcess(), GetCurrentProcessId(), file, 0x1000,
+              exception ? &information : nullptr, nullptr, nullptr);
+        CloseHandle(file);
+    }
+}
+
+static LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* exception) {
+    WriteCrashReport(exception);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void InstallCrashReport() {
+    const std::string directory = Common::FS::GetEdenPathString(Common::FS::EdenPath::CrashDumpsDir);
+    std::snprintf(g_crash_dir, sizeof(g_crash_dir), "%s", directory.c_str());
+    SetUnhandledExceptionFilter(OnUnhandledException);
+    std::signal(SIGABRT, [](int) { WriteCrashReport(nullptr); });
+}
 
 static void OverrideWindowsFont() {
     // Qt5 chooses these fonts on Windows and they have fairly ugly alphanumeric/cyrillic characters
@@ -82,6 +175,10 @@ static Qt::HighDpiScaleFactorRoundingPolicy GetHighDpiRoundingPolicy() {
 }
 
 int main(int argc, char* argv[]) {
+    Common::X64::CheckCpuRequirements();
+#ifdef _WIN32
+    InstallCrashReport();
+#endif
     LoadNx2Switches(argv[0]);
 #if YUZU_ROOM
     bool launch_room = false;
@@ -127,13 +224,8 @@ int main(int argc, char* argv[]) {
     _setmaxstdio(8192);
 #endif // __MSVCRT__
 #elif defined(__unix__) || defined(__APPLE__)
-    // Raise the open file limit to at least 8192, or the hard limit.
-    // Most sane systems should not hit the hard limit here.
-    struct rlimit rl;
-    if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
-        rl.rlim_cur = std::min<rlim_t>(1048576, rl.rlim_max);
-        setrlimit(RLIMIT_NOFILE, &rl);
-    }
+    // Logged once the log is up (MainWindow starts it).
+    const rlim_t open_file_limit = RaiseOpenFileLimit();
 #endif // _WIN32
 
 #if defined(__APPLE__)
@@ -206,9 +298,26 @@ int main(int argc, char* argv[]) {
     setlocale(LC_ALL, "C");
 
     MainWindow main_window{has_broken_vulkan};
+#if !defined(_WIN32) && (defined(__unix__) || defined(__APPLE__))
+    if (open_file_limit == 0) {
+        LOG_WARNING(Frontend, "Could not read the open file limit");
+    } else if (open_file_limit == RLIM_INFINITY) {
+        LOG_INFO(Frontend, "Open file limit: unlimited");
+    } else {
+        LOG_INFO(Frontend, "Open file limit: {}", open_file_limit);
+    }
+#endif
     // After settings have been loaded by GMainWindow, apply the filter
     main_window.show();
 
     app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window, &MainWindow::OnAppFocusStateChanged);
-    return app.exec();
+    const int exit_code = app.exec();
+    if (EmuThread::HasAbandonedThread()) {
+        // Closing the window already ends the process in this case; this covers any other way
+        // out. main_window's destructor and the static destructors after it would destroy the
+        // System an emulation thread that did not stop is still running.
+        Common::Log::Flush();
+        EmuThread::ExitProcessNow(exit_code);
+    }
+    return exit_code;
 }

@@ -12,7 +12,7 @@
 #include <limits>
 #include <span>
 #include <utility>
-#include <vector>
+#include <boost/container/small_vector.hpp>
 
 #include "common/alignment.h"
 #include "common/common_funcs.h"
@@ -125,6 +125,9 @@ struct WordManager {
     /// @param dirty_addr    Base address to mark or unmark as modified
     /// @param size          Size in bytes to mark or unmark as modified
     void ChangeRegionState(Type type, bool enable, u64 dirty_addr, u64 size) noexcept {
+        if (enable && (type == Type::CPU || type == Type::CachedCPU)) {
+            ++cpu_generation;
+        }
         std::span<u64> state_words = Span(type);
         [[maybe_unused]] std::span<u64> untracked_words = Span(Type::Untracked);
         [[maybe_unused]] std::span<u64> cached_words = Span(Type::CachedCPU);
@@ -263,6 +266,7 @@ struct WordManager {
     }
 
     void FlushCachedWrites() noexcept {
+        ++cpu_generation;
         auto const cached_words = Span(Type::CachedCPU);
         auto const untracked_words = Span(Type::Untracked);
         auto const cpu_words = Span(Type::CPU);
@@ -314,9 +318,7 @@ struct WordManager {
             if (cur_addr + cur_size == ranges[i].first) {
                 cur_size += static_cast<size_t>(ranges[i].second);
             } else {
-                coalesced.emplace_back(cur_addr, cur_size);
-                cur_addr = ranges[i].first;
-                cur_size = static_cast<size_t>(ranges[i].second);
+                ranges[count++] = range;
             }
         }
         coalesced.emplace_back(cur_addr, cur_size);
@@ -328,7 +330,8 @@ struct WordManager {
                       coalesced.front().first);
         }
         // Use batch API to reduce lock acquisitions and contention.
-        tracker->UpdatePagesCachedBatch(coalesced, delta);
+        tracker->UpdatePagesCachedBatch(
+            std::span<const std::pair<VAddr, size_t>>{ranges.data(), count}, delta);
         ranges.clear();
     }
 
@@ -397,6 +400,9 @@ struct WordManager {
     u64 clean_words = 0;
     DeviceTracker* tracker = nullptr;
     VAddr cpu_addr = 0;
+    /// Changes whenever pages here may become CPU-modified (CPU or cached CPU writes): a range
+    /// left clean at one generation is still clean at the same generation.
+    u64 cpu_generation = 1;
 };
 
 } // namespace VideoCommon

@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <cstdlib>
+
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -21,6 +23,7 @@
 #include "hid_core/resources/keyboard/keyboard.h"
 #include "hid_core/resources/mouse/debug_mouse.h"
 #include "hid_core/resources/mouse/mouse.h"
+#include "hid_core/resources/mouse/nmouse.h"
 #include "hid_core/resources/npad/npad.h"
 #include "hid_core/resources/palma/palma.h"
 #include "hid_core/resources/shared_memory_format.h"
@@ -152,6 +155,10 @@ std::shared_ptr<Mouse> ResourceManager::GetMouse() const {
     return mouse;
 }
 
+std::shared_ptr<Nmouse> ResourceManager::GetNmouse() const {
+    return nmouse;
+}
+
 std::shared_ptr<NPad> ResourceManager::GetNpad() const {
     return npad;
 }
@@ -205,7 +212,13 @@ Result ResourceManager::CreateAppletResource(u64 aruid) {
 
 Result ResourceManager::CreateAppletResourceImpl(u64 aruid) {
     std::scoped_lock lock{shared_mutex};
-    return applet_resource->CreateAppletResource(aruid);
+    const auto result = applet_resource->CreateAppletResource(aruid);
+    static const bool trace = std::getenv("EDEN_NX2_INPUT_TRACE") != nullptr;
+    if (trace) {
+        LOG_INFO(Service_HID, "CreateAppletResourceImpl aruid={} result={:#x}", aruid,
+                 result.raw);
+    }
+    return result;
 }
 
 void ResourceManager::InitializeHandheldConfig() {
@@ -222,6 +235,7 @@ void ResourceManager::InitializeHandheldConfig() {
 void ResourceManager::InitializeHidCommonSampler() {
     debug_pad = std::make_shared<DebugPad>(system.HIDCore());
     mouse = std::make_shared<Mouse>(system.HIDCore());
+    nmouse = std::make_shared<Nmouse>(system.HIDCore());
     debug_mouse = std::make_shared<DebugMouse>(system.HIDCore());
     keyboard = std::make_shared<Keyboard>(system.HIDCore());
     unique_pad = std::make_shared<UniquePad>(system.HIDCore());
@@ -341,6 +355,10 @@ void ResourceManager::EnableSixAxisSensor(u64 aruid, bool is_enabled) {
 }
 
 void ResourceManager::EnablePadInput(u64 aruid, bool is_enabled) {
+    static const bool trace = std::getenv("EDEN_NX2_INPUT_TRACE") != nullptr;
+    if (trace) {
+        LOG_INFO(Service_HID, "EnablePadInput aruid={} enabled={}", aruid, is_enabled);
+    }
     std::scoped_lock lock{shared_mutex};
     applet_resource->EnablePadInput(aruid, is_enabled);
 }
@@ -492,6 +510,7 @@ void ResourceManager::UpdateNpad(std::chrono::nanoseconds ns_late) {
 void ResourceManager::UpdateMouseKeyboard(std::chrono::nanoseconds ns_late) {
     auto& core_timing = system.CoreTiming();
     mouse->OnUpdate(core_timing);
+    nmouse->OnUpdate(core_timing);
     debug_mouse->OnUpdate(core_timing);
     keyboard->OnUpdate(core_timing);
 }

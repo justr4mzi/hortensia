@@ -1020,9 +1020,9 @@ bool KeplerCompute::FinishDlssEvaluation() {
 
 // Logs the images a rejected program's handles (constant bank 0, bytes 0x80-0x11c) point to, so a
 // substitute (e.g. an upscale blit for a tensor-core pass) can find its inputs and output.
-void KeplerCompute::DescribeNativeResources(const NativeQmdScheduler::Descriptor& qmd) {
+void KeplerCompute::DescribeNativeResources(const NativeQmdScheduler::Descriptor& qmd, bool always) {
     static u32 described{};
-    if (described++ >= 2) return;
+    if (!always && described++ >= 2) return;
     const auto& cbuf = launch_description.const_buffer_config[0];
     const GPUVAddr cbuf_address = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
     LOG_INFO(HW_GPU, "Native resources: cbuf0 {:#x} size {:#x}, grid {}x{}x{}, block {}x{}x{}, tic pool {:#x}",
@@ -1450,6 +1450,7 @@ KeplerCompute::FrontState& KeplerCompute::Front(VideoCommon::GpuSplit& split) {
         front->bind_pointer = native_bind_pointer;
         front->macro = native_macro;
         front_macros = true;
+        split.AddFrontEngine([this] { FrontHandBack(); });
     }
     return *front;
 }

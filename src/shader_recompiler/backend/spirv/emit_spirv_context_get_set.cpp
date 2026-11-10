@@ -10,6 +10,7 @@
 
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
+#include "shader_recompiler/guardband.h"
 
 namespace Shader::Backend::SPIRV {
 namespace {
@@ -48,6 +49,9 @@ std::optional<OutAttr> OutputAttrPointer(EmitContext& ctx, IR::Attribute attr) {
         const u32 index{IR::GenericAttributeIndex(attr)};
         const u32 element{IR::GenericAttributeElement(attr)};
         const GenericElementInfo& info{ctx.output_generics.at(index).at(element)};
+        if (!Sirit::ValidId(info.id)) {
+            return std::nullopt;
+        }
         if (info.num_components == 1) {
             return info.id;
         } else {
@@ -595,13 +599,16 @@ Id EmitIsHelperInvocation(EmitContext& ctx) {
 }
 
 Id EmitSR_WScaleFactorXY(EmitContext& ctx) {
-    LOG_WARNING(Shader, "(STUBBED) called");
-    return ctx.Const(0x00ff0000u);
+    return ctx.Const(WScaleFactorXY(ctx.runtime_info.geometry_guardband_xy));
 }
 
 Id EmitSR_WScaleFactorZ(EmitContext& ctx) {
-    LOG_WARNING(Shader, "(STUBBED) called");
-    return ctx.Const(0x00ff0000u);
+    const auto factor = WScaleFactorZ(ctx.runtime_info.geometry_guardband_xy,
+                                    ctx.runtime_info.geometry_guardband_z);
+    if (!factor) {
+        throw NotImplementedException("Reserved Z guardband mode");
+    }
+    return ctx.Const(*factor);
 }
 
 Id EmitYDirection(EmitContext& ctx) {

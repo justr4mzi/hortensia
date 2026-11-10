@@ -195,6 +195,9 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     /// cards up to 8 GiB; larger ones 5/8 of the driver's budget (ApplyThresholdOverrides).
     static constexpr u64 MaxCriticalMemory = 5_GiB;
     static constexpr size_t GC_EMERGENCY_COUNTS = 2;
+    /// Switch 2 titles: images unused this long (frames) are dropped before memory gets tight.
+    static constexpr u64 STALE_IMAGE_FRAMES = 3 * 60 * 60;
+    static constexpr size_t STALE_DELETES_PER_FRAME = 8;
 
     using Runtime = typename P::Runtime;
     using Image = typename P::Image;
@@ -350,6 +353,9 @@ public:
     /// Mark images in a range as modified from the CPU
     void WriteMemory(DAddr cpu_addr, size_t size);
 
+    /// The images on a region and their tracking flags (EDEN_NX2_WRITE_STATS).
+    std::string DescribeRegion(DAddr cpu_addr, size_t size);
+
     /// Download contents of host images to guest memory in a region
     void DownloadMemory(DAddr cpu_addr, size_t size);
 
@@ -398,7 +404,9 @@ public:
     /// Pop asynchronous downloads
     void PopAsyncFlushes();
 
-    [[nodiscard]] ImageId DmaImageId(const Tegra::DMA::ImageOperand& operand, bool is_upload);
+    [[nodiscard]] ImageId DmaImageId(const Tegra::DMA::ImageOperand& operand, bool is_upload,
+                                     const Tegra::DMA::ImageCopy& copy_info,
+                                     const Tegra::DMA::BufferOperand& buffer_operand);
 
     [[nodiscard]] std::pair<Image*, BufferImageCopy> DmaBufferImageCopy(
         const Tegra::DMA::ImageCopy& copy_info, const Tegra::DMA::BufferOperand& buffer_operand,
@@ -597,7 +605,7 @@ private:
     void InvalidateScale(Image& image);
     bool ScaleUp(Image& image);
     bool ScaleDown(Image& image);
-    u64 GetScaledImageSizeBytes(const ImageBase& image);
+    u64 GetScaledImageSizeBytes(const Image& image);
 
     /// The device memory an image counts for in total_used_memory between two driver readings:
     /// none for an unbacked image (too large to back, or over unwritten sparse blocks), what is

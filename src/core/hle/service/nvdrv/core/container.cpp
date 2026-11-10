@@ -131,7 +131,6 @@ void Container::CloseSession(SessionId session_id) {
         session.has_preallocated_area = false;
     }
     session.is_active = false;
-    Devices::Nx2GpuMemoryRegistry::Get().ForgetDeviceRanges(session.asid.id);
     smmu.UnregisterProcess(impl->sessions[session_id.id].asid);
     impl->id_pool.emplace_front(session_id.id);
 }

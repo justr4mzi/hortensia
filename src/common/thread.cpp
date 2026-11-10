@@ -714,6 +714,76 @@ void SetCurrentThreadName(const char* name) {
 #endif
 }
 
+#ifdef _WIN32
+namespace {
+// CPU set ids of the most performant cores (highest EfficiencyClass), empty if every core is the
+// same kind. On hybrid CPUs (Intel 12th gen and later) Windows otherwise places the emulator's
+// busiest threads by its own heuristics, efficiency cores included. (Which kind the timing
+// thread runs on made no difference in Pokopia, A/B within one run: EDEN_NX2_AB=hostcores.)
+std::vector<ULONG> CpuSetsOfClass(bool performance);
+
+const std::vector<ULONG>& PerformanceCpuSets() {
+    static const std::vector<ULONG> sets = CpuSetsOfClass(true);
+    return sets;
+}
+
+const std::vector<ULONG>& EfficiencyCpuSets() {
+    static const std::vector<ULONG> sets = CpuSetsOfClass(false);
+    return sets;
+}
+
+std::vector<ULONG> CpuSetsOfClass(bool performance) {
+    {
+        std::vector<ULONG> ids;
+        ULONG length = 0;
+        GetSystemCpuSetInformation(nullptr, 0, &length, GetCurrentProcess(), 0);
+        if (length == 0) {
+            return ids;
+        }
+        std::vector<u8> buffer(length);
+        if (!GetSystemCpuSetInformation(reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(buffer.data()),
+                                        length, &length, GetCurrentProcess(), 0)) {
+            return ids;
+        }
+        BYTE best = 0;
+        BYTE worst = 0xff;
+        for (size_t offset = 0; offset < length;) {
+            const auto* info = reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(buffer.data() + offset);
+            if (info->Type == CpuSetInformation) {
+                best = (std::max)(best, info->CpuSet.EfficiencyClass);
+                worst = (std::min)(worst, info->CpuSet.EfficiencyClass);
+            }
+            offset += info->Size;
+        }
+        if (best == worst) {
+            return ids;
+        }
+        for (size_t offset = 0; offset < length;) {
+            const auto* info = reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(buffer.data() + offset);
+            if (info->Type == CpuSetInformation &&
+                info->CpuSet.EfficiencyClass == (performance ? best : worst)) {
+                ids.push_back(info->CpuSet.Id);
+            }
+            offset += info->Size;
+        }
+        if (performance) {
+            LOG_INFO(Common, "Hybrid CPU: emulation threads run on {} performance core threads", ids.size());
+        }
+        return ids;
+    }
+}
+
+bool HybridPlacementEnabled() {
+    // EDEN_HYBRID_CORES=0 leaves placement to Windows.
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_HYBRID_CORES");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+} // Anonymous namespace
+#endif
+
 void SetCurrentThreadToPerformanceCores() {
 #if defined(__ANDROID__)
     if (ADPF::AddCurrentThread(ADPF::Session::Render)) {
@@ -926,6 +996,20 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
             bool expected = true;
             if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
                 return true;
+            }
+            // RDTSC may be fenced here due to atomic load
+#ifdef _MSC_VER
+            auto const now = __rdtsc();
+#else
+            auto const now = _rdtsc();
+#endif
+            if (now >= end) {
+                return false;
+            }
+            const u32 cycles = static_cast<u32>(
+                std::min<u64>((std::numeric_limits<u32>::max)(), end - now));
+            // MWAITX uses a 32-bit relative TSC timeout and can wake early.
+            _mm_mwaitx(1 << 1, 0u, cycles);
         }
     }
     if (caps.waitpkg) {
@@ -945,6 +1029,15 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
             bool expected = true;
             if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
                 return true;
+            }
+#ifdef _MSC_VER
+            if (__rdtsc() >= end) {
+#else
+            if (_rdtsc() >= end) {
+#endif
+                return false;
+            }
+            _umwait(0, end);
         }
     }
     while (!is_set.load() && remaining() > std::chrono::nanoseconds::zero())
@@ -968,9 +1061,7 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
     auto const end = Common::g_wall_clock.GetTimeNS() + time;
     while (!is_set.load() && end > Common::g_wall_clock.GetTimeNS())
         Common::Windows::SleepForOneTick();
-    if (is_set.load())
-        Reset();
-    return true;
+    return is_set.exchange(false);
 #else
     std::unique_lock lk{mutex};
     const auto now = std::chrono::steady_clock::now();

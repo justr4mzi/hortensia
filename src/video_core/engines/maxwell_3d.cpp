@@ -68,6 +68,58 @@ Maxwell3D::Maxwell3D(MemoryManager& memory_manager_)
 
 Maxwell3D::~Maxwell3D() = default;
 
+void Maxwell3D::InitializePipelineNeutralRegisters() {
+    auto& neutral = pipeline_neutral_registers;
+    const auto mark = [&neutral](size_t first, size_t count) {
+        for (size_t i = first; i < first + count && i < neutral.size(); ++i) {
+            neutral.set(i);
+        }
+    };
+#define NEUTRAL(field) mark(MAXWELL3D_REG_INDEX(field), sizeof(Regs::field) / sizeof(u32))
+    NEUTRAL(load_mme);
+    NEUTRAL(upload);
+    NEUTRAL(inline_data);
+    NEUTRAL(sync_info);
+    NEUTRAL(vertex_buffer);
+    NEUTRAL(invalidate_texture_data_cache);
+    NEUTRAL(vertex_id_base);
+    NEUTRAL(invalidate_sampler_cache);
+    NEUTRAL(inline_index_4x8);
+    NEUTRAL(global_base_vertex_index);
+    NEUTRAL(global_base_instance_index);
+    NEUTRAL(tex_sampler);
+    NEUTRAL(tex_header);
+    NEUTRAL(draw_inline_index);
+    NEUTRAL(inline_index_2x16);
+    // The topology a draw begins with is compared by the pipeline cache (DrawManager's state).
+    NEUTRAL(draw);
+    NEUTRAL(index_buffer);
+    NEUTRAL(index_buffer32_first);
+    NEUTRAL(index_buffer16_first);
+    NEUTRAL(index_buffer8_first);
+    NEUTRAL(index_buffer32_subsequent);
+    NEUTRAL(zpass_pixel_count_enable);
+    NEUTRAL(clear_surface);
+    NEUTRAL(report_semaphore);
+    NEUTRAL(vertex_stream_limits);
+    NEUTRAL(pipelines);
+    NEUTRAL(const_buffer);
+    NEUTRAL(bind_groups);
+    NEUTRAL(shadow_scratch);
+#undef NEUTRAL
+    // NVN2's vertex stream sizes (Regs::NativeVertexStreamSize), rewritten for most of Pokopia's
+    // draws: they size the vertex buffers only.
+    mark(0x600 / sizeof(u32), Regs::NumVertexArrays * 2);
+    // A vertex stream's address; its stride, enable and frequency are in the key.
+    for (size_t index = 0; index < Regs::NumVertexArrays; ++index) {
+        mark(MAXWELL3D_REG_INDEX(vertex_streams) + index * (sizeof(Regs::VertexStream) / sizeof(u32)) +
+                 offsetof(Regs::VertexStream, address_high) / sizeof(u32),
+             2);
+    }
+    mark(RootTables::SelectMethod, 1);
+    mark(RootTables::LoadMethod, 1);
+}
+
 void Maxwell3D::BindRasterizer(VideoCore::RasterizerInterface* rasterizer_) {
     rasterizer = rasterizer_;
     upload_state.BindRasterizer(rasterizer_);
@@ -370,6 +422,10 @@ void Maxwell3D::ProcessDirtyRegisters(u32 method, u32 argument) {
     regs.reg_array[method] = argument;
     for (auto const& table : dirty.tables)
         dirty.flags[table[method]] = true;
+    if (!pipeline_neutral_registers[method]) {
+        pipeline_state_dirty = true;
+        pipeline_dirty_method = method;
+    }
 }
 
 bool Maxwell3D::IsFastDrawParameter(u32 method) {
@@ -838,9 +894,16 @@ void Maxwell3D::ProcessMacroUpload(u32 data) {
 void Maxwell3D::ProcessMacroBind(u32 data) {
     const auto positions = GetNativeMacroPositions();
     const u32 index = regs.load_mme.start_address_ptr++;
-    if (index < positions.size()) {
-        positions[index] = data;
+    if (index >= positions.size()) {
+        static std::atomic<u32> rejected{};
+        if (rejected.fetch_add(1) < 8) {
+            LOG_ERROR(HW_GPU,
+                      "Rejecting out-of-range macro bind: index={:#x}, entries={}, data={:#x}",
+                      index, positions.size(), data);
+        }
+        return;
     }
+    positions[index] = data;
 }
 
 void Maxwell3D::ProcessFirmwareCall4() {
@@ -1280,12 +1343,13 @@ bool FrontHandledOutsideDrawManager(u32 method) {
 }
 
 // EDEN_NX2_SPLIT_SKIP=0: send state writes that keep the register's value too.
+const bool g_front_skip_same = [] {
+    const char* value = std::getenv("EDEN_NX2_SPLIT_SKIP");
+    return value == nullptr || value[0] != '0';
+}();
+
 bool FrontSkipSame() {
-    static const bool skip = [] {
-        const char* value = std::getenv("EDEN_NX2_SPLIT_SKIP");
-        return value == nullptr || value[0] != '0';
-    }();
-    return skip;
+    return g_front_skip_same;
 }
 
 // Whether a macro the split's back runs may write `method` (FrontRunOnBack): the front then only
@@ -1365,6 +1429,7 @@ Maxwell3D::FrontState& Maxwell3D::Front(Core::System& system, VideoCommon::GpuSp
         macro_params.clear();
         executing_macro = 0;
         front_macros = true;
+        split.AddFrontEngine([this] { FrontHandBack(); });
     }
     return *front;
 }

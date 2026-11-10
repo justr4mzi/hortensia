@@ -51,7 +51,11 @@
 
 namespace VideoCommon {
 
-constexpr std::array<char, 8> MAGIC_NUMBER{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+// Not yuzu's and Eden's "yuzucach": their files use another format, and a shared cache or one
+// copied in from them must not parse as ours when the version numbers happen to match.
+constexpr std::array<char, 8> MAGIC_NUMBER{'e', 'g', 'l', 'n', 'c', 'a', 'c', 'h'};
+/// Magic number and cache version; the first pipeline starts after it.
+constexpr std::streamoff PIPELINE_CACHE_HEADER_SIZE = MAGIC_NUMBER.size() + sizeof(u32);
 
 constexpr size_t INST_SIZE = sizeof(u64);
 
@@ -151,10 +155,28 @@ static Shader::TextureType ConvertTextureType(const Tegra::Texture::TICEntry& en
     }
 }
 
+// Shader::TexturePixelFormat mirrors VideoCore::Surface::PixelFormat value for value.
+static_assert(static_cast<u32>(Shader::TexturePixelFormat::E5B9G9R9_FLOAT) ==
+              static_cast<u32>(VideoCore::Surface::PixelFormat::E5B9G9R9_FLOAT));
+static_assert(static_cast<u32>(Shader::TexturePixelFormat::D32_FLOAT) ==
+              static_cast<u32>(VideoCore::Surface::PixelFormat::D32_FLOAT));
+static_assert(static_cast<size_t>(Shader::TexturePixelFormat::D32_FLOAT_S8_UINT) + 1 ==
+              VideoCore::Surface::MaxPixelFormat);
+
 static Shader::TexturePixelFormat ConvertTexturePixelFormat(const Tegra::Texture::TICEntry& entry) {
     return static_cast<Shader::TexturePixelFormat>(
         PixelFormatFromTextureInfo(entry.format, entry.r_type, entry.g_type, entry.b_type,
                                    entry.a_type, entry.srgb_conversion));
+}
+
+static u32 PackSamplerState(const Tegra::Texture::TSCEntry& entry) {
+    return Shader::TextureSamplerState{
+        .known = true,
+        .compare_enabled = entry.depth_compare_enabled != 0,
+        .compare_func = static_cast<u32>(entry.depth_compare_func.Value()),
+        .linear_filter = entry.mag_filter == Tegra::Texture::TextureFilter::Linear,
+    }
+        .Pack();
 }
 
 static std::string_view StageToPrefix(Shader::Stage stage) {
@@ -260,8 +282,7 @@ bool GenericEnvironment::IsCbufStorageBufferPointer(u32 index, u32 offset) {
     }
     const u64 address = u64{ReadCbufValue(index, offset)} |
                         (u64{ReadCbufValue(index, offset + 4)} << 32);
-    const bool mapped = address != 0 && gpu_memory->IsWithinGPUAddressRange(address) &&
-                        gpu_memory->IsFullyMappedRange(address, 1);
+    const bool mapped = IsStorageBufferPointer(*gpu_memory, address);
     storage_pointer_types.emplace(key, static_cast<u8>(mapped));
     return mapped;
 }
@@ -311,6 +332,10 @@ std::optional<u64> GenericEnvironment::Analyze() {
     cached_lowest = start_address;
     cached_highest = start_address + static_cast<u32>(*size);
     return Common::CityHash64(reinterpret_cast<const char*>(code.data()), *size);
+}
+
+bool GenericEnvironment::RequiresRasterizerClip() const {
+    return Shader::Ampere::HasNativeAddressMap(code) && sph.common0.reserved1 == 3;
 }
 
 void GenericEnvironment::SetCachedSize(size_t size_bytes) {
@@ -377,6 +402,8 @@ void GenericEnvironment::Serialize(std::ostream& file, u32 read_properties) cons
         .write(reinterpret_cast<const char*>(&num_texture_types), sizeof(num_texture_types))
         .write(reinterpret_cast<const char*>(&num_texture_pixel_formats),
                sizeof(num_texture_pixel_formats))
+        .write(reinterpret_cast<const char*>(&num_texture_sampler_states),
+               sizeof(num_texture_sampler_states))
         .write(reinterpret_cast<const char*>(&num_cbuf_values), sizeof(num_cbuf_values))
         .write(reinterpret_cast<const char*>(&num_storage_pointer_types),
                sizeof(num_storage_pointer_types))
@@ -398,6 +425,10 @@ void GenericEnvironment::Serialize(std::ostream& file, u32 read_properties) cons
     for (const auto& [key, format] : texture_pixel_formats) {
         file.write(reinterpret_cast<const char*>(&key), sizeof(key))
             .write(reinterpret_cast<const char*>(&format), sizeof(format));
+    }
+    for (const auto& [key, state] : texture_sampler_states) {
+        file.write(reinterpret_cast<const char*>(&key), sizeof(key))
+            .write(reinterpret_cast<const char*>(&state), sizeof(state));
     }
     for (const auto& [key, type] : cbuf_values) {
         file.write(reinterpret_cast<const char*>(&key), sizeof(key))
@@ -515,6 +546,23 @@ Tegra::Texture::TICEntry GenericEnvironment::ReadTextureInfo(GPUVAddr tic_addr, 
     return entry;
 }
 
+std::optional<Tegra::Texture::TSCEntry> GenericEnvironment::ReadSamplerInfo(GPUVAddr tsc_addr,
+                                                                             u32 tsc_limit,
+                                                                             bool via_header_index,
+                                                                             u32 raw) {
+    const u32 index{Tegra::Texture::TexturePair(raw, via_header_index).second};
+    if (index > tsc_limit) {
+        return std::nullopt;
+    }
+    const GPUVAddr descriptor_addr{tsc_addr + u64{index} * sizeof(Tegra::Texture::TSCEntry)};
+    if (!gpu_memory->IsFullyMappedRange(descriptor_addr, sizeof(Tegra::Texture::TSCEntry))) {
+        return std::nullopt;
+    }
+    Tegra::Texture::TSCEntry entry;
+    gpu_memory->ReadBlock(descriptor_addr, &entry, sizeof(entry));
+    return entry;
+}
+
 namespace {
 
 // Reads a native program a 4 KiB page at a time instead of one 16-byte instruction at a time.
@@ -586,6 +634,8 @@ void GenericEnvironment::InitializeNativeCode(std::shared_ptr<const LoweredNativ
     }
     native_source_size = lowered->source_size;
     code = lowered->code;
+    // The lowered header carries the rasterizer clip flag (RequiresRasterizerClip).
+    std::memcpy(&sph, code.data(), sizeof(sph));
     cached_lowest = 0;
     cached_highest = static_cast<u32>((code.size() - 1) * sizeof(u64));
     lowered_native = std::move(lowered);
@@ -830,11 +880,6 @@ GraphicsEnvironment::GraphicsEnvironment(Tegra::Engines::Maxwell3D& maxwell3d_,
     texture_bound = maxwell3d->regs.bindless_texture_const_buffer_slot;
     const auto& regs{maxwell3d->regs};
     const bool native{maxwell3d->GetNativeMacroEngine().native_turing};
-    static const bool geometry_enabled = [] {
-        const char* value = std::getenv("EDEN_NX2_EXPERIMENTAL_GEOMETRY");
-        return !value || std::string_view{value} != "0";
-    }();
-    const bool geometry{native && program == Maxwell::ShaderType::Geometry && geometry_enabled};
     // Task and mesh programs: the task in the vertex slot, its mesh program in the tessellation
     // slot (without a task, the mesh program is in the vertex slot).
     const bool mesh_slot{native && regs.IsMeshEnabled() &&
@@ -1042,6 +1087,27 @@ bool GraphicsEnvironment::IsTexturePixelFormatInteger(u32 handle) {
         static_cast<VideoCore::Surface::PixelFormat>(ReadTexturePixelFormat(handle)));
 }
 
+u32 GraphicsEnvironment::ReadTextureSamplerState(u32 handle) {
+    u32 result{};
+    if (!snapshot) {
+        const auto& regs{maxwell3d->regs};
+        const bool via_header_index{regs.sampler_binding ==
+                                    Maxwell::SamplerBinding::ViaHeaderBinding};
+        const u32 limit{via_header_index ? regs.tex_header.limit : regs.tex_sampler.limit};
+        if (const auto entry{
+                ReadSamplerInfo(regs.tex_sampler.Address(), limit, via_header_index, handle)}) {
+            result = PackSamplerState(*entry);
+        }
+    } else {
+        const u32 index{Tegra::Texture::TexturePair(handle, snapshot->via_header_index).second};
+        if (index < snapshot->sampler_states.size()) {
+            result = snapshot->sampler_states[index];
+        }
+    }
+    texture_sampler_states.emplace(handle, result);
+    return result;
+}
+
 u32 GraphicsEnvironment::ReadViewportTransformState() {
     const auto& regs{maxwell3d->regs};
     viewport_transform_state = regs.viewport_scale_offset_enabled;
@@ -1162,6 +1228,18 @@ bool ComputeEnvironment::IsTexturePixelFormatInteger(u32 handle) {
         static_cast<VideoCore::Surface::PixelFormat>(ReadTexturePixelFormat(handle)));
 }
 
+u32 ComputeEnvironment::ReadTextureSamplerState(u32 handle) {
+    const auto& regs{kepler_compute->regs};
+    const bool linked_tsc{kepler_compute->launch_description.linked_tsc != 0};
+    const u32 limit{linked_tsc ? regs.tic.limit : regs.tsc.limit};
+    u32 result{};
+    if (const auto entry{ReadSamplerInfo(regs.tsc.Address(), limit, linked_tsc, handle)}) {
+        result = PackSamplerState(*entry);
+    }
+    texture_sampler_states.emplace(handle, result);
+    return result;
+}
+
 u32 ComputeEnvironment::ReadViewportTransformState() {
     return viewport_transform_state;
 }
@@ -1170,6 +1248,7 @@ void FileEnvironment::Deserialize(std::istream& file, std::streampos end) {
     u64 code_size{};
     u64 num_texture_types{};
     u64 num_texture_pixel_formats{};
+    u64 num_texture_sampler_states{};
     u64 num_cbuf_values{};
     u64 num_storage_pointer_types{};
     u64 num_cbuf_replacement_values{};
@@ -1177,6 +1256,8 @@ void FileEnvironment::Deserialize(std::istream& file, std::streampos end) {
         .read(reinterpret_cast<char*>(&num_texture_types), sizeof(num_texture_types))
         .read(reinterpret_cast<char*>(&num_texture_pixel_formats),
               sizeof(num_texture_pixel_formats))
+        .read(reinterpret_cast<char*>(&num_texture_sampler_states),
+              sizeof(num_texture_sampler_states))
         .read(reinterpret_cast<char*>(&num_cbuf_values), sizeof(num_cbuf_values))
         .read(reinterpret_cast<char*>(&num_storage_pointer_types),
               sizeof(num_storage_pointer_types))
@@ -1232,6 +1313,13 @@ void FileEnvironment::Deserialize(std::istream& file, std::streampos end) {
         file.read(reinterpret_cast<char*>(&key), sizeof(key))
             .read(reinterpret_cast<char*>(&format), sizeof(format));
         texture_pixel_formats.emplace(key, format);
+    }
+    for (size_t i = 0; i < num_texture_sampler_states; ++i) {
+        u32 key;
+        u32 state;
+        file.read(reinterpret_cast<char*>(&key), sizeof(key))
+            .read(reinterpret_cast<char*>(&state), sizeof(state));
+        texture_sampler_states.emplace(key, state);
     }
     for (size_t i = 0; i < num_cbuf_values; ++i) {
         u64 key;
@@ -1389,6 +1477,14 @@ Shader::TexturePixelFormat FileEnvironment::ReadTexturePixelFormat(u32 handle) {
 bool FileEnvironment::IsTexturePixelFormatInteger(u32 handle) {
     return VideoCore::Surface::IsPixelFormatInteger(
         static_cast<VideoCore::Surface::PixelFormat>(ReadTexturePixelFormat(handle)));
+}
+
+u32 FileEnvironment::ReadTextureSamplerState(u32 handle) {
+    const auto it{texture_sampler_states.find(handle)};
+    if (it == texture_sampler_states.end()) {
+        throw Shader::LogicError("Uncached read texture sampler state");
+    }
+    return it->second;
 }
 
 u32 FileEnvironment::ReadViewportTransformState() {
@@ -1584,9 +1680,6 @@ static void ReadPipelines(
             "Dropped the damaged pipeline cache record at byte {} and the {} bytes after it",
             complete, std::streamoff{end} - complete);
     }
-
-} catch (const std::ios_base::failure& e) {
-    LOG_ERROR(Common_Filesystem, "{}", e.what());
     if (!Common::FS::RemoveFile(filename)) {
         LOG_ERROR(Common_Filesystem, "Failed to delete pipeline cache file {}",
                   Common::FS::PathToUTF8String(filename));

@@ -22,20 +22,24 @@ class Scheduler;
 /// to synthesize intermediate frames without requiring engine motion vectors.
 ///
 /// Optimizations:
-///  - Quarter-resolution optical flow (16├ù fewer compute invocations)
-///  - Shared-memory tile caching in both shaders
+///  - Half-resolution optical flow
 ///  - Early-out for static pixels (skip diamond search)
-///  - Duplicate-frame detection (skip optical flow entirely)
-///  - Precise pipeline barriers instead of full-pipeline TransitionImageLayout
-///  - Descriptor-write caching (only update when image views change)
+///  - The flow only runs on frames that are followed by generated frames
+///  - Every internal image stays in GENERAL, so the descriptors always match the real layout
+///  - Descriptor sets are never written while a submitted or queued command still uses them
 class Fsr3FrameGen {
 public:
+    /// Present frames that can be in flight at once (PresentManager caps them at 7), so the most
+    /// destinations a generated frame can be written into.
+    static constexpr size_t MAX_TARGETS = 7;
+
     explicit Fsr3FrameGen(const Device& device, MemoryAllocator& memory_allocator,
                           VkExtent2D extent, VkFormat format);
     ~Fsr3FrameGen();
 
-    void Process(const Device& device, Scheduler& scheduler, VkImage current_frame,
-                 VkImageView current_view, u64 frame_count);
+    /// Keeps the previous and the new presented frame, and when `estimate_flow` is set, estimates
+    /// the motion between them for the Generate calls that follow.
+    void Process(Scheduler& scheduler, VkImage current_frame, bool estimate_flow);
 
     void Generate(const Device& device, Scheduler& scheduler, VkImage destination,
                   VkImageView destination_storage_view, float blend_factor, float flow_scale);
@@ -48,10 +52,11 @@ private:
     void CreateResources(const Device& device);
     void CreateShaders(const Device& device);
     void CreatePipelines(const Device& device);
+    void WriteDescriptorSets(const Device& device);
 
     MemoryAllocator& m_allocator;
     VkExtent2D m_extent;
-    VkExtent2D m_flow_extent;   // half-res for optical flow
+    VkExtent2D m_flow_extent; // half-res for optical flow
     VkFormat m_format;
 
     vk::Sampler m_linear_sampler;
@@ -67,26 +72,25 @@ private:
     vk::Pipeline m_interp_pipeline;
 
     vk::DescriptorPool m_desc_pool;
+    // The flow only reads and writes the images below, so its set is written once.
     vk::DescriptorSets m_flow_desc_sets;
     std::optional<DescriptorPool> m_interp_pool;
     DescriptorAllocator m_interp_allocator;
 
-    // History and motion vector images
+    // The previous presented frame
     vk::Image m_history_image;
     vk::ImageView m_history_view;
 
+    // Half-resolution motion from the previous frame to the current one, in flow pixels
     vk::Image m_motion_image;
     vk::ImageView m_motion_view;
 
-    // Store the last current-frame view for descriptor caching
+    // The latest presented frame
     vk::Image m_current_image;
     vk::ImageView m_current_view;
 
-    bool m_initialized{};
     bool m_has_history{};
-
-    // Duplicate-frame detection: skip optical flow when the frame hasn't changed
-    u64 m_last_frame_count{};
+    // The flow was estimated for the frames the history and current images hold now
     bool m_flow_valid{};
 
     bool m_flow_descriptors_initialized{};

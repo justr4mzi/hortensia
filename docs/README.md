@@ -1,16 +1,25 @@
-# Eden Build Documentation
+# Eglantine Developer Documentation
 
-Are you just a casual user? Take a look at our [User Handbook](./user) then!
+Are you just a casual user? Take a look at our [User Handbook](./user/README.md) then!
 
 To contribute to this fork, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-This contains documentation created by developers, build instructions, guidelines, instructions/layouts for [cool stuff we made](./CPMUtil.md), and more.
+This contains documentation created by developers, build instructions, guidelines, developer notes, and more.
+
+## Building
 
 - **[General Build Instructions](./Build.md)**
+  - **[Android](./build/Android.md)**
+- **[Dependencies](./Deps.md)**
 - **[CMake Options](./Options.md)**
 - **[Cross Compiling](./CrossCompile.md)**
+- **[Platform-Specific Caveats](./Caveats.md)**
+- **[CPM - CMake Package Manager](./CPMUtil.md)**
+
+## Development
+
 - **[Development Guidelines](./Development.md)**
-- **[Dependencies](./Deps.md)**
+- **[Contributing](../CONTRIBUTING.md)**
 - **[Debug Guidelines](./Debug.md)**
   - **[RenderDoc](./Debug.md#renderdoc)**
 - **[Fuzzing the game-file parsers](./Fuzzing.md)**
@@ -19,10 +28,10 @@ This contains documentation created by developers, build instructions, guideline
 - **[The NVIDIA SM86 (Maxwell) GPU](./NvidiaGpu.md)**
 - **[AMD GPUs and Switch 2 titles](./nx2/amd.md)**
 - **[Driver Bugs](./DriverBugs.md)**
-- **[Building Older Commits](./build/OlderCommits.md)**
 - Subsystems:
   - **[Design Overview](./DesignOverview.md)**
   - **[Dynarmic](./dynarmic/README.md)**
+    - **[Design](./dynarmic/Design.md)**
   - **[HOS Kernel](./HosKernel.md)**
   - **[Settings](./Settings.md)**
 

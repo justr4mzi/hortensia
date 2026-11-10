@@ -87,7 +87,7 @@ ISelfController::ISelfController(Core::System& system_, std::shared_ptr<Applet> 
         {2100, &ISelfController::StubReplyZeroed, "Unknown2100"},
         {2200, &ISelfController::StubReplyZeroed, "Unknown2200"},
         {2300, &ISelfController::StubReplyZeroed, "Unknown2300"},
-        {2400, &ISelfController::StubReplyZeroed, "Unknown2400"},
+        {2400, D<&ISelfController::Unknown240>, "Unknown2400"}, // NS2: u32 in, no out
         {2401, &ISelfController::StubReplyZeroed, "Unknown2401"},
         {2402, &ISelfController::StubReplyZeroed, "Unknown2402"},
     };

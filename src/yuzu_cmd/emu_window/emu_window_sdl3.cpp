@@ -28,6 +28,36 @@
 #include "yuzu_cmd/emu_window/emu_window_sdl3.h"
 #include "yuzu_cmd/yuzu_icon.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+void Nx2PlaceBackgroundWindow(SDL_Window* window) {
+    if (window == nullptr || !Nx2BackgroundWindow()) {
+        return;
+    }
+    // Moved to the bottom of the z-order while still hidden, shown there without activation, and
+    // kept there: it never appears over (or takes focus from) another window, not even briefly.
+#ifdef _WIN32
+    void* const hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window),
+                                              SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    const auto to_bottom = [hwnd] {
+        if (hwnd != nullptr) {
+            SetWindowPos(static_cast<HWND>(hwnd), HWND_BOTTOM, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    };
+    to_bottom();
+#endif
+    SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+    SDL_ShowWindow(window);
+#ifdef _WIN32
+    to_bottom();
+#endif
+}
+
 EmuWindow_SDL3::EmuWindow_SDL3(InputCommon::InputSubsystem* input_subsystem_, Core::System& system_)
     : input_subsystem{input_subsystem_}, system{system_} {
     UpdateCurrentFramebufferLayout(Layout::ScreenUndocked::Width, Layout::ScreenUndocked::Height);
@@ -36,6 +66,7 @@ EmuWindow_SDL3::EmuWindow_SDL3(InputCommon::InputSubsystem* input_subsystem_, Co
         LOG_CRITICAL(Frontend, "Failed to initialize SDL3: {}, Exiting...", SDL_GetError());
         exit(1);
     }
+    titlebar_event = SDL_RegisterEvents(1);
     titlebar_timer = SDL_AddTimer(2000, [](void *userdata, SDL_TimerID, Uint32) -> Uint32 {
         auto* this_ = (EmuWindow_SDL3*)userdata;
         auto const results = this_->system.GetAndResetPerfStats();
@@ -63,7 +94,6 @@ EmuWindow_SDL3::EmuWindow_SDL3(InputCommon::InputSubsystem* input_subsystem_, Co
 EmuWindow_SDL3::~EmuWindow_SDL3() {
     SDL_RemoveTimer(titlebar_timer);
     SDL_RemoveTimer(mouse_timer);
-    delete pending_title.exchange(nullptr);
     system.HIDCore().UnloadInputDevices();
     input_subsystem->Shutdown();
     SDL_Quit();
@@ -161,13 +191,6 @@ void EmuWindow_SDL3::OnKeyEvent(int key, u8 state) {
 
 bool EmuWindow_SDL3::IsOpen() const {
     return is_open;
-}
-
-void EmuWindow_SDL3::ApplyPendingTitle() {
-    if (std::string* const title = pending_title.exchange(nullptr)) {
-        SDL_SetWindowTitle(render_window, title->c_str());
-        delete title;
-    }
 }
 
 bool EmuWindow_SDL3::IsShown() const {

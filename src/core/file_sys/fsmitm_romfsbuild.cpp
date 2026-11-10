@@ -63,10 +63,10 @@ struct RomFSBuildDirectoryContext {
     u32 cur_path_ofs = 0;
     u32 path_len = 0;
     u32 entry_offset = 0;
-    RomFSBuildDirectoryContext* parent = nullptr;
-    RomFSBuildDirectoryContext* child = nullptr;
-    RomFSBuildDirectoryContext* sibling = nullptr;
-    RomFSBuildFileContext* file = nullptr;
+    RomFSBuildDirectoryContext* parent{};
+    RomFSBuildDirectoryContext* child{};
+    RomFSBuildDirectoryContext* sibling{};
+    RomFSBuildFileContext* file{};
 };
 
 struct RomFSBuildFileContext {
@@ -76,8 +76,8 @@ struct RomFSBuildFileContext {
     u32 entry_offset = 0;
     u64 offset = 0;
     u64 size = 0;
-    RomFSBuildDirectoryContext* parent = nullptr;
-    RomFSBuildFileContext* sibling = nullptr;
+    RomFSBuildDirectoryContext* parent{};
+    RomFSBuildFileContext* sibling{};
     VirtualFile source;
 };
 

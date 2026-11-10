@@ -149,8 +149,9 @@ void FreeMemoryPages(void* base, [[maybe_unused]] std::size_t size) noexcept {
         return;
 #ifdef _WIN32
     std::lock_guard lock(vector_regions_mutex);
-    // Regions are kept in host pages.
-    std::erase_if(vector_regions, [base](const auto& r) {return r.first == reinterpret_cast<u64>(base) >> HostPageBits; });
+    std::erase_if(vector_regions, [base](const auto& r) {
+        return r.first == (reinterpret_cast<u64>(base) >> HostPageBits);
+    });
     ASSERT(VirtualFree(base, 0, MEM_RELEASE));
 #else
     ASSERT(munmap(base, size) == 0);

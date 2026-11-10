@@ -127,6 +127,7 @@ public:
     void OnCacheInvalidations(std::span<const std::pair<DAddr, u64>> ranges) override;
     bool TryCacheInvalidation(DAddr addr, u64 size) override;
     bool OnCPUWrite(DAddr addr, u64 size) override;
+    std::string DescribeTracking(DAddr addr, u64 size) override;
     void InvalidateGPUCache() override;
     void UnmapMemory(DAddr addr, u64 size) override;
     void ModifyGPUMemory(size_t as_id, GPUVAddr addr, u64 size) override;
@@ -139,6 +140,7 @@ public:
     void FlushAndInvalidateRegion(
         DAddr addr, u64 size, VideoCommon::CacheType which = VideoCommon::CacheType::All) override;
     void WaitForIdle() override;
+    void Nx2Membar() override;
     void FragmentBarrier() override;
     void TiledCacheBarrier() override;
     void FlushCommands() override;

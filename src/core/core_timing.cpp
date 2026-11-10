@@ -21,7 +21,9 @@
 #include "common/windows/timer_resolution.h"
 #endif
 
+#include "common/logging.h"
 #include "common/settings.h"
+#include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hardware_properties.h"
 
@@ -142,9 +144,22 @@ void CoreTiming::Initialize(std::function<void()>&& on_thread_init_) {
             has_started = true;
 
             // base frequency in MHz: 1ns (10^-9) = 1GHz (10^9)
+            bool on_efficiency_cores = false;
             while (!stop_token.stop_requested()) {
                 while (!paused && !stop_token.stop_requested()) {
                     paused_set = false;
+                    // EDEN_NX2_AB=hostcores: this thread on efficiency cores in the B windows.
+                    if (Core::Nx2AbExperiment() == Core::Nx2Experiment::HostCores) {
+                        const bool want = Core::g_nx2_ab_variant_b.load(std::memory_order_relaxed);
+                        if (want != on_efficiency_cores) {
+                            on_efficiency_cores = want;
+                            if (want) {
+                                Common::SetCurrentThreadToEfficiencyCores();
+                            } else {
+                                Common::SetCurrentThreadToPerformanceCores();
+                            }
+                        }
+                    }
                     if (auto const next_time = Advance(); next_time) {
                         // There are more events left in the queue, wait until the next event.
                         WaitForEvent(*next_time);
@@ -205,12 +220,13 @@ void CoreTiming::ClearPendingEvents() {
 }
 
 void CoreTiming::Pause(bool is_paused) {
+    if (!is_paused) {
+        // Store the boundary before clearing paused: the timer thread runs Advance as soon as
+        // it reads paused == false, and that (sequentially consistent) load makes it visible.
+        pause_end_time.store(GetGlobalTimeNs().count(), std::memory_order_relaxed);
+    }
     paused = is_paused;
     pause_event.Set();
-
-    if (!is_paused) {
-        pause_end_time = GetGlobalTimeNs().count();
-    }
 }
 
 void CoreTiming::SyncPause(bool is_paused) {
@@ -226,10 +242,6 @@ void CoreTiming::SyncPause(bool is_paused) {
         event.Set();
         while (paused_set != is_paused)
             ;
-    }
-
-    if (!is_paused) {
-        pause_end_time = GetGlobalTimeNs().count();
     }
 }
 
@@ -338,6 +350,48 @@ u64 CoreTiming::GetGPUTicks() const {
         : Common::WallClock::CPUTickToGPUTick(cpu_ticks);
 }
 
+namespace {
+// EDEN_NX2_SLEEP_STATS: how long each event's callback runs on this thread. Events are handled in
+// turn, so a slow callback delays every timer due behind it (guest sleeps among them).
+struct CallbackStats {
+    u64 count{}, total_ns{}, max_ns{}, over_50us{};
+};
+std::mutex g_callback_stats_mutex;
+std::map<std::string, CallbackStats> g_callback_stats;
+s64 g_callback_stats_next_log{};
+
+void CountCallback(const EventType& type, s64 begin_ns, s64 end_ns) {
+    const u64 took = static_cast<u64>(std::max<s64>(end_ns - begin_ns, 0));
+    std::scoped_lock lock{g_callback_stats_mutex};
+    auto& stats = g_callback_stats[type.name];
+    ++stats.count;
+    stats.total_ns += took;
+    stats.max_ns = std::max(stats.max_ns, took);
+    stats.over_50us += took > 50'000 ? 1 : 0;
+    if (end_ns < g_callback_stats_next_log) {
+        return;
+    }
+    if (g_callback_stats_next_log != 0) {
+        std::string text;
+        for (const auto& [name, entry] : g_callback_stats) {
+            if (entry.over_50us != 0 || entry.total_ns > 10'000'000) {
+                text += fmt::format(" [{}: {} calls, {} us average, {} us max, {} over 50 us]", name,
+                                    entry.count, entry.total_ns / entry.count / 1000,
+                                    entry.max_ns / 1000, entry.over_50us);
+            }
+        }
+        LOG_INFO(Core_Timing, "timing callbacks, last 10 s:{}", text);
+    }
+    g_callback_stats.clear();
+    g_callback_stats_next_log = end_ns + 10'000'000'000LL;
+}
+
+bool CallbackStatsEnabled() {
+    static const bool enabled = std::getenv("EDEN_NX2_SLEEP_STATS") != nullptr;
+    return enabled;
+}
+} // namespace
+
 std::optional<s64> CoreTiming::Advance() {
     std::scoped_lock lock{advance_lock, basic_lock};
     global_timer = GetGlobalTimeNs().count();
@@ -380,8 +434,9 @@ std::optional<s64> CoreTiming::Advance() {
                 // If this event was scheduled into a pause, its time now is going to be way
                 // behind. Re-set this event to continue from the end of the pause.
                 auto next_time{evt.time + next_schedule_time};
-                if (evt.time < pause_end_time) {
-                    next_time = pause_end_time + next_schedule_time;
+                const s64 last_pause_end = pause_end_time.load(std::memory_order_relaxed);
+                if (evt.time < last_pause_end) {
+                    next_time = last_pause_end + next_schedule_time;
                 }
 
                 event_queue.update(evt.handle, Event{next_time, event_fifo_id++, evt.type,

@@ -1068,6 +1068,17 @@ private:
 
     std::deque<Async_Buffer> async_buffers_death_ring;
 
+    // Download batch (BeginDownloadBatch). Each entry is one deferred staging buffer; in `copies`
+    // src_offset holds the guest (device) address the data goes to and dst_offset the position in
+    // the staging buffer, staging offset included.
+    struct BatchedDownload {
+        Async_Buffer staging;
+        boost::container::small_vector<BufferCopy, 4> copies;
+    };
+    u64 batched_download_bytes{};
+    u32 download_batch_depth{0};
+    boost::container::small_vector<BatchedDownload, 4> batched_downloads;
+
     size_t immediate_buffer_capacity = 0;
     Common::ScratchBuffer<u8> immediate_buffer_alloc;
     std::vector<u8> guest_uint8_indices;
@@ -1087,6 +1098,7 @@ private:
     std::unordered_map<u64, std::pair<GPUVAddr, u32>> traced_table_pointers;
     u64 total_used_memory = 0;
     u64 buffer_bytes = 0; ///< The buffers' own size (total_used_memory may be the device's)
+    u64 native_buffer_threshold = 512ULL << 20;
     u64 minimum_memory = 0;
     u64 critical_memory = 0;
     BufferId inline_buffer_id;

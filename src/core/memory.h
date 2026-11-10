@@ -41,6 +41,10 @@ namespace Core::Memory {
 /// Counts unmapped reads on this host thread since the CPU callbacks last checked (debug aid).
 u32& UnmappedReadFlag();
 
+/// While set on this thread, ReadBlock and WriteBlock do not log unmapped bytes (a caller that
+/// rate-limits its own report of them, such as the hypervisor's fault handler, sets it).
+bool& QuietUnmappedAccesses();
+
 /**
  * Page size used by the ARM architecture. This is the smallest granularity with which memory can
  * be mapped.
@@ -504,7 +508,8 @@ public:
 
     void SetGPUDirtyManagers(std::span<Core::GPUDirtyMemoryManager> managers);
 
-    bool InvalidateNCE(Common::ProcessAddress vaddr, size_t size);
+    /// A native-code fault on a page; a read of GPU-written memory copies it back first.
+    bool InvalidateNCE(Common::ProcessAddress vaddr, size_t size, bool is_write = true);
 
     bool InvalidateSeparateHeap(void* fault_address);
 

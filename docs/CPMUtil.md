@@ -120,7 +120,7 @@ The following are optional to define:
 - `bundled`: Force the usage of a bundled package. Useful for packages where the system package is broken or nonexistent; e.g. external fragment shaders or data archives.
   - Note that this will conflict with `CPMUTIL_FORCE_SYSTEM`; for this reason, when using non-library archives, it may be best to allow the user to download and extract the archive manually and specify a local directory to it.
 - `find_args`: Additional arguments passed to `find_package`, e.g. `MODULE`
-- `patches`: Array of in-tree patches to apply to the downloaded source code. See [#Patches](TODO).
+- `patches`: Array of in-tree patches to apply to the downloaded source code. See [Patches](#patches).
 - `options`: Array of CMake options to apply before configuring the package, e.g. `"FMT_TEST ON"`.
 
 ### Versioning
@@ -255,11 +255,11 @@ CPMUtil will create three lists of dependencies where `AddPackage` or similar wa
   - If the package was included as a system package, `(system)` is appended thereafter
   - Packages whose versions can't be deduced will be left as `unknown`.
 
-For an example of how this might be implemented in an application, see Eden's implementation:
+For an example of how this might be implemented in an application, see the implementation in this repository (from Eden):
 
-- [`dep_hashes.h.in`](https://git.eden-emu.dev/eden-emu/eden/src/branch/master/src/dep_hashes.h.in)
-- [`GenerateDepHashes.cmake`](https://git.eden-emu.dev/eden-emu/eden/src/branch/master/CMakeModules/GenerateDepHashes.cmake)
-- [`deps_dialog.cpp`](https://git.eden-emu.dev/eden-emu/eden/src/branch/master/src/yuzu/deps_dialog.cpp)
+- [`dep_hashes.h.in`](../src/dep_hashes.h.in)
+- [`GenerateDepHashes.cmake`](../CMakeModules/GenerateDepHashes.cmake)
+- [`deps_dialog.cpp`](../src/yuzu/deps_dialog.cpp)
 
 ## Addendum: Notes for Packagers
 

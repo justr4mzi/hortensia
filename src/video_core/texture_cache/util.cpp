@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -618,11 +619,7 @@ u32 CalculateConvertedSizeBytes(const ImageInfo& info) noexcept {
     static constexpr Extent2D TILE_SIZE{1, 1};
     if (IsPixelFormatASTC(info.format) &&
         Settings::GetAstcRecompression() != Settings::AstcRecompression::Uncompressed) {
-        const u32 bpp_div =
-            Settings::GetAstcRecompression() == Settings::AstcRecompression::Bc1 ||
-                    info.astc_opaque
-                ? 2
-                : 1;
+        const u32 bpp_div = info.astc_opaque ? 2 : 1;
         // NumBlocksPerLayer doesn't account for this correctly, so we have to do it manually.
         u32 output_size = 0;
         for (s32 i = 0; i < info.resources.levels; i++) {
@@ -862,24 +859,7 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(
     const Extent3D size = info.size;
 
     if (info.type == ImageType::Linear) {
-        ASSERT(output.size_bytes() >= guest_size_bytes);
-        gpu_memory.ReadBlockUnsafe(gpu_addr, output.data(), guest_size_bytes);
-
-        ASSERT((info.pitch >> bpp_log2) << bpp_log2 == info.pitch);
-        return {{
-            .buffer_offset = 0,
-            .buffer_size = guest_size_bytes,
-            .buffer_row_length = info.pitch * tile_size.width >> bpp_log2,
-            .buffer_image_height = size.height,
-            .image_subresource =
-                {
-                    .base_level = 0,
-                    .base_layer = 0,
-                    .num_layers = 1,
-                },
-            .image_offset = {0, 0, 0},
-            .image_extent = size,
-        }};
+        return UnswizzleLinearImage(gpu_memory, gpu_addr, info, guest_size_bytes, output);
     }
     const LevelInfo level_info = MakeLevelInfo(info);
     const s32 num_layers = info.resources.layers;
@@ -1011,12 +991,15 @@ std::vector<LevelRect> SparseTileRects(const ImageInfo& info,
     const std::vector<BlockLinearLevel> levels = BlockLinearLevels(info);
     const u64 image_end = CalculateLevelBytes(
         CalculateLevelSizes(MakeLevelInfo(info), info.resources.levels), info.resources.levels);
+    const auto range_end = [](const std::pair<u64, u64>& range) {
+        return range.first + (std::min)(range.second, std::numeric_limits<u64>::max() - range.first);
+    };
     for (s32 index = 0; index < static_cast<s32>(levels.size()); ++index) {
         const BlockLinearLevel& level = levels[index];
         const u64 level_end =
             index + 1 < static_cast<s32>(levels.size()) ? levels[index + 1].offset : image_end;
         const auto overlaps = [&](const std::pair<u64, u64>& range) {
-            return range.first < level_end && range.first + range.second > level.offset;
+            return range.second != 0 && range.first < level_end && range_end(range) > level.offset;
         };
         if (index >= tail_level) {
             if (std::ranges::any_of(ranges, overlaps)) {
@@ -1032,7 +1015,7 @@ std::vector<LevelRect> SparseTileRects(const ImageInfo& info,
                 continue;
             }
             const u64 begin = (std::max<u64>)(range.first, level.offset) - level.offset;
-            const u64 end = (std::min<u64>)(range.first + range.second, level_end) - level.offset;
+            const u64 end = (std::min<u64>)(range_end(range), level_end) - level.offset;
             const u64 first = begin / level.block_bytes;
             const u64 last = (end - 1) / level.block_bytes;
             for (u64 row = first / level.blocks_per_row; row <= last / level.blocks_per_row; ++row) {
@@ -1291,8 +1274,7 @@ void ConvertedLayout(const ImageInfo& info, std::span<BufferImageCopy> copies) {
             size = u64{copy.image_extent.width} * copy.image_extent.height * layers *
                    BytesPerBlock(PixelFormat::A8B8G8R8_UNORM);
         } else if (astc) {
-            const u64 bpp_div =
-                recompression == Settings::AstcRecompression::Bc1 || info.astc_opaque ? 2 : 1;
+            const u64 bpp_div = info.astc_opaque ? 2 : 1;
             size = u64{Common::AlignUp(copy.image_extent.width, 4U)} *
                    Common::AlignUp(copy.image_extent.height, 4U) * layers / bpp_div;
         } else {
@@ -1340,8 +1322,7 @@ void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8
         } else if (astc) {
             // BC1 uses 0.5 bytes per texel
             // BC3 uses 1 byte per texel
-            const bool bc1 =
-                recompression_setting == Settings::AstcRecompression::Bc1 || info.astc_opaque;
+            const bool bc1 = info.astc_opaque;
             const auto compress =
                 bc1 ? Tegra::Texture::BCN::CompressBC1 : Tegra::Texture::BCN::CompressBC3;
             const auto bpp_div = bc1 ? 2 : 1;

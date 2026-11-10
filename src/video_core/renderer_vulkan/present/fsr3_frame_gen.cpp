@@ -3,6 +3,10 @@
 
 #include <algorithm>
 
+#include <algorithm>
+#include <vector>
+
+#include "common/logging.h"
 #include "video_core/renderer_vulkan/present/fsr3_frame_gen.h"
 #include "video_core/renderer_vulkan/present/util.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -16,17 +20,28 @@ namespace Vulkan {
 
 namespace {
 
-// ΓöÇΓöÇ Precise pipeline barriers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+constexpr VkFormat MOTION_FORMAT = VK_FORMAT_R16G16_SFLOAT;
 
-VkImageMemoryBarrier MakeBarrier(VkImage image, VkAccessFlags src_access,
-                                 VkAccessFlags dst_access, VkImageLayout old_layout,
-                                 VkImageLayout new_layout) {
+// Binding of the generated frame in the interpolation set, the only one Generate writes.
+constexpr u32 INTERP_DESTINATION_BINDING = 3;
+
+constexpr VkPipelineStageFlags COPY_AND_COMPUTE =
+    VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+// --- Barriers ------------------------------------------------------------------------------
+// Every image this pass touches stays in GENERAL, which the copies, the storage writes and the
+// sampled reads all accept: the layout the descriptors declare is then always the real one, and
+// only a first use (or a discarded destination) transitions, from UNDEFINED.
+
+VkImageMemoryBarrier MakeBarrier(VkImage image, VkAccessFlags src_access, VkAccessFlags dst_access,
+                                 VkImageLayout old_layout = VK_IMAGE_LAYOUT_GENERAL) {
     return VkImageMemoryBarrier{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .pNext = nullptr,
         .srcAccessMask = src_access,
         .dstAccessMask = dst_access,
         .oldLayout = old_layout,
-        .newLayout = new_layout,
+        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = image,
@@ -123,20 +138,20 @@ void CopyImageToImage(vk::CommandBuffer cmdbuf, VkImage source, VkImage destinat
                                VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, {}, {}, before);
 
-    cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
-                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
-
-    const std::array after{
-        MakeBarrier(source, VK_ACCESS_TRANSFER_READ_BIT,
-                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL),
-        MakeBarrier(destination, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL),
+VkWriteDescriptorSet MakeStorageImageWrite(const VkDescriptorImageInfo& info, VkDescriptorSet set,
+                                           u32 binding) {
+    return VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = set,
+        .dstBinding = binding,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .pImageInfo = &info,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
     };
-    cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
-                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                           0, {}, {}, after);
 }
 
 } // anonymous namespace
@@ -155,8 +170,9 @@ struct InterpPushConstants {
     float inv_render_h;
     float render_w;
     float render_h;
+    float inv_flow_w;
+    float inv_flow_h;
     float blend_factor;
-    float flow_scale;
 };
 
 Fsr3FrameGen::Fsr3FrameGen(const Device& device, MemoryAllocator& memory_allocator,
@@ -167,7 +183,10 @@ Fsr3FrameGen::Fsr3FrameGen(const Device& device, MemoryAllocator& memory_allocat
     CreateResources(device);
     CreateShaders(device);
     CreatePipelines(device);
-    m_initialized = true;
+    WriteDescriptorSets(device);
+    LOG_INFO(Render_Vulkan, "FSR 3 frame generation: {}x{} frames, {}x{} flow, format {}",
+             m_extent.width, m_extent.height, m_flow_extent.width, m_flow_extent.height,
+             static_cast<u32>(m_format));
 }
 
 Fsr3FrameGen::~Fsr3FrameGen() = default;
@@ -175,7 +194,10 @@ Fsr3FrameGen::~Fsr3FrameGen() = default;
 void Fsr3FrameGen::CreateResources(const Device& device) {
     m_linear_sampler = CreateBilinearSampler(device);
 
-    m_history_image = CreateWrappedImage(m_allocator, m_extent, m_format);
+    // The history only takes copies of the current-frame image, which takes copies of the
+    // presented frame; both are sampled by the two passes.
+    m_history_image = CreateImage(m_allocator, m_extent, m_format,
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
     m_history_view = CreateWrappedImageView(device, m_history_image, m_format);
 
     // Current-frame copy for interpolation shader
@@ -196,8 +218,9 @@ void Fsr3FrameGen::CreateResources(const Device& device) {
     m_current_view = CreateWrappedImageView(device, m_current_image, m_format);
 
     // Half-resolution motion vector image
-    m_motion_image = CreateWrappedImage(m_allocator, m_flow_extent, VK_FORMAT_R16G16_SFLOAT);
-    m_motion_view = CreateWrappedImageView(device, m_motion_image, VK_FORMAT_R16G16_SFLOAT);
+    m_motion_image = CreateImage(m_allocator, m_flow_extent, MOTION_FORMAT,
+                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    m_motion_view = CreateWrappedImageView(device, m_motion_image, MOTION_FORMAT);
 
     const std::array pool_sizes{
         VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
@@ -217,7 +240,7 @@ void Fsr3FrameGen::CreateShaders(const Device& device) {
 }
 
 void Fsr3FrameGen::CreatePipelines(const Device& device) {
-    // ΓöÇΓöÇ Optical Flow Pipeline ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // --- Optical Flow Pipeline -----------------------------------------------------------------
     const std::array flow_bindings{
         VkDescriptorSetLayoutBinding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         VkDescriptorSetLayoutBinding{1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
@@ -255,12 +278,12 @@ void Fsr3FrameGen::CreatePipelines(const Device& device) {
         .layout = *m_flow_pipe_layout,
     });
 
-    // ΓöÇΓöÇ Frame Interpolation Pipeline ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // --- Frame Interpolation Pipeline ----------------------------------------------------------
     const std::array interp_bindings{
         VkDescriptorSetLayoutBinding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         VkDescriptorSetLayoutBinding{1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         VkDescriptorSetLayoutBinding{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        VkDescriptorSetLayoutBinding{3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        VkDescriptorSetLayoutBinding{INTERP_DESTINATION_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
     };
 
     m_interp_desc_layout = device.GetLogical().CreateDescriptorSetLayout(VkDescriptorSetLayoutCreateInfo{
@@ -373,8 +396,6 @@ void Fsr3FrameGen::Process(const Device& device, Scheduler& scheduler, VkImage c
 
         BarrierComputeWriteToRead(cmdbuf, *m_motion_image);
     });
-
-    m_flow_valid = true;
 }
 
 void Fsr3FrameGen::Generate(const Device& device, Scheduler& scheduler, VkImage destination,
@@ -421,8 +442,9 @@ void Fsr3FrameGen::Generate(const Device& device, Scheduler& scheduler, VkImage 
         .inv_render_h = 1.0f / static_cast<float>(out_h),
         .render_w = static_cast<float>(out_w),
         .render_h = static_cast<float>(out_h),
+        .inv_flow_w = 1.0f / static_cast<float>(m_flow_extent.width),
+        .inv_flow_h = 1.0f / static_cast<float>(m_flow_extent.height),
         .blend_factor = blend_factor,
-        .flow_scale = flow_scale,
     };
 
     scheduler.Record([this, constants, out_w, out_h, set, destination](vk::CommandBuffer cmdbuf) {
@@ -432,6 +454,12 @@ void Fsr3FrameGen::Generate(const Device& device, Scheduler& scheduler, VkImage 
                                   set, {});
         cmdbuf.PushConstants(*m_interp_pipe_layout, VK_SHADER_STAGE_COMPUTE_BIT, constants);
         cmdbuf.Dispatch((out_w + 15) / 16, (out_h + 15) / 16, 1);
+
+        // The present copy reads the frame in GENERAL, like a frame the window-adapt pass drew.
+        const auto generated =
+            MakeBarrier(destination_image, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0, generated);
     });
 }
 

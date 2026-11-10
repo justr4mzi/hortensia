@@ -88,6 +88,9 @@ public:
         [[nodiscard]] bool WaitsToReach() const;
     };
 
+    /// Drops a pending acquire from Nx2SemaphoreWaiters: a channel can go away while it waits.
+    ~Puller();
+
     [[nodiscard]] bool HasPendingAcquire() const {
         return pending_acquire.has_value();
     }

@@ -151,6 +151,15 @@ public:
     inline bool IsValueLive(const IR::Inst* inst) const noexcept {
         return !!ValueLocation(inst);
     }
+    /// Whether this instruction is the last use of the value in arg's register and nothing else
+    /// lives there, so that UseScratchGpr takes the register without copying it.
+    inline bool IsLastUseInGpr(const Argument& arg) const noexcept {
+        if (arg.IsImmediate()) {
+            return false;
+        }
+        const auto loc = ValueLocation(arg.value.GetInst());
+        return loc && HostLocIsGPR(*loc) && LocInfo(*loc).IsLastUse();
+    }
     inline Xbyak::Reg64 UseGpr(BlockOfCode& code, Argument& arg) noexcept {
         ASSERT(!arg.allocated);
         arg.allocated = true;
@@ -205,6 +214,11 @@ public:
     void AllocStackSpace(BlockOfCode& code, const size_t stack_space) noexcept;
     void ReleaseStackSpace(BlockOfCode& code, const size_t stack_space) noexcept;
 
+    /// While set, loading an immediate leaves the host flags alone (mov instead of xor for zero).
+    inline void SetPreserveHostFlags(bool preserve) noexcept {
+        preserve_host_flags = preserve;
+    }
+
     inline void EndOfAllocScope() noexcept {
         // After every IR instruction: skip the locations it left alone.
         for (auto& iter : hostloc_info)
@@ -257,6 +271,7 @@ private:
     std::bitset<32> gpr_order;
     std::bitset<32> xmm_order;
     size_t reserved_stack_space = 0;
+    bool preserve_host_flags = false;
 };
 
 }  // namespace Dynarmic::Backend::X64

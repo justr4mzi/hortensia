@@ -23,7 +23,10 @@
 #include "core/core.h"
 #include "core/hle/ipc.h"
 #include "core/hle/kernel/k_event.h"
+#include "core/hle/kernel/k_thread.h"
 #include "core/hle/kernel/kernel.h"
+#include "core/memory.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/kernel_helpers.h"
 #include "core/hle/service/service.h"
@@ -149,9 +152,16 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(HLERequestContext& ctx,
     const bool auto_stub = Settings::values.use_auto_stub || env_auto_stub ||
                            std::string_view{service_name}.starts_with(Nx2StubPrefix) ||
                            (caller != nullptr && caller->IsSwitch2());
+    // The Switch 2 sessions' unknown commands (nx2:gsv 903/912/1003/427, vi2 301, syncpt 21,
+    // ...) were brought up against the result-only reply, which leaves the request's words in
+    // place; zeroed replies made Kirby Air Riders and the Yoshi demo panic (2162-0001) around
+    // their movies. Keep that reply for them until the commands are known.
+    const std::string_view name{service_name};
+    const bool keep_request_words = name.starts_with(Nx2StubPrefix) || name.starts_with("nx2:");
     // Auto-stubbed commands are reported once each: title 1 polls nx2:camera 29 every frame
     // (~47 calls a second), and every report wrote a Critical line, which flushes the log file.
-    if (auto_stub) {
+    // The video decoder sessions keep logging every request (reverse engineering, see below).
+    if (auto_stub && !name.starts_with("nx2:vdec")) {
         static std::mutex reported_mutex;
         static std::set<std::pair<std::string, u32>> reported;
         std::scoped_lock lk{reported_mutex};
@@ -180,11 +190,54 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(HLERequestContext& ctx,
         LOG_WARNING(Service, "Using auto stub fallback (repeats of this command are not logged)");
         IPC::ResponseBuilder rb{ctx, 2 + StubZeroedWords};
         rb.Push(ResultSuccess);
-        PushStubZeroes(rb);
+        if (!keep_request_words) {
+            PushStubZeroes(rb);
+        }
     }
 }
 
+namespace {
+void TraceHidRequest(const std::string& service, HLERequestContext& ctx) {
+    static const bool enabled = std::getenv("EDEN_NX2_HID_TRACE") != nullptr;
+    if (!enabled || service != "hid") {
+        return;
+    }
+    fmt::memory_buffer trace;
+    fmt::format_to(std::back_inserter(trace), "hid trace cmd={} tipc={} x={} a={} b={} c={}",
+                   ctx.GetCommand(), ctx.IsTipc(), ctx.BufferDescriptorX().size(),
+                   ctx.BufferDescriptorA().size(), ctx.BufferDescriptorB().size(),
+                   ctx.BufferDescriptorC().size());
+    for (const auto& descriptor : ctx.BufferDescriptorX()) {
+        fmt::format_to(std::back_inserter(trace), " X({:#x}@{:#x})", descriptor.Size(),
+                       descriptor.Address());
+    }
+    for (const auto& descriptor : ctx.BufferDescriptorA()) {
+        fmt::format_to(std::back_inserter(trace), " A({:#x}@{:#x})", descriptor.Size(),
+                       descriptor.Address());
+    }
+    for (const auto& descriptor : ctx.BufferDescriptorB()) {
+        fmt::format_to(std::back_inserter(trace), " B({:#x}@{:#x})", descriptor.Size(),
+                       descriptor.Address());
+    }
+    for (const auto& descriptor : ctx.BufferDescriptorC()) {
+        fmt::format_to(std::back_inserter(trace), " C({:#x}@{:#x})", descriptor.Size(),
+                       descriptor.Address());
+    }
+    fmt::format_to(std::back_inserter(trace), " words:");
+    for (u32 index = 0; index < 12; ++index) {
+        fmt::format_to(std::back_inserter(trace), " {:#x}", ctx.CommandBuffer()[index]);
+    }
+    const auto payload = ctx.ReadBufferCopy();
+    fmt::format_to(std::back_inserter(trace), " payload({:#x}):", payload.size());
+    for (std::size_t i = 0; i < std::min<std::size_t>(payload.size(), 32); ++i) {
+        fmt::format_to(std::back_inserter(trace), " {:02x}", payload[i]);
+    }
+    LOG_INFO(Service, "{}", fmt::to_string(trace));
+}
+} // Anonymous namespace
+
 void ServiceFrameworkBase::InvokeRequest(HLERequestContext& ctx) {
+    TraceHidRequest(service_name, ctx);
     auto it = handlers.find(ctx.GetCommand());
     FunctionInfoBase const* info = it == handlers.end() ? nullptr : &it->second;
     if (info == nullptr || info->handler_callback == nullptr)
@@ -229,43 +282,150 @@ void ServiceFrameworkBase::InvokeRequestTipc(HLERequestContext& ctx) {
 }
 
 namespace {
-// EDEN_NX2_IPC_SUMMARY: every 5 s, log how often each service command ran and with which result
-// since the last summary (finds a game polling something that never becomes ready).
-void CountRequest(const std::string& service, u32 command, u32 type, u32 result) {
+bool IpcSummaryEnabled() {
     static const bool enabled = std::getenv("EDEN_NX2_IPC_SUMMARY") != nullptr;
-    if (!enabled) {
+    return enabled;
+}
+
+// EDEN_NX2_IPC_SUMMARY: every 5 s, log how often each service command ran and with which result
+// since the last summary (finds a game polling something that never becomes ready), then the
+// commands that took the most time to handle (the calling guest thread waits for all of it).
+void CountRequest(const std::string& service, u32 command, u32 type, u32 result, u64 handle_ns) {
+    if (!IpcSummaryEnabled()) {
         return;
     }
+    struct Entry {
+        u32 count{};
+        u64 ns{};
+    };
     static std::mutex mutex;
-    static std::map<std::tuple<std::string, u32, u32, u32>, u32> counts;
+    static std::map<std::tuple<std::string, u32, u32, u32>, Entry> counts;
     static auto last = std::chrono::steady_clock::now();
     std::scoped_lock lock{mutex};
-    ++counts[{service, command, type, result}];
+    auto& entry = counts[{service, command, type, result}];
+    ++entry.count;
+    entry.ns += handle_ns;
     const auto now = std::chrono::steady_clock::now();
     if (now - last < std::chrono::seconds{5}) {
         return;
     }
+    const double window_ms =
+        std::chrono::duration<double, std::milli>(now - last).count();
     last = now;
-    std::vector<std::pair<u32, std::string>> lines;
-    for (const auto& [key, count] : counts) {
-        lines.emplace_back(count, fmt::format("{}::{}{} -> {:#x}", std::get<0>(key), std::get<1>(key),
-                                              std::get<2>(key) >= 16 ? " (tipc)" : "",
-                                              std::get<3>(key)));
+    struct Line {
+        u32 count;
+        u64 ns;
+        std::string text;
+    };
+    std::vector<Line> lines;
+    u64 total_ns{};
+    for (const auto& [key, value] : counts) {
+        lines.push_back({value.count, value.ns,
+                         fmt::format("{}::{}{} -> {:#x}", std::get<0>(key), std::get<1>(key),
+                                     std::get<2>(key) >= 16 ? " (tipc)" : "", std::get<3>(key))});
+        total_ns += value.ns;
     }
-    std::sort(lines.begin(), lines.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(lines.begin(), lines.end(), [](const auto& a, const auto& b) { return a.count > b.count; });
     std::string text;
     for (size_t i = 0; i < std::min<size_t>(lines.size(), 24); ++i) {
-        text += fmt::format(" | {}x {}", lines[i].first, lines[i].second);
+        text += fmt::format(" | {}x {}", lines[i].count, lines[i].text);
     }
     LOG_INFO(Service, "ipc summary ({} kinds){}", lines.size(), text);
+    std::sort(lines.begin(), lines.end(), [](const auto& a, const auto& b) { return a.ns > b.ns; });
+    text.clear();
+    for (size_t i = 0; i < std::min<size_t>(lines.size(), 16); ++i) {
+        text += fmt::format(" | {:.1f} ms {}x {}", static_cast<double>(lines[i].ns) / 1e6,
+                            lines[i].count, lines[i].text);
+    }
+    LOG_INFO(Service, "ipc time: {:.1f} ms handling in {:.0f} ms{}",
+             static_cast<double>(total_ns) / 1e6, window_ms, text);
     counts.clear();
+}
+std::mutex in_flight_mutex;
+std::map<u64, std::string> in_flight;
+
+// The requests in flight are only logged by guest thread dumps (DumpGuestThreads), so they are
+// only tracked when a dump can happen: tracking costs two strings and three locks of one mutex
+// every service thread shares, on every request.
+bool InFlightTrackingEnabled() {
+    static const bool enabled = std::getenv("EDEN_NX2_THREAD_DUMP") != nullptr ||
+                                std::getenv("EDEN_NX2_THREAD_DUMP_AFTER") != nullptr;
+    return enabled;
+}
+
+void SetInFlight(u64 requester, std::string what) {
+    std::scoped_lock lk{in_flight_mutex};
+    in_flight[requester] = std::move(what);
 }
 } // Anonymous namespace
 
+void LogInFlightRequests() {
+    std::scoped_lock lk{in_flight_mutex};
+    for (const auto& [thread_id, what] : in_flight) {
+        LOG_INFO(Service, "  in-flight request from thread {}: {}", thread_id, what);
+    }
+}
+
+// Diagnostic: logs every thread of the application with its state, wait reason, PC, LR and a
+// frame-pointer backtrace, to find what a stalled game waits on. Addresses are guest virtual (see
+// the LoadModule lines).
+void DumpGuestThreads(Core::System& system, std::string_view reason) {
+    auto* process = system.ApplicationProcess();
+    if (!process) {
+        return;
+    }
+    auto& memory = process->GetMemory();
+    LOG_INFO(Service, "Thread dump at {}", reason);
+    for (auto& thread : process->GetThreadList()) {
+        const auto& context = thread.GetContext();
+        std::string frames;
+        u64 fp = context.fp;
+        for (int depth = 0; depth < 16 && fp != 0 && (fp & 0xf) == 0 &&
+                            memory.IsValidVirtualAddressRange(fp, 16);
+             ++depth) {
+            const u64 next = memory.Read64(fp);
+            const u64 lr = memory.Read64(fp + 8);
+            frames += fmt::format(" {:#x}", lr);
+            if (next <= fp) {
+                break;
+            }
+            fp = next;
+        }
+        LOG_INFO(Service,
+                 "  thread {} prio {} core {} state {:#x} wait {} pc {:#x} lr {:#x} sp {:#x} "
+                 "x0 {:#x} x1 {:#x} x2 {:#x} |{}",
+                 thread.GetThreadId(), thread.GetPriority(), thread.GetActiveCore(),
+                 static_cast<u32>(thread.GetRawState()),
+                 static_cast<u32>(thread.GetWaitReasonForDebugging()), context.pc, context.lr,
+                 context.sp, context.r[0], context.r[1], context.r[2], frames);
+    }
+    LogInFlightRequests();
+}
+
 Result ServiceFrameworkBase::HandleSyncRequest(Kernel::KServerSession& session,
                                                HLERequestContext& ctx) {
-    const auto guard = LockService();
+    const u64 requester = ctx.GetThread().GetThreadId();
+    const bool track_in_flight = InFlightTrackingEnabled();
+    if (track_in_flight) {
+        SetInFlight(requester, fmt::format("{} cmd {} (waiting for service lock)", service_name,
+                                           ctx.GetCommand()));
+    }
     SCOPE_EXIT {
+        if (track_in_flight) {
+            std::scoped_lock lk{in_flight_mutex};
+            in_flight.erase(requester);
+        }
+    };
+    const auto guard = LockService();
+    const auto handle_start =
+        IpcSummaryEnabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    if (track_in_flight) {
+        SetInFlight(requester, fmt::format("{} cmd {}", service_name, ctx.GetCommand()));
+    }
+    SCOPE_EXIT {
+        if (!IpcSummaryEnabled()) {
+            return;
+        }
         const auto* cmd_buf = ctx.CommandBuffer();
         u32 result_word = 0;
         const u32 type = static_cast<u32>(ctx.GetCommandType());
@@ -279,7 +439,10 @@ Result ServiceFrameworkBase::HandleSyncRequest(Kernel::KServerSession& session,
                 }
             }
         }
-        CountRequest(service_name, ctx.GetCommand(), type, result_word);
+        CountRequest(service_name, ctx.GetCommand(), type, result_word,
+                     static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now() - handle_start)
+                                          .count()));
     };
 
     Result result = ResultSuccess;

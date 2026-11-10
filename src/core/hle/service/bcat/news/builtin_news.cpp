@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "common/net/net.h"
-#include "common/scm_rev.h"
+#include "common/settings.h"
 #include "core/hle/service/bcat/news/builtin_news.h"
 #include "core/hle/service/bcat/news/msgpack.h"
 #include "core/hle/service/bcat/news/news_storage.h"
@@ -17,33 +17,13 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
-#include "common/httplib.h"
-
-#include <chrono>
-#include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <future>
 #include <mutex>
 #include <optional>
 #include <thread>
 
-#ifdef YUZU_BUNDLED_OPENSSL
-#include <openssl/cert.h>
-#endif
-
 namespace Service::News {
 namespace {
-
-// Cached logo data
-std::vector<u8> default_logo_small;
-std::vector<u8> default_logo_large;
-bool default_logos_loaded = false;
-
-::Common::unordered_map<std::string, std::vector<u8>> news_images_small;
-::Common::unordered_map<std::string, std::vector<u8>> news_images_large;
-std::mutex images_mutex;
-
 
 std::filesystem::path GetCachePath() {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "news" / "github_releases.json";
@@ -293,14 +273,6 @@ std::string FormatBody(std::string body, const std::string_view &title) {
 }
 
 void ImportReleases(const std::vector<Common::Net::Release> &releases) {
-    std::vector<u32> news_ids;
-    for (const auto& rel : releases) {
-        const u32 news_id = u32(rel.id & 0x7FFFFFFF);
-        news_ids.push_back(news_id);
-    }
-
-    PreloadNewsImages(news_ids);
-
     for (const auto& rel : releases) {
         const std::string title = rel.title;
         const std::string body = rel.body;
@@ -352,10 +324,9 @@ std::vector<u8> BuildMsgpack(std::string_view title, std::string_view body,
     MsgPack::Writer w;
 
     const u32 news_id = override_id.value_or(HashToNewsId(title.empty() ? "eden" : title));
-    const std::string news_id_str = fmt::format("{}", news_id);
 
-    const auto img_small = GetNewsImage(news_id_str, false);
-    const auto img_large = GetNewsImage(news_id_str, true);
+    // Releases have no pictures (the repository publishes none), so both images are empty.
+    const std::vector<u8> no_image;
 
     w.WriteFixMap(23);
 
@@ -414,7 +385,7 @@ std::vector<u8> BuildMsgpack(std::string_view title, std::string_view body,
     w.WriteString("Eden");
 
     w.WriteKey("list_image");
-    w.WriteBinary(img_small);
+    w.WriteBinary(no_image);
 
     // Footer
     w.WriteKey("footer");
@@ -445,7 +416,7 @@ std::vector<u8> BuildMsgpack(std::string_view title, std::string_view body,
     w.WriteKey("movie_url");
     w.WriteString("");
     w.WriteKey("main_image");
-    w.WriteBinary(img_large);
+    w.WriteBinary(no_image);
 
     // no clue
     w.WriteKey("contents_descriptors");
@@ -457,10 +428,20 @@ std::vector<u8> BuildMsgpack(std::string_view title, std::string_view body,
 }
 
 void EnsureBuiltinNewsLoaded() {
+    // The feed is the update repository's GitHub releases. Asking GitHub for them is up to the
+    // user; with the setting off the News applet is empty and nothing is sent.
+    if (!Settings::values.fetch_release_news.GetValue()) {
+        static std::once_flag logged;
+        std::call_once(logged, [] {
+            LOG_INFO(Service_BCAT, "news: the release feed is off (Fetch news from GitHub)");
+        });
+        return;
+    }
+
     static std::once_flag once;
     std::call_once(once, [] {
-        LoadDefaultLogos();
-
+        // This runs on the IPC thread of the first news request, so it only reads the cache;
+        // the request to GitHub runs on its own thread and fills the storage when it returns.
         if (const auto cached = ReadCachedJson()) {
             const std::string_view body = cached.value();
             const auto releases = Common::Net::Release::ListFromJson(body, Common::g_build_auto_update_stable_api, Common::g_build_auto_update_stable_repo);

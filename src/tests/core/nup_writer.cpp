@@ -3,13 +3,17 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -250,6 +254,49 @@ Loader::ResultStatus StatusAfterPatch(std::string nup, Patch&& patch) {
     return NupContainer{std::make_shared<FileSys::VectorVfsFile>(data, "bad.nup")}.GetStatus();
 }
 
+// Offsets of an archive's TOC records: the first file record and the children array.
+u64 FileRecords(const std::string& buf, u64 toc) {
+    return toc + 0x30 + Le(buf, toc + 0x04, 4) * 0x40 + Le(buf, toc + 0x08, 8) * 0x18;
+}
+
+u64 ChildSlots(const std::string& buf, u64 toc) {
+    return FileRecords(buf, toc) + Le(buf, toc + 0x10, 8) * 0x50;
+}
+
+// The file record of the member named `name`, which must be unique in the archive.
+u64 FileRecordNamed(const std::string& buf, std::string_view name) {
+    const u64 toc = Le(buf, 0x08, 8);
+    const u64 pool = toc + Le(buf, toc + 0x18, 8);
+    const u64 count = Le(buf, toc + 0x10, 8);
+    for (u64 i = 0, pos = FileRecords(buf, toc); i < count; ++i, pos += 0x50) {
+        if (buf.compare(pool + Le(buf, pos, 4), Le(buf, pos + 4, 4), name) == 0) {
+            return pos;
+        }
+    }
+    return 0;
+}
+
+// Paths lowercased: extraction writes base/exefs where MakeDump has Base/ExeFS.
+std::map<std::string, std::string> LowerPaths(const std::map<std::string, std::string>& tree) {
+    std::map<std::string, std::string> out;
+    for (const auto& [path, contents] : tree) {
+        std::string lower = path;
+        std::ranges::transform(lower, lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        out[lower] = contents;
+    }
+    return out;
+}
+
+void SetName(std::array<char, 0x200>& field, std::string_view value) {
+    std::copy(value.begin(), value.end(), field.begin());
+}
+
+void SetDeveloper(std::array<char, 0x100>& field, std::string_view value) {
+    std::copy(value.begin(), value.end(), field.begin());
+}
+
 } // namespace
 
 TEST_CASE("NUP packs base, updates and add-ons and reads back through NupContainer", "[nup]") {
@@ -426,6 +473,46 @@ TEST_CASE("NUP rejects a directory that contains its own ancestor", "[nup]") {
                 SetLe(buf, romfs_record + 0x08, Le(buf, root_record + 0x08, 4), 4);
                 SetLe(buf, romfs_record + 0x0C, Le(buf, root_record + 0x0C, 4), 4);
             }) == Loader::ResultStatus::ErrorNUPBadFormat);
+}
+
+TEST_CASE("NUP rejects a directory listed under two parents", "[nup]") {
+    TempDir t;
+    const auto root = t.path / "Game";
+    MakeDump(root);
+    const auto archive = t.path / "Game.nup";
+    REQUIRE(FileSys::Nup::PackDump(root, archive) == FileSys::Nup::PackResult::Success);
+
+    // Give the base ExeFS directory the base RomFS directory's children: no cycle, but every
+    // RomFS subdirectory now has two parents (shared subtrees multiply when built).
+    REQUIRE(StatusAfterPatch(ReadAll(archive), [](std::string& buf, u64 toc) {
+                const u64 dirs = toc + 0x30 + Le(buf, toc + 0x04, 4) * 0x40;
+                const u64 exefs_dir = Le(buf, toc + 0x30 + 0x0C, 4);
+                const u64 romfs_dir = Le(buf, toc + 0x30 + 0x10, 4);
+                const u64 exefs_record = dirs + exefs_dir * 0x18;
+                const u64 romfs_record = dirs + romfs_dir * 0x18;
+                SetLe(buf, exefs_record + 0x08, Le(buf, romfs_record + 0x08, 4), 4);
+                SetLe(buf, exefs_record + 0x0C, Le(buf, romfs_record + 0x0C, 4), 4);
+            }) == Loader::ResultStatus::ErrorNUPBadFormat);
+}
+
+TEST_CASE("NUP rejects a member name that is not a plain file name", "[nup]") {
+    TempDir t;
+    const auto root = t.path / "Game";
+    MakeDump(root);
+    const auto archive = t.path / "Game.nup";
+    REQUIRE(FileSys::Nup::PackDump(root, archive) == FileSys::Nup::PackResult::Success);
+    const std::string nup = ReadAll(archive);
+
+    // Names are labels, never paths: a separator, a drive or stream colon or a NUL in one would
+    // reach whatever joins member names onto a host folder (extraction, dump_exefs).
+    for (const char bad : {'/', ':', static_cast<char>(0)}) {
+        INFO("replaced character " << static_cast<int>(bad));
+        REQUIRE(StatusAfterPatch(nup, [bad](std::string& buf, u64 toc) {
+                    const auto at = buf.find("shared.bin", toc);
+                    REQUIRE(at != std::string::npos);
+                    buf[at] = bad;
+                }) == Loader::ResultStatus::ErrorNUPBadFormat);
+    }
 }
 
 TEST_CASE("NUP marks updates standalone when the dump has no base", "[nup]") {

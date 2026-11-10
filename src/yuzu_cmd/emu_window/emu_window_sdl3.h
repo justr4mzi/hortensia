@@ -6,9 +6,8 @@
 
 #pragma once
 
-#include <atomic>
 #include <cstdlib>
-#include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -29,12 +28,29 @@ enum class MouseButton;
 } // namespace InputCommon
 
 // EDEN_NX2_HIDE_WINDOW=1 (anything but 0) creates the render window hidden and without focus, for unattended
-// test runs that must not cover or interrupt the desktop.
+// test runs that must not cover or interrupt the desktop. On Windows a hidden window starves
+// Vulkan presentation: frames stall for seconds and EDEN_NX2_FRAME_CAPTURE saves black frames.
+// EDEN_NX2_HIDE_WINDOW=background avoids that: the window is shown, so it renders normally, but at
+// the bottom of the window stack, never focused and without a taskbar button
+// (Nx2PlaceBackgroundWindow), so a test run does not interrupt whatever runs in the foreground (a
+// fullscreen game, say). (Placing it outside every display instead crashed with heap corruption.)
+inline bool Nx2BackgroundWindow() {
+    const char* hide = std::getenv("EDEN_NX2_HIDE_WINDOW");
+    return hide != nullptr && std::string_view{hide} == "background";
+}
+
 inline SDL_WindowFlags Nx2HiddenWindowFlags() {
     const char* hide = std::getenv("EDEN_NX2_HIDE_WINDOW");
-    return hide != nullptr && hide[0] != '0' ? SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE
-                                                         : SDL_WindowFlags{0};
+    if (hide == nullptr || hide[0] == '0') {
+        return SDL_WindowFlags{0};
+    }
+    // Background windows are created hidden too (no flash), then placed and shown.
+    return SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE |
+           (Nx2BackgroundWindow() ? SDL_WINDOW_UTILITY : SDL_WindowFlags{0});
 }
+
+// Shows a window created with Nx2HiddenWindowFlags() in background mode (no-op otherwise).
+void Nx2PlaceBackgroundWindow(SDL_Window* window);
 
 class EmuWindow_SDL3 : public Core::Frontend::EmuWindow {
 public:
@@ -43,9 +59,6 @@ public:
 
     /// Whether the window is still open, and a close request hasn't yet been sent
     bool IsOpen() const;
-
-    /// Sets the title the titlebar timer prepared; call from the main thread.
-    void ApplyPendingTitle();
 
     /// Returns if window is shown (not minimized)
     bool IsShown() const override;
@@ -98,7 +111,9 @@ protected:
 
     /// Periodic changer of titlebar (independent of event loop)
     SDL_TimerID titlebar_timer;
-    std::atomic<std::string*> pending_title{};
+
+    /// User event type handled on the main thread to refresh the titlebar
+    Uint32 titlebar_event = 0;
 
     // Mouse resetter once it
     SDL_TimerID mouse_timer;

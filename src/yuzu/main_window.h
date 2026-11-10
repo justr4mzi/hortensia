@@ -284,7 +284,9 @@ private:
                   StartGameType with_config = StartGameType::Normal);
     void BootGameFromList(const QString& filename, StartGameType with_config);
     void ShutdownGame();
-    void TerminateEmulationThread();
+    void AbandonStuckEmulationThread();
+    void OfferRestartAfterStuckEmulation();
+    [[noreturn]] void ExitAfterStuckEmulation(bool restart);
 
     void SetDiscordEnabled(bool state);
     void LoadAmiibo(const QString& filename);
@@ -569,6 +571,8 @@ private:
     std::optional<CompatibilityReporting::Session> report_session;
     bool boot_in_progress = false;
     bool close_pending = false;
+    bool stuck_emulation_notice_pending = false;
+    QElapsedTimer diagnostic_timer;
     // The path to the game currently running
     QString current_game_path;
     // Whether a user was set on the command line (skips UserSelector if it's forced to show up)

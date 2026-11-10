@@ -76,6 +76,22 @@ void WriteStorageByCasLoop(EmitContext& ctx, const IR::Value& binding, const IR:
     ctx.OpFunctionCall(ctx.TypeVoid(), ctx.write_storage_cas_loop_func, pointer, value, bit_offset,
                        bit_count);
 }
+
+/// Whether a 64/128-bit access may use the buffer's 64/128-bit view, which indexes by
+/// offset >> 3 or >> 4. Offsets are from a binding base aligned down to the host's storage buffer
+/// alignment (GlobalMemoryToStorageBufferPass), so an aligned guest address keeps its alignment
+/// only when that alignment is at least the access size. AMD aligns to 4 bytes: a 16-byte
+/// aligned load could sit at offset 4 and the view read the wrong words (Pokopia's photos came
+/// out in bands). Otherwise the access goes word by word, unless its offset is a known multiple.
+bool AlignedVectorAccess(EmitContext& ctx, const IR::Value& offset, u32 size) {
+    if (!ctx.profile.support_descriptor_aliasing) {
+        return false;
+    }
+    if (offset.IsImmediate()) {
+        return offset.U32() % size == 0;
+    }
+    return ctx.profile.min_ssbo_alignment >= size;
+}
 } // Anonymous namespace
 
 void EmitLoadGlobalU8(EmitContext&) {

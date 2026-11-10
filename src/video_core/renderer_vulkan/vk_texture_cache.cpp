@@ -273,49 +273,6 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     return layer_uploads && size >= (32U << 20) && Tegra::Nx2InSparseRegion(gpu_addr, size);
 }
 
-// How SparseTiles images leave the blocks without data: unbound (reads give zero), or all bound to
-// one zeroed block where the driver can't sample unbound memory (AMD) but lets blocks share
-// memory. EDEN_NX2_SPARSE_ALIASED=1 takes the shared block wherever it is supported, =0 never.
-enum class SparseTilesMode {
-    None,
-    Unbound,
-    Aliased,
-};
-
-[[nodiscard]] SparseTilesMode SparseTilesModeOf(const Device& device) {
-    static const char force_aliased = [] {
-        const char* value = std::getenv("EDEN_NX2_SPARSE_ALIASED");
-        return value == nullptr ? '\0' : value[0];
-    }();
-    if (!device.IsSparseResidencyImage2DSupported()) {
-        return SparseTilesMode::None;
-    }
-    const bool aliased = device.IsSparseResidencyAliasedSupported() && force_aliased != '0';
-    if (aliased && force_aliased == '1') {
-        return SparseTilesMode::Aliased;
-    }
-    if (device.CanUseUnbackedSparseImages()) {
-        return SparseTilesMode::Unbound;
-    }
-    return aliased ? SparseTilesMode::Aliased : SparseTilesMode::None;
-}
-
-// A large single 2D image in a Switch 2 sparse region (title 1's world-sized R8/RG16/R16 masks,
-// 170-341 MB, of which the game maps a few MiB) gets memory by sparse block where the guest memory
-// under it can hold data: unbacked at first, then Image::BindTiles. Formats of one texel per
-// block that the host samples as they are.
-[[nodiscard]] bool UsesSparseTiles(const Device& device, const ImageInfo& info, GPUVAddr gpu_addr) {
-    if (SparseTilesModeOf(device) == SparseTilesMode::None || info.type != ImageType::e2D || info.resources.layers != 1 || info.num_samples != 1 ||
-        info.size.depth != 1 || info.block.width != 0 ||
-        VideoCore::Surface::DefaultBlockWidth(info.format) != 1 ||
-        VideoCore::Surface::DefaultBlockHeight(info.format) != 1 ||
-        VideoCore::Surface::GetFormatType(info.format) != VideoCore::Surface::SurfaceType::ColorTexture) {
-        return false;
-    }
-    const u32 size = VideoCommon::CalculateGuestSizeInBytes(info);
-    return size >= (32U << 20) && Tegra::Nx2InSparseRegion(gpu_addr, size);
-}
-
 // Vulkan's standard sparse block shape for single-sampled 2D images (64 KiB blocks), in texel
 // blocks, for a texel block of `block_bytes`. Only valid when the device reports
 // residencyStandard2DBlockShape.
@@ -343,6 +300,49 @@ enum class SparseTilesMode {
     default:
         return false;
     }
+}
+
+// How SparseTiles images leave the blocks without data: unbound (reads give zero), or all bound to
+// one zeroed block where the driver can't sample unbound memory (AMD) but lets blocks share
+// memory. EDEN_NX2_SPARSE_ALIASED=1 takes the shared block wherever it is supported, =0 never.
+enum class SparseTilesMode {
+    None,
+    Unbound,
+    Aliased,
+};
+
+[[nodiscard]] SparseTilesMode SparseTilesModeOf(const Device& device) {
+    static const char force_aliased = [] {
+        const char* value = std::getenv("EDEN_NX2_SPARSE_ALIASED");
+        return value == nullptr ? '\0' : value[0];
+    }();
+    if (!device.IsSparseResidencyImageSupported(VK_IMAGE_TYPE_2D)) {
+        return SparseTilesMode::None;
+    }
+    const bool aliased = device.IsSparseResidencyAliasedSupported() && force_aliased != '0';
+    if (aliased && force_aliased == '1') {
+        return SparseTilesMode::Aliased;
+    }
+    if (device.CanUseUnbackedSparseImages()) {
+        return SparseTilesMode::Unbound;
+    }
+    return aliased ? SparseTilesMode::Aliased : SparseTilesMode::None;
+}
+
+// A large single 2D image in a Switch 2 sparse region (title 1's world-sized R8/RG16/R16 masks,
+// 170-341 MB, of which the game maps a few MiB) gets memory by sparse block where the guest memory
+// under it can hold data: unbacked at first, then Image::BindTiles. Formats of one texel per
+// block that the host samples as they are.
+[[nodiscard]] bool UsesSparseTiles(const Device& device, const ImageInfo& info, GPUVAddr gpu_addr) {
+    if (SparseTilesModeOf(device) == SparseTilesMode::None || info.type != ImageType::e2D || info.resources.layers != 1 || info.num_samples != 1 ||
+        info.size.depth != 1 || info.block.width != 0 ||
+        VideoCore::Surface::DefaultBlockWidth(info.format) != 1 ||
+        VideoCore::Surface::DefaultBlockHeight(info.format) != 1 ||
+        VideoCore::Surface::GetFormatType(info.format) != VideoCore::Surface::SurfaceType::ColorTexture) {
+        return false;
+    }
+    const u32 size = VideoCommon::CalculateGuestSizeInBytes(info);
+    return size >= (32U << 20) && Tegra::Nx2InSparseRegion(gpu_addr, size);
 }
 
 // The most device memory one SparseLayers image binds: 768 MiB, 384 MiB on GPUs with less than
@@ -1262,17 +1262,15 @@ void BlitScale(Scheduler& scheduler, VkImage src_image, VkImage dst_image, const
     });
 }
 
-// Uncompressed ASTC needs more video memory than a Switch 2 title leaves under a 12 GiB budget
-// (Mario Kart World filled a 16 GB card's 13.5 GB budget; a 12 GB card has ~11.2 GB): there the
-// textures went unbacked (garbage) and the game crashed. Use BC3 for this session.
-void UseBc3ForSwitch2OnSmallCards(const Device& device) {
-    using namespace Common::Literals;
+// Uncompressed ASTC is 4x the size of BC3 (Mario Kart World filled a 16 GB card's 13.5 GB budget,
+// and Windows then pages video memory into system RAM), and each uncompressed decode ends in a
+// full GPU wait on the GPU thread, a hitch whenever new textures stream in. The GPU BC transcode
+// has neither problem, so use it for Switch 2 titles on every card.
+void UseBc3ForSwitch2(const Device& device) {
     if (!Settings::CurrentProgramIsSwitch2() || device.IsOptimalAstcSupported() ||
         Settings::GetAstcRecompression() != Settings::AstcRecompression::Uncompressed) {
         return;
     }
-    const u64 budget = device.GetDeviceMemoryBudget();
-    const u64 memory = budget != 0 ? budget : device.GetDeviceLocalMemory();
     const char* keep = std::getenv("EDEN_NX2_KEEP_ASTC");
     if (memory >= 20_GiB || (keep != nullptr && keep[0] == '1')) {
         return;
@@ -1299,7 +1297,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
       compute_pass_descriptor_queue{compute_pass_descriptor_queue_},
       resolution{Settings::values.resolution_info} {
     // Before anything below reads astc_recompression (passes, view formats).
-    UseBc3ForSwitch2OnSmallCards(device);
+    UseBc3ForSwitch2(device);
     // Huge ASTC arrays always decode on the GPU (IsHugeAstcArray), whatever the decode setting.
     if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu ||
         !device.IsOptimalAstcSupported()) {
@@ -1341,6 +1339,15 @@ void TextureCacheRuntime::Finish() {
 
 StagingBufferRef TextureCacheRuntime::UploadStagingBuffer(size_t size, bool deferred) {
     return staging_buffer_pool.Request(size, MemoryUsage::Upload, deferred);
+}
+
+void TextureCacheRuntime::DeferGuestRead(u8* dst, Tegra::MaxwellDeviceMemoryManager& memory,
+                                         DAddr address, size_t size) {
+    // Runs when the worker records this chunk, before its commands are submitted: the copies
+    // recorded after it read the staging memory only once the GPU executes them.
+    scheduler.Record([dst, memory = &memory, address, size](vk::CommandBuffer) {
+        memory->ReadBlockUnsafe(address, dst, size);
+    });
 }
 
 StagingBufferRef TextureCacheRuntime::DownloadStagingBuffer(size_t size, bool deferred) {
@@ -2891,8 +2898,10 @@ bool TextureCacheRuntime::UseOpaqueAstcFormat() const {
         const char* value = std::getenv("EDEN_NX2_ASTC_BC1");
         return value == nullptr || value[0] != '0';
     }();
+    // BC1 cannot keep partial alpha: in both compressed modes only images whose data is opaque
+    // use BC1, the rest BC3.
     return enabled && !device.IsOptimalAstcSupported() &&
-           Settings::GetAstcRecompression() == Settings::AstcRecompression::Bc3;
+           Settings::GetAstcRecompression() != Settings::AstcRecompression::Uncompressed;
 }
 
 void TextureCacheRuntime::FlushDeferredClear() {
@@ -2947,27 +2956,51 @@ void TextureCacheRuntime::TickFrame() {
     static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
     // Finished decode images wait for the next texture of their shape, up to this much memory.
     static constexpr u64 MaxFreeTranscodeBytes = u64{256} << 20;
-    const auto decode_bytes = [](const PendingTranscode& t) {
-        u64 bytes{};
-        for (u32 level = 0; level < t.levels; ++level) {
-            bytes += u64{(std::max)(t.width >> level, 1U)} * (std::max)(t.height >> level, 1U) * 4;
-        }
-        return bytes * t.layers;
-    };
+    // EDEN_NX2_ASTC_POOL_V2=0 drops a finished image that does not fit instead of evicting the
+    // least recently used free one.
+    static const bool evict_lru = EnvNotZero("EDEN_NX2_ASTC_POOL_V2");
     u64 free_bytes{};
     for (const PendingTranscode& t : free_transcodes) {
-        free_bytes += decode_bytes(t);
+        free_bytes += t.bytes;
     }
     while (!pending_transcodes.empty() && scheduler.IsFree(pending_transcodes.front().tick)) {
         PendingTranscode& done = pending_transcodes.front();
-        const u64 bytes = decode_bytes(done);
-        if (free_bytes + bytes <= MaxFreeTranscodeBytes) {
+        pending_transcode_bytes -= done.bytes;
+        while (evict_lru && free_bytes + done.bytes > MaxFreeTranscodeBytes &&
+               !free_transcodes.empty()) {
+            const auto oldest = std::ranges::min_element(
+                free_transcodes, {}, [](const PendingTranscode& t) { return t.last_use; });
+            free_bytes -= oldest->bytes;
+            free_transcodes.erase(oldest);
+        }
+        if (free_bytes + done.bytes <= MaxFreeTranscodeBytes) {
             done.unused_frames = 0;
-            free_bytes += bytes;
+            free_bytes += done.bytes;
             free_transcodes.push_back(std::move(done));
         }
         pending_transcodes.pop_front();
     }
+}
+
+u64 TextureCacheRuntime::TranscodeBudgetBytes() const noexcept {
+    const u64 total = device.GetDeviceLocalMemory();
+    const u64 target = total != 0 ? total / 10 : u64{512} << 20;
+    return std::clamp(target, u64{256} << 20, u64{1024} << 20);
+}
+
+void TextureCacheRuntime::TickFrame() {
+    ReclaimCompletedTranscodes();
+    if (++transcode_frames % 600 == 0) {
+        LOG_INFO(Render_Vulkan,
+                 "ASTC temporary images: {} MiB pending, {} MiB peak, {} MiB budget, {} waits ({} us), {} early submits",
+                 pending_transcode_bytes >> 20, peak_transcode_bytes >> 20,
+                 TranscodeBudgetBytes() >> 20, transcode_budget_waits, transcode_wait_us,
+                 transcode_early_submits);
+        peak_transcode_bytes = pending_transcode_bytes;
+        transcode_budget_waits = transcode_wait_us = 0;
+        transcode_early_submits = 0;
+    }
+    static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
     std::erase_if(free_transcodes, [](PendingTranscode& t) {
         return ++t.unused_frames > MAX_UNUSED_SCRATCH_FRAMES;
     });
@@ -3011,8 +3044,19 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
         const ImageInfo host_info = TrimmedHostInfo(runtime_.device, info, host_level_offset);
         const u64 texels = u64{host_info.size.width} * host_info.size.height *
                            host_info.size.depth * static_cast<u64>(host_info.resources.layers);
-        if (UsesSparseLayers(runtime_.device, info, gpu_addr_) && InitSparseLayers()) {
+        const bool layered_sparse = UsesSparseLayers(runtime_.device, info, gpu_addr_);
+        if (layered_sparse && InitSparseLayers()) {
             flags |= VideoCommon::ImageFlagBits::SparseLayers;
+        } else if (layered_sparse && !IsUnwrittenSparse(runtime_.device, info, gpu_addr_)) {
+            // The driver's sparse block can't be bound by: back it as before SparseLayers.
+            original_image = MakeImage(runtime_.device, runtime_.memory_allocator, host_info,
+                                       IsHugeAstcArray(runtime_.device, info)
+                                           ? std::span<const VkFormat>{HugeAstcViewFormats}
+                                           : runtime->ViewFormats(info.format),
+                                       AstcHostFormat(runtime_.device, info));
+            if (!original_image.IsUnbacked()) {
+                flags &= ~VideoCommon::ImageFlagBits::Unbacked;
+            }
         } else if (UsesSparseTiles(runtime_.device, info, gpu_addr_) && InitSparseTiles()) {
             flags |= VideoCommon::ImageFlagBits::SparseTiles;
         } else if (texels <= MaxBackedImageTexels) {
@@ -3578,6 +3622,16 @@ bool Image::InitSparseLayers() {
         s.tile_width *= block_width;
         s.tile_height *= block_height;
     }
+    // A block that is not one sparse page of this image can't be bound by (AMD gives 65549x339860304
+    // for the RGBA8 terrain arrays on an RX 9070 XT, which left most of their texels unbound).
+    if (s.tile_width < block_width || s.tile_height < block_height ||
+        u64{s.tile_width / block_width} * (s.tile_height / block_height) * block_bytes != tile) {
+        LOG_WARNING(Render_Vulkan,
+                    "Sparse layered image {:#x}: driver block {}x{} is not a {} byte page, backing "
+                    "it whole",
+                    gpu_addr, granularity.width, granularity.height, tile);
+        return false;
+    }
     const u32 tail_lod = (std::min)(it->imageMipTailFirstLod, s.levels);
     VkDeviceSize bytes = 0;
     for (u32 level = 0; level < tail_lod; ++level) {
@@ -4141,6 +4195,7 @@ VkImageView Image::StorageImageLayerView(s32 level, u32 layer) {
     }
     auto& view = storage_layer_views[static_cast<size_t>(level) * layers + layer];
     if (!view) {
+        // Only GPU-decoded ASTC uploads by layer (TextureCacheRuntime::CanUploadLayers).
         view = MakeStorageView(runtime->device.GetLogical(), level, *(this->*current_image),
                                VK_FORMAT_A8B8G8R8_UNORM_PACK32, layer, 1);
     }
@@ -4804,6 +4859,9 @@ VkSampler Sampler::Emplace(VariantKey key) {
         create_info.compareEnable = VK_FALSE;
     }
     create_info.pNext = chain;
+    if (key.drop_compare) {
+        create_info.compareEnable = VK_FALSE;
+    }
     if (key.force_nearest) {
         create_info.magFilter = VK_FILTER_NEAREST;
         create_info.minFilter = VK_FILTER_NEAREST;
@@ -5077,6 +5135,10 @@ void TextureCacheRuntime::AccelerateImageUpload(
     ASSERT(false);
 }
 
+bool TextureCacheRuntime::CanUploadLayers(const ImageInfo& info) const noexcept {
+    return WillUseAcceleratedAstcDecode(device, info);
+}
+
 void TextureCacheRuntime::AccelerateImageUploadLayers(
     Image& image, const StagingBufferRef& map,
     std::span<const VideoCommon::SwizzleParameters> swizzles, std::span<const u32> layers) {
@@ -5086,6 +5148,7 @@ void TextureCacheRuntime::AccelerateImageUploadLayers(
 void TextureCacheRuntime::TranscodeAstcToBcn(
     Image& image, const StagingBufferRef& map,
     std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    ReclaimCompletedTranscodes();
     const ImageInfo& info = image.info;
     const u32 width = info.size.width;
     const u32 height = info.size.height;
@@ -5144,17 +5207,29 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
             .tick = 0,
             .image = std::move(decode),
             .views = {},
-            .width = width,
-            .height = height,
+            .width = scratch_width,
+            .height = scratch_height,
             .levels = levels,
             .layers = layers,
             .unused_frames = 0,
+            .last_use = 0,
         };
         for (u32 level = 0; level < levels; ++level) {
             pending.views.push_back(
                 MakeStorageView(device.GetLogical(), level, *pending.image, DecodeFormat));
         }
     }
+    // Counted against the transcode budget while the GPU works on it.
+    pending.bytes = 0;
+    for (u32 level = 0; level < levels; ++level) {
+        pending.bytes += u64{(std::max)(width >> level, 1U)} *
+                         (std::max)(height >> level, 1U) * layers * 4;
+    }
+    pending.bytes = (std::max)(pending.bytes, pending.image.DeviceMemorySize());
+    // The decode image is only read by the encode that follows, which the decode's closing
+    // barrier orders, so the decode needs no submit of its own: both go in the same one.
+    // EDEN_NX2_ASTC_ONE_SUBMIT=0 submits after the decode.
+    static const bool one_submit = EnvNotZero("EDEN_NX2_ASTC_ONE_SUBMIT");
     astc_decoder_pass->AssembleInto(
         info, 0, image.guest_size_bytes,
         ASTCDecoderPass::Target{
@@ -5168,8 +5243,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
         map, swizzles);
 
     // Encode every level into one buffer, then copy it into the image.
-    const bool bc3 = !IsOpaqueBc1Astc(device, info) &&
-                     Settings::GetAstcRecompression() != Settings::AstcRecompression::Bc1;
+    const bool bc3 = !IsOpaqueBc1Astc(device, info);
     const u64 block_bytes = bc3 ? 16 : 8;
     boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
     u64 total = 0;
@@ -5212,7 +5286,44 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     });
     image.UploadMemory(output.buffer, output.offset, copies);
     pending.tick = scheduler.CurrentTick();
+    pending.last_use = ++transcode_use_counter;
+    transcode_submission_batch.Record(pending.tick, pending.bytes);
+    pending_transcode_bytes += pending.bytes;
+    peak_transcode_bytes = (std::max)(peak_transcode_bytes, pending_transcode_bytes);
     pending_transcodes.push_back(std::move(pending));
+    // Submit only after recording the upload, so its staging buffer remains valid for this tick.
+    const u64 budget = TranscodeBudgetBytes();
+    if (transcode_submission_batch.ShouldSubmitEarly(pending_transcode_bytes, budget,
+                                                     pending_transcodes.front().tick,
+                                                     scheduler.CurrentTick())) {
+        scheduler.Flush();
+        ++transcode_early_submits;
+    }
+    while (pending_transcode_bytes > budget && !pending_transcodes.empty()) {
+        const u64 wait_tick = pending_transcodes.front().tick;
+        const u64 current_tick = scheduler.CurrentTick();
+        const u64 known_gpu_tick = scheduler.GetMasterSemaphore().KnownGpuTick();
+        const u64 pending_bytes = pending_transcode_bytes;
+        const u64 oldest_bytes = pending_transcodes.front().bytes;
+        const u64 newest_bytes = pending_transcodes.back().bytes;
+        const u64 batch_bytes = transcode_submission_batch.BytesForTick(current_tick);
+        const size_t pending_count = pending_transcodes.size();
+        const auto begin = std::chrono::steady_clock::now();
+        scheduler.Wait(wait_tick);
+        ++transcode_budget_waits;
+        const auto elapsed = std::chrono::steady_clock::now() - begin;
+        const u64 wait_us = static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
+        transcode_wait_us += wait_us;
+        if (wait_us >= 10'000) {
+            LOG_INFO(Render_Vulkan,
+                     "ASTC budget wait detail: {} us; oldest tick {}, current {}, known GPU {}; "
+                     "{} MiB pending in {} images, oldest {} MiB, newest {} MiB, current batch {} MiB",
+                     wait_us, wait_tick, current_tick, known_gpu_tick, pending_bytes >> 20,
+                     pending_count, oldest_bytes >> 20, newest_bytes >> 20, batch_bytes >> 20);
+        }
+        ReclaimCompletedTranscodes();
+    }
 }
 
 void TextureCacheRuntime::TransitionImageLayout(Image& image) {

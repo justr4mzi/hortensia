@@ -283,18 +283,20 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
     return false;
 }
 
+Puller::~Puller() {
+    // Otherwise the waiter outlives the channel: every later semaphore write and query takes the
+    // waiters' lock (its count stays above zero), and a Puller allocated at the same address
+    // would find its latch.
+    Nx2SemaphoreWaiters::Get().Remove(this);
+}
+
 bool Puller::ResumeAcquire(DmaPusher& dma_pusher) {
     if (!CanResumeAcquire(dma_pusher)) {
         return false;
     }
-    // Only a resume from a suspension counts: DmaPusher::Step calls this before every entry, and
-    // counting those made the count odd ("suspended") at random, so submit-time snapshots were
-    // thrown away for about half of all entries (CommandList::snapshot_suspensions).
-    if (pending_acquire) {
-        pending_acquire.reset();
-        dma_pusher.suspensions.fetch_add(1, std::memory_order_release);
-        Nx2SemaphoreWaiters::Get().Remove(this);
-    }
+    pending_acquire.reset();
+    dma_pusher.suspensions.fetch_add(1, std::memory_order_release);
+    Nx2SemaphoreWaiters::Get().Remove(this);
     return true;
 }
 
@@ -611,9 +613,22 @@ void Puller::CallPullerMethod(DmaPusher& dma_pusher, const MethodCall& method_ca
         OnBack([rasterizer = dma_pusher.rasterizer] { rasterizer->InvalidateGPUCache(); });
         break;
     }
-    case BufferMethods::MemOpC:
+    case BufferMethods::MemOpC: {
+        LOG_TRACE(HW_GPU, "Memory Operation C: argument={:#x}", method_call.argument);
+        break;
+    }
     case BufferMethods::MemOpD: {
-        LOG_TRACE(HW_GPU, "Memory Operation C,D");
+        LOG_TRACE(HW_GPU, "Memory Operation D: argument={:#x}", method_call.argument);
+
+        // MEM_OP_D executes the operation prepared by MEM_OP_A/B/C. Operation 5 is MEMBAR:
+        // draws after it must observe GPU-written vertex, index and indirect buffers.
+        constexpr u32 OperationShift = 27;
+        constexpr u32 OperationMask = 0x1f;
+        constexpr u32 MembarOperation = 5;
+        if (g_nx2_ampere &&
+            ((method_call.argument >> OperationShift) & OperationMask) == MembarOperation) {
+            OnBack([rasterizer = dma_pusher.rasterizer] { rasterizer->Nx2Membar(); });
+        }
         break;
     }
     case BufferMethods::SemaphoreAcquire: {

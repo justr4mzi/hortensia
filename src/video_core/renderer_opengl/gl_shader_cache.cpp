@@ -270,6 +270,7 @@ ShaderCache::ShaderCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         .support_viewport_index_layer = device.HasVertexViewportLayer(),
         .support_geometry_shader_passthrough = device.HasGeometryShaderPassthrough(),
         .support_conditional_barrier = device.SupportsConditionalBarriers(),
+        .support_typeless_image_loads = device.HasImageLoadFormatted(),
       } {
     host_info.ApplyDescriptorLimitPolicy();
     if (use_asynchronous_shaders) {
@@ -286,7 +287,8 @@ void ShaderCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
     }
     const auto shader_dir{Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir)};
     const auto base_dir{shader_dir / fmt::format("{:016x}", title_id)};
-    if (!Common::FS::CreateDir(shader_dir) || !Common::FS::CreateDir(base_dir)) {
+    // CreateDirs: Eglantine's shader directory is inside the shared one, which may not exist yet.
+    if (!Common::FS::CreateDirs(shader_dir) || !Common::FS::CreateDir(base_dir)) {
         LOG_ERROR(Common_Filesystem, "Failed to create shader cache directories");
         return;
     }

@@ -14,7 +14,6 @@
 #include <span>
 #include <vector>
 #include <boost/container/small_vector.hpp>
-#include <deque>
 #include <queue>
 
 #include "common/bit_field.h"
@@ -246,7 +245,7 @@ private:
 public:
     Common::ScratchBuffer<CommandHeader> command_headers; ///< Buffer for list of commands fetched at once
 
-    std::deque<CommandList> dma_pushbuffer; ///< Queue of command lists to be processed
+    std::queue<CommandList> dma_pushbuffer; ///< Queue of command lists to be processed
     std::size_t dma_pushbuffer_subindex{};  ///< Index within a command list within the pushbuffer
 
     struct DmaState {
@@ -254,6 +253,7 @@ public:
         u32 subchannel;        ///< Current subchannel
         u32 method_count;      ///< Current method count
         u32 length_pending;    ///< Large NI command length pending
+        u32 skip_words;        ///< Words left to discard from an invalid command block
         GPUVAddr dma_get;      ///< Currently read segment
         u64 dma_word_offset;   ///< Current word offset from address
         bool non_incrementing; ///< Current command's NI flag

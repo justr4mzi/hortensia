@@ -45,6 +45,7 @@ struct ShaderInfo {
     size_t size_bytes{};
     /// Lowered code of a native program, reused when its pipelines are built.
     std::shared_ptr<const LoweredNativeCode> lowered_native;
+    bool requires_rasterizer_clip{};
 };
 
 class ShaderCache : public VideoCommon::ChannelSetupCaches<VideoCommon::ChannelInfo> {
@@ -75,6 +76,8 @@ public:
     /// @param size Number of bytes of the invalidation
     void InvalidateRegion(VAddr addr, size_t size);
 
+    /// Shader programs registered on the page holding addr (EDEN_NX2_WRITE_STATS).
+    size_t EntriesOnPage(VAddr addr);
     void InvalidateRegions(std::span<const std::pair<DAddr, size_t>> sequences);
 
     /// @brief Unmarks a memory region as cached and marks it for removal
@@ -144,8 +147,13 @@ private:
     /// @pre invalidation_mutex is locked
     void RemovePendingShaders();
 
+    /// Frees the shaders RemovePendingShaders took out of the cache, first clearing the stages
+    /// that point at them (the next RefreshStages then reads every stage again).
+    /// @pre On the GPU thread, holding no shader pointer but shader_infos
+    void FreeRemovedShaders();
+
     /// @brief Invalidates entries in a given range for the passed page
-    /// @param entries         Vector of entries in the page, it will be modified on overlaps
+    /// @param entries         Entries in the page; overlapping shaders are marked for removal
     /// @param addr            Start address of the invalidation
     /// @param addr_end        Non-inclusive end address of the invalidation
     /// @pre invalidation_mutex is locked
@@ -185,6 +193,14 @@ private:
     ::Common::unordered_map<u64, std::vector<Entry*>> invalidation_cache;
     std::vector<std::unique_ptr<ShaderInfo>> storage;
     std::vector<Entry*> marked_for_removal;
+
+    /// Shaders removed from the cache, freed by FreeRemovedShaders. Removals also run on guest CPU
+    /// threads, and a game may rewrite a bound program and draw without writing the shader
+    /// registers: freed at once, the stages kept pointing at them.
+    std::vector<std::unique_ptr<ShaderInfo>> removed_storage;
+    std::atomic_bool has_removed_shaders{false};
+    /// A stage pointed at a freed shader: RefreshStages reads them all again (GPU thread only).
+    bool stages_cleared = false;
 
     /// Native programs the lowering rejected, by address, so each draw or dispatch rethrows the
     /// first error instead of lowering again; dropped when guest memory there is written.

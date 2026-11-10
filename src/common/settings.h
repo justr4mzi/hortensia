@@ -254,14 +254,20 @@ struct Values {
                                             Specialization::Default};
 
     // Cpu
+    // Hypervisor exists only on Apple silicon; elsewhere the range keeps a stored Hypervisor
+    // value from being selected.
     SwitchableSetting<CpuBackend, true> cpu_backend{linkage,
-#ifdef HAS_NCE
+#if defined(HAS_HYPERVISOR)
+                                                    CpuBackend::Hypervisor,
+#elif defined(HAS_NCE)
                                                     CpuBackend::Nce,
 #else
                                                     CpuBackend::Dynarmic,
 #endif
                                                     CpuBackend::Dynarmic,
-#ifdef HAS_NCE
+#if defined(HAS_HYPERVISOR)
+                                                    CpuBackend::Hypervisor,
+#elif defined(HAS_NCE)
                                                     CpuBackend::Nce,
 #else
                                                     CpuBackend::Dynarmic,
@@ -374,7 +380,7 @@ struct Values {
                                            true};
 
     SwitchableSetting<ScalingFilter> scaling_filter{linkage,
-                                                    ScalingFilter::ScaleForce,
+                                                    ScalingFilter::NearestNeighbor,
                                                     "scaling_filter",
                                                     Category::Renderer,
                                                     Specialization::Default,
@@ -420,7 +426,7 @@ struct Values {
                                                       true};
 
     SwitchableSetting<AntiAliasing> anti_aliasing{linkage,
-                                                  AntiAliasing::Fxaa,
+                                                  AntiAliasing::None,
                                                   "anti_aliasing",
                                                   Category::Renderer,
                                                   Specialization::Default,
@@ -687,10 +693,14 @@ struct Values {
     SwitchableSetting<bool> use_video_framerate{linkage, false, "use_video_framerate",
                                                 Category::RendererAdvanced};
 
-    // Mario Kart World: select a fixed or dynamic in-game frame-rate mode (loader/nso.cpp).
+    // Mario Kart World: keep the game in its own 30 fps mode (loader/nso.cpp).
     SwitchableSetting<bool> mkw_30fps{linkage, false, "mkw_30fps", Category::RendererAdvanced};
+    // Mario Kart World: the game's own dynamic frame rate, timed on the whole frame (nso.cpp),
+    // with presents paced to every vblank (nx2_gsv.h). Takes precedence over mkw_30fps.
     SwitchableSetting<bool> mkw_dynamic_fps{linkage, false, "mkw_dynamic_fps",
                                             Category::RendererAdvanced};
+    // Experimental: let the game run two frames ahead of the GPU thread at 30 fps (nx2_gsv.h).
+    SwitchableSetting<bool> mkw_smooth{linkage, false, "mkw_smooth", Category::RendererAdvanced};
 
     SwitchableSetting<bool> use_reactive_flushing{linkage,
 #ifdef __ANDROID__
@@ -856,11 +866,19 @@ struct Values {
                                     true,    true, &rng_seed_enabled};
     Setting<std::string> device_name{
         linkage, "Eden", "device_name", Category::System, Specialization::Default, true, true};
+    // The News applet lists Eglantine's GitHub releases. Getting them is a request to GitHub, so
+    // the feed stays empty until the user turns this on.
+    Setting<bool> fetch_release_news{linkage, false, "fetch_release_news", Category::System,
+                                     Specialization::Default, true, true};
 
     Setting<s32> current_user{linkage, 0, "current_user", Category::System};
 
     SwitchableSetting<ConsoleMode> use_docked_mode{linkage,
+#ifdef __ANDROID__
                                                    ConsoleMode::Handheld,
+#else
+                                                   ConsoleMode::Docked,
+#endif
                                                    "use_docked_mode",
                                                    Category::System,
                                                    Specialization::Radio,
@@ -1028,6 +1046,14 @@ struct Values {
     Setting<std::string> network_interface{linkage, std::string(), "network_interface",
                                            Category::Network};
     SwitchableSetting<bool> airplane_mode{linkage, true, "airplane_mode", Category::Network};
+    // Private-server integration is explicitly enabled and does not use Nintendo credentials.
+    Setting<bool> private_server_enabled{linkage, false, "private_server_enabled", Category::Network};
+    Setting<std::string> private_server_domains{linkage, "", "private_server_domains", Category::Network};
+    Setting<std::string> private_server_gateway{linkage, "", "private_server_gateway", Category::Network};
+    Setting<u16> private_server_gateway_port{linkage, 443, "private_server_gateway_port",
+                                             Category::Network};
+    Setting<std::string> private_server_ca{linkage, "", "private_server_ca", Category::Network};
+    Setting<std::string> private_server_relay{linkage, "", "private_server_relay", Category::Network};
 
     // WebService
     Setting<std::string> web_api_url{linkage, "api.ynet-fun.xyz", "web_api_url",

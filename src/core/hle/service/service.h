@@ -241,4 +241,10 @@ private:
     }
 };
 
+/// Diagnostic: logs the HLE requests currently being handled, with the requesting thread.
+void LogInFlightRequests();
+
+/// Diagnostic: logs every application thread with its context and a backtrace.
+void DumpGuestThreads(Core::System& system, std::string_view reason);
+
 } // namespace Service

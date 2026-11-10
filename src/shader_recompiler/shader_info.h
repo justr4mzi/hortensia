@@ -138,6 +138,16 @@ enum class TexturePixelFormat {
     ASTC_2D_6X5_UNORM,
     ASTC_2D_6X5_SRGB,
     E5B9G9R9_FLOAT,
+    ETC2_RGB_UNORM,
+    ETC2_RGBA_UNORM,
+    ETC2_RGB_PTA_UNORM,
+    ETC2_RGB_SRGB,
+    ETC2_RGBA_SRGB,
+    ETC2_RGB_PTA_SRGB,
+    EAC_R11_UNORM,
+    EAC_R11_SNORM,
+    EAC_R11G11_UNORM,
+    EAC_R11G11_SNORM,
     D32_FLOAT,
     D16_UNORM,
     X8_D24_UNORM,
@@ -145,6 +155,30 @@ enum class TexturePixelFormat {
     D24_UNORM_S8_UINT,
     S8_UINT_D24_UNORM,
     D32_FLOAT_S8_UINT,
+};
+
+/// What translation reads of a texture's sampler (its TSC entry): the depth comparison, so one
+/// can be done in the shader when the texture's format has no depth (see texture_pass.cpp).
+/// Environments answer it packed in a word.
+struct TextureSamplerState {
+    bool known{};           ///< False when the environment could not read the sampler
+    bool compare_enabled{};
+    u32 compare_func{};     ///< Maxwell order: never, <, ==, <=, >, !=, >=, always
+    bool linear_filter{};   ///< Magnification filter is linear (percentage-closer filtering)
+
+    [[nodiscard]] constexpr u32 Pack() const noexcept {
+        return (known ? 1U : 0U) | (compare_enabled ? 2U : 0U) | ((compare_func & 7U) << 2) |
+               (linear_filter ? 0x20U : 0U);
+    }
+
+    [[nodiscard]] static constexpr TextureSamplerState Unpack(u32 word) noexcept {
+        return {
+            .known = (word & 1U) != 0,
+            .compare_enabled = (word & 2U) != 0,
+            .compare_func = (word >> 2) & 7U,
+            .linear_filter = (word & 0x20U) != 0,
+        };
+    }
 };
 
 enum class ImageFormat : u32 {
@@ -185,8 +219,38 @@ struct StorageBufferDescriptor {
     auto operator<=>(const StorageBufferDescriptor&) const = default;
 };
 
+/// Native programs: a constant buffer slot translation asked about
+/// (Environment::IsCbufStorageBufferPointer), and the answer it got. The storage buffers a
+/// program binds, and which accesses stay global, follow from these answers, which are live
+/// state (what memory is mapped) and in no pipeline key.
+struct NativePointerSlot {
+    u32 cbuf_index;
+    u32 cbuf_offset;
+    bool is_pointer;
+
+    auto operator<=>(const NativePointerSlot&) const = default;
+};
+
+/// Whether a program translated with these answers fits the current state, where
+/// is_pointer(cbuf_index, cbuf_offset) classifies a slot now. A program that does not fit binds
+/// the wrong buffers: another variant has to be translated for the current answers.
+template <typename IsPointer>
+[[nodiscard]] bool NativePointerSlotsMatch(std::span<const NativePointerSlot> slots,
+                                           IsPointer&& is_pointer) {
+    for (const NativePointerSlot& slot : slots) {
+        if (static_cast<bool>(is_pointer(slot.cbuf_index, slot.cbuf_offset)) != slot.is_pointer) {
+            return false;
+        }
+    }
+    return true;
+}
+
 struct TextureBufferDescriptor {
     bool has_secondary;
+    /// The buffer's format holds integers (signed when is_signed): the shader reads it as such,
+    /// since a texel buffer view's numeric type must match the type the shader declares.
+    bool is_integer;
+    bool is_signed;
     u32 cbuf_index;
     u32 cbuf_offset;
     u32 shift_left;
@@ -256,6 +320,10 @@ struct ImageDescriptor {
     /// Index in Info::handle_programs when the handle is computed at draw time (read from a
     /// storage buffer), ~0 when it is the constant buffer word.
     u32 handle_program{~0U};
+    /// The bound texture's format, for a typeless image the host cannot read without one
+    /// (HostTranslateInfo::support_typeless_image_loads): the backend declares the image with it.
+    TexturePixelFormat pixel_format{};
+    bool has_pixel_format{};
 
     auto operator<=>(const ImageDescriptor&) const = default;
 };
@@ -387,6 +455,10 @@ struct Info {
     boost::container::static_vector<ConstantBufferDescriptor, MAX_CBUFS>
         constant_buffer_descriptors;
     boost::container::static_vector<StorageBufferDescriptor, MAX_SSBOS> storage_buffers_descriptors;
+    /// Native programs: every slot whose storage buffer pointer classification translation
+    /// depended on, sorted. The program is only valid while each still has its answer
+    /// (NativePointerSlotsMatch); the pipeline caches pick or build another variant otherwise.
+    std::vector<NativePointerSlot> native_pointer_slots;
     TextureBufferDescriptors texture_buffer_descriptors;
     ImageBufferDescriptors image_buffer_descriptors;
     TextureDescriptors texture_descriptors;

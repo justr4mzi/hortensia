@@ -414,7 +414,7 @@ constexpr u32 STATIC_CACHE_VERSION = 1;
 
 std::filesystem::path StaticPipelineCacheFilename() {
     const auto shader_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir);
-    if (!Common::FS::CreateDir(shader_dir)) {
+    if (!Common::FS::CreateDirs(shader_dir)) {
         return {};
     }
     return shader_dir / "vulkan_static_pipelines.bin";
@@ -496,12 +496,30 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     // Get suitability and device properties.
     const bool is_suitable = GetSuitability(surface != VkSurfaceKHR{});
 
+    // EDEN_NX2_DRIVER_AMD=1: take the AMD proprietary driver's workarounds on another card, so a
+    // fault seen on AMD can be looked for there (EDEN_NX2_NO_NV_GEOMETRY=1 adds AMD's shader
+    // paths on NVIDIA).
+    if (std::getenv("EDEN_NX2_DRIVER_AMD") != nullptr) {
+        LOG_WARNING(Render_Vulkan, "EDEN_NX2_DRIVER_AMD: taking the AMD proprietary driver's paths");
+        properties.driver.driverID = VK_DRIVER_ID_AMD_PROPRIETARY;
+    }
+
     const VkDriverId driver_id = properties.driver.driverID;
 
     const bool is_radv = driver_id == VK_DRIVER_ID_MESA_RADV;
     const bool is_amd_driver =
         driver_id == VK_DRIVER_ID_AMD_PROPRIETARY || driver_id == VK_DRIVER_ID_AMD_OPEN_SOURCE;
     const bool is_amd = is_amd_driver || is_radv;
+
+    // AMD's proprietary Windows driver can crash while compiling some pipelines concurrently.
+#ifdef _WIN32
+    has_broken_parallel_compiling = driver_id == VK_DRIVER_ID_AMD_PROPRIETARY;
+#else
+    has_broken_parallel_compiling = false;
+#endif
+    if (has_broken_parallel_compiling) {
+        LOG_WARNING(Render_Vulkan, "AMD proprietary driver: serializing pipeline compilation");
+    }
 
     const bool is_intel_windows = driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
 
@@ -554,7 +572,26 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         IsFormatSupported(VK_FORMAT_D24_UNORM_S8_UINT,
                           VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, FormatType::Optimal);
 
+    // Barriers in conditional control flow are removed on Intel's Windows driver (a workaround
+    // from yuzu). That lets shared-memory passes read stale data (Mario Kart World's black
+    // textures, upstream #541). EDEN_NX2_CONDITIONAL_BARRIERS=1 keeps them on every driver, =0
+    // removes them on every driver.
     supports_conditional_barriers = !is_intel_windows;
+    if (const char* value = std::getenv("EDEN_NX2_CONDITIONAL_BARRIERS")) {
+        supports_conditional_barriers = value[0] != '0';
+    }
+    // EDEN_NX2_NO_TYPELESS_LOADS=1 (debug): act as a device that cannot read storage images
+    // without a format, as Intel's Windows driver, to test that path on other GPUs.
+    if (std::getenv("EDEN_NX2_NO_TYPELESS_LOADS") != nullptr) {
+        features.features.shaderStorageImageReadWithoutFormat = VK_FALSE;
+    }
+    LOG_INFO(Render_Vulkan,
+             "Storage images: read without format {}, write without format {}, extended formats "
+             "{}; barriers in conditional control flow {}",
+             features.features.shaderStorageImageReadWithoutFormat ? "yes" : "no",
+             features.features.shaderStorageImageWriteWithoutFormat ? "yes" : "no",
+             features.features.shaderStorageImageExtendedFormats ? "yes" : "no",
+             supports_conditional_barriers ? "kept" : "removed");
 
     CollectPhysicalMemoryInfo();
     CollectToolingInfo();
@@ -824,7 +861,8 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     functions.vkAllocateMemory = TimedAllocateMemory;
     functions.vkFreeMemory = TimedFreeMemory;
 
-    VmaAllocatorCreateFlags flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
+    // More than one thread can create and destroy resources, and no lock covers all of these calls.
+    VmaAllocatorCreateFlags flags = 0;
     if (extensions.memory_budget) {
         flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
     }
@@ -1221,6 +1259,14 @@ bool Device::GetSuitability(bool requires_swapchain) {
     supported_extensions.clear();
     for (const VkExtensionProperties& property : extension_properties) {
         supported_extensions.insert(property.extensionName);
+    }
+
+    // EDEN_NX2_NO_NV_GEOMETRY=1 hides the NVIDIA geometry extensions. An NVIDIA card then takes the
+    // shader paths of AMD and Intel, so a fault on those cards can be tested on an NVIDIA card.
+    if (std::getenv("EDEN_NX2_NO_NV_GEOMETRY") != nullptr) {
+        supported_extensions.erase(VK_NV_GEOMETRY_SHADER_PASSTHROUGH_EXTENSION_NAME);
+        supported_extensions.erase(VK_NV_VIEWPORT_ARRAY2_EXTENSION_NAME);
+        supported_extensions.erase(VK_NV_VIEWPORT_SWIZZLE_EXTENSION_NAME);
     }
 
     // Generate list of extensions to load.
@@ -1722,6 +1768,40 @@ void Device::RemoveUnsuitableExtensions() {
     RemoveExtensionFeatureIfUnsuitable(extensions.vertex_input_dynamic_state,
                                        features.vertex_input_dynamic_state,
                                        VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+
+    // VK_EXT_graphics_pipeline_library, which needs VK_KHR_pipeline_library. Only used when
+    // linking is fast (otherwise it saves nothing over a monolithic compile) and when the vertex
+    // and fragment shaders may disagree on interpolation decorations: libraries are compiled
+    // separately and the SPIR-V backend decorates fragment inputs only.
+    {
+        // Off unless EDEN_NX2_GPL=1: in Mario Kart World memory grew past 19 GB in under two
+        // minutes with it on, against a 11 GB peak without.
+        const char* const gpl_env = std::getenv("EDEN_NX2_GPL");
+        const bool gpl_allowed = gpl_env != nullptr && gpl_env[0] == '1';
+        const auto& gpl_properties = properties.graphics_pipeline_library;
+        const bool gpl_usable =
+            features.graphics_pipeline_library.graphicsPipelineLibrary &&
+            extensions.pipeline_library &&
+            gpl_properties.graphicsPipelineLibraryFastLinking &&
+            gpl_properties.graphicsPipelineLibraryIndependentInterpolationDecoration;
+        if (extensions.graphics_pipeline_library) {
+            LOG_INFO(Render_Vulkan,
+                     "VK_EXT_graphics_pipeline_library: fast linking {}, independent "
+                     "interpolation {}, {}",
+                     gpl_properties.graphicsPipelineLibraryFastLinking == VK_TRUE,
+                     gpl_properties.graphicsPipelineLibraryIndependentInterpolationDecoration ==
+                         VK_TRUE,
+                     !gpl_allowed ? "off (EDEN_NX2_GPL=1 turns it on)"
+                                  : (gpl_usable ? "used" : "not used"));
+        }
+        extensions.graphics_pipeline_library = gpl_allowed && gpl_usable;
+        RemoveExtensionFeatureIfUnsuitable(extensions.graphics_pipeline_library,
+                                           features.graphics_pipeline_library,
+                                           VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
+        extensions.pipeline_library = extensions.graphics_pipeline_library;
+        RemoveExtensionIfUnsuitable(extensions.pipeline_library,
+                                    VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+    }
 
     // VK_KHR_pipeline_executable_properties
     if (Settings::values.renderer_shader_feedback.GetValue()) {

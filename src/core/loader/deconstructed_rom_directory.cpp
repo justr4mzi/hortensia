@@ -16,6 +16,7 @@
 #include "common/logging.h"
 #include "common/random.h"
 #include "common/settings.h"
+#include "common/string_util.h"
 #include "core/core.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
@@ -100,8 +101,48 @@ FileSys::VirtualDir FindLooseRomFSDirectory(const FileSys::VirtualDir& parent) {
     return nullptr;
 }
 
+// The base title's romfs/ for an ExeFS in <game>/updates/<version>/exefs (also update/<version>).
+FileSys::VirtualDir FindBaseRomFSDirectory(const FileSys::VirtualDir& version_dir) {
+    const auto updates_dir = version_dir->GetParentDirectory();
+    const auto game_dir = updates_dir ? updates_dir->GetParentDirectory() : nullptr;
+    if (game_dir == nullptr) {
+        return nullptr;
+    }
+    const auto updates_name = Common::ToLower(updates_dir->GetName());
+    if (updates_name != "updates" && updates_name != "update") {
+        return nullptr;
+    }
+    auto base_dir = game_dir->GetSubdirectory("base");
+    if (!base_dir) {
+        base_dir = game_dir->GetSubdirectory("Base");
+    }
+    return base_dir ? FindLooseRomFSDirectory(base_dir) : nullptr;
+}
+
+// Building a loose RomFS walks every file and keeps an object for each (title 1: 206k files, ~150
+// MiB), so loaders of the same directory share one build while any of them holds it.
+FileSys::VirtualFile BuildLooseRomFS(const FileSys::VirtualDir& romfs_dir) {
+    static std::mutex cache_mutex;
+    static std::map<std::string, std::weak_ptr<FileSys::VfsFile>> cache;
+    std::scoped_lock lk{cache_mutex};
+    auto& cached = cache[romfs_dir->GetFullPath()];
+    if (auto built = cached.lock()) {
+        return built;
+    }
+    const auto started = std::chrono::steady_clock::now();
+    auto built = FileSys::CreateRomFS(romfs_dir);
+    LOG_INFO(Loader, "Loose RomFS image ready: elapsed_ms={}",
+             std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - started)
+                 .count());
+    cached = built;
+    return built;
+}
+
 // RomFS for a loose ExeFS: the first .romfs file next to main, else a romfs/ directory next to
-// the exefs/ directory (the usual layout of an extracted title).
+// the exefs/ directory (the usual layout of an extracted title). An update in the <game>/base +
+// <game>/updates/<version> layout without a RomFS of its own uses the base title's. Extracted
+// updates carry the whole RomFS, so the two are not layered (that triples the time to build it).
 FileSys::VirtualFile FindLooseRomFS(const FileSys::VirtualDir& exefs_dir) {
     if (exefs_dir == nullptr) {
         return nullptr;
@@ -111,90 +152,72 @@ FileSys::VirtualFile FindLooseRomFS(const FileSys::VirtualDir& exefs_dir) {
             return f;
         }
     }
-
-    const auto build_from = [](const FileSys::VirtualDir& romfs_dir) -> FileSys::VirtualFile {
-        if (romfs_dir == nullptr) {
-            return nullptr;
-        }
-        // Building it walks every file and keeps an object for each (title 1: 206k files, ~150
-        // MiB), so loaders of the same directory share one build while any of them holds it.
-        static std::mutex cache_mutex;
-        static std::map<std::string, std::weak_ptr<FileSys::VfsFile>> cache;
-        std::scoped_lock lk{cache_mutex};
-        auto& cached = cache[romfs_dir->GetFullPath()];
-        if (auto built = cached.lock()) {
-            return built;
-        }
+    const auto parent = exefs_dir->GetParentDirectory();
+    if (parent == nullptr) {
+        return nullptr;
+    }
+    if (const auto romfs_dir = FindLooseRomFSDirectory(parent)) {
         LOG_INFO(Loader, "Using RomFS directory next to the ExeFS");
-        const auto started = std::chrono::steady_clock::now();
-        auto built = FileSys::CreateRomFS(romfs_dir);
-        LOG_INFO(Loader, "Loose RomFS image ready: elapsed_ms={}",
-                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now() - started)
-                     .count());
-        cached = built;
-        return built;
-    };
-
-    if (const auto parent = exefs_dir->GetParentDirectory()) {
-        if (const auto romfs_dir = FindLooseRomFSDirectory(parent)) {
-            return build_from(romfs_dir);
-        }
-        // Some base dumps carry only the executable and leave every file in an update, so the
-        // base has no romfs at all (Pokemon Pokopia: base/romfs does not exist, the 6.9 GB of
-        // data is in updates/655360/romfs). Handing a null RomFS to the title makes
-        // OpenDataStorageByCurrentProcess fail and the game panics with an opaque 0x3fffff
-        // instead of saying where the data is. Prefer the newest update present.
-        if (const auto root = parent->GetParentDirectory()) {
-            if (const auto updates = root->GetSubdirectory("updates")) {
-                FileSys::VirtualDir newest{};
-                u64 newest_version{0};
-                for (const auto& candidate : updates->GetSubdirectories()) {
-                    const std::string name = candidate->GetName();
-                    u64 version{0};
-                    const auto parsed =
-                        std::from_chars(name.data(), name.data() + name.size(), version);
-                    // from_chars stops at the first non digit and still reports success, so a
-                    // directory called "655360_old" or "999999.bak" would be accepted with its
-                    // leading digits. Require the whole name to be the number.
-                    if (parsed.ec != std::errc{} || parsed.ptr != name.data() + name.size()) {
-                        continue;
-                    }
-                    if (version >= newest_version) {
-                        newest_version = version;
-                        newest = candidate;
-                    }
+        return BuildLooseRomFS(romfs_dir);
+    }
+    if (const auto base_romfs_dir = FindBaseRomFSDirectory(parent)) {
+        LOG_INFO(Loader, "Using the base title's RomFS directory");
+        return BuildLooseRomFS(base_romfs_dir);
+    }
+    // Some base dumps carry only the executable and leave every file in an update, so the
+    // base has no romfs at all (Pokemon Pokopia: base/romfs does not exist, the 6.9 GB of
+    // data is in updates/655360/romfs). Handing a null RomFS to the title makes
+    // OpenDataStorageByCurrentProcess fail and the game panics with an opaque 0x3fffff
+    // instead of saying where the data is. Prefer the newest update present.
+    if (const auto root = parent->GetParentDirectory()) {
+        if (const auto updates = root->GetSubdirectory("updates")) {
+            FileSys::VirtualDir newest{};
+            u64 newest_version{0};
+            for (const auto& candidate : updates->GetSubdirectories()) {
+                const std::string name = candidate->GetName();
+                u64 version{0};
+                const auto parsed =
+                    std::from_chars(name.data(), name.data() + name.size(), version);
+                // from_chars stops at the first non digit and still reports success, so a
+                // directory called "655360_old" or "999999.bak" would be accepted with its
+                // leading digits. Require the whole name to be the number.
+                if (parsed.ec != std::errc{} || parsed.ptr != name.data() + name.size()) {
+                    continue;
                 }
-                if (const auto romfs_dir = FindLooseRomFSDirectory(newest)) {
-                    // Only safe when the executable is the same build as the update: running a 1.0
-                    // program against 2.0.1 data boots and then writes to unmapped memory in a
-                    // loop (Pokopia: 2012 invalid byte writes), which is worse than refusing.
-                    const auto main_size = [](const FileSys::VirtualDir& dir) -> u64 {
-                        if (dir == nullptr) {
-                            return 0;
-                        }
-                        for (const auto& candidate : dir->GetFiles()) {
-                            if (candidate->GetName() == "main") {
-                                return candidate->GetSize();
-                            }
-                        }
+                if (version >= newest_version) {
+                    newest_version = version;
+                    newest = candidate;
+                }
+            }
+            if (const auto romfs_dir = FindLooseRomFSDirectory(newest)) {
+                // Only safe when the executable is the same build as the update: running a 1.0
+                // program against 2.0.1 data boots and then writes to unmapped memory in a
+                // loop (Pokopia: 2012 invalid byte writes), which is worse than refusing.
+                const auto main_size = [](const FileSys::VirtualDir& dir) -> u64 {
+                    if (dir == nullptr) {
                         return 0;
-                    };
-                    const auto base_exefs_size = main_size(exefs_dir);
-                    const auto update_exefs_size = main_size(newest->GetSubdirectory("exefs"));
-                    if (base_exefs_size != 0 && update_exefs_size != 0 &&
-                        base_exefs_size != update_exefs_size) {
-                        LOG_ERROR(Loader,
-                                  "Base RomFS is absent and the update RomFS belongs to a different "
-                                  "build (base main {} bytes, update main {} bytes). Load the "
-                                  "update's exefs instead of the base one.",
-                                  base_exefs_size, update_exefs_size);
-                        return nullptr;
                     }
-                    LOG_INFO(Loader, "Base RomFS is absent, using the update RomFS (version {})",
-                             newest_version);
-                    return build_from(romfs_dir);
+                    for (const auto& candidate : dir->GetFiles()) {
+                        if (candidate->GetName() == "main") {
+                            return candidate->GetSize();
+                        }
+                    }
+                    return 0;
+                };
+                const auto base_exefs_size = main_size(exefs_dir);
+                const auto update_exefs_size = main_size(newest->GetSubdirectory("exefs"));
+                if (base_exefs_size != 0 && update_exefs_size != 0 &&
+                    base_exefs_size != update_exefs_size) {
+                    LOG_ERROR(Loader,
+                              "Base RomFS is absent and the update RomFS belongs to a different "
+                              "build (base main {} bytes, update main {} bytes). Load the "
+                              "update's exefs instead of the base one.",
+                              base_exefs_size, update_exefs_size);
+                    return nullptr;
                 }
+                LOG_INFO(Loader, "Base RomFS is absent, using the update RomFS (version {})",
+                         newest_version);
+                return BuildLooseRomFS(romfs_dir);
             }
         }
     }
@@ -365,16 +388,6 @@ AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(
     romfs_exefs_dir = dir;
 }
 
-// Loaders made only for metadata (the game list, title lookups) never need the RomFS, and several
-// of them were alive with a whole copy each.
-const FileSys::VirtualFile& AppLoader_DeconstructedRomDirectory::LooseRomFS() {
-    if (!romfs_resolved) {
-        romfs_resolved = true;
-        romfs = FindLooseRomFS(romfs_exefs_dir);
-    }
-    return romfs;
-}
-
 FileType AppLoader_DeconstructedRomDirectory::IdentifyType(const FileSys::VirtualFile& dir_file) {
     if (FileSys::IsDirectoryExeFS(dir_file->GetContainingDirectory())) {
         return FileType::DeconstructedRomDirectory;
@@ -431,7 +444,7 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
 
     // Loose-ExeFS loads bypass the NCA/NSP loaders, which are the ones that normally apply
     // LayeredFS to the RomFS; apply it here so mods in user/load/<titleid>/ work too.
-    if (LooseRomFS() != nullptr) {
+    if (GetRomFS() != nullptr) {
         const FileSys::PatchManager patch_manager(metadata.GetTitleID(),
                                                   system.GetFileSystemController(),
                                                   system.GetContentProvider());
@@ -529,8 +542,19 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
 
     if (standalone) {
         // Without this, fsp-srv SetCurrentProcess fails with ResultTargetNotFound.
+        title_id = metadata.GetTitleID();
+        // Loose-ExeFS loads bypass the NCA/NSP loaders, which are the ones that apply LayeredFS
+        // to the RomFS; apply it here so mods in load/<titleid>/ work too (no update is applied
+        // without a base NCA).
+        if (FileSys::VirtualFile base; ReadRomFS(base) == ResultStatus::Success) {
+            const FileSys::PatchManager patch_manager(title_id, system.GetFileSystemController(),
+                                                      system.GetContentProvider());
+            if (auto patched = patch_manager.PatchRomFS(nullptr, base); patched != nullptr) {
+                romfs = std::move(patched);
+            }
+        }
         system.GetFileSystemController().RegisterProcess(
-            process.GetProcessId(), metadata.GetTitleID(),
+            process.GetProcessId(), title_id,
             std::make_shared<FileSys::RomFSFactory>(*this, system.GetContentProvider(),
                                                     system.GetFileSystemController()));
     }
@@ -540,8 +564,16 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
             LoadParameters{metadata.GetMainThreadPriority(), metadata.GetMainThreadStackSize()}};
 }
 
+const FileSys::VirtualFile& AppLoader_DeconstructedRomDirectory::GetRomFS() {
+    if (!romfs_found) {
+        romfs_found = true;
+        romfs = FindLooseRomFS(romfs_exefs_dir);
+    }
+    return romfs;
+}
+
 ResultStatus AppLoader_DeconstructedRomDirectory::ReadRomFS(FileSys::VirtualFile& out_dir) {
-    if (LooseRomFS() == nullptr) {
+    if (GetRomFS() == nullptr) {
         return ResultStatus::ErrorNoRomFS;
     }
 

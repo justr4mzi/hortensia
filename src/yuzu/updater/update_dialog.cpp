@@ -374,6 +374,7 @@ bool UpdateDialog::DownloadTo(const QString& filename) {
             return false;
         }
 
+        sha256.addData(QByteArrayView{t_data, static_cast<qsizetype>(data_length)});
         return true;
     };
 
@@ -415,6 +416,26 @@ bool UpdateDialog::DownloadTo(const QString& filename) {
             tr("The downloaded file does not match the checksum GitHub published for it, so it "
                "was discarded. Try again later."));
         return false;
+    }
+
+    // GitHub lists the SHA-256 of every release file. A download that does not match it was
+    // damaged or altered on the way, so it is not kept.
+    if (!m_asset.sha256.empty()) {
+        const std::string actual = sha256.result().toHex().toStdString();
+        if (actual != m_asset.sha256) {
+            LOG_ERROR(Frontend, "{} has SHA-256 {}, but the release lists {}", m_asset.name,
+                      actual, m_asset.sha256);
+            file.cancelWriting();
+            QtCommon::Frontend::Critical(
+                tr("Failed to download file"),
+                tr("The downloaded %1 does not match the checksum GitHub lists for it, so it was "
+                   "not saved. Please try again.")
+                    .arg(QString::fromStdString(m_asset.name)));
+            return;
+        }
+    } else {
+        LOG_WARNING(Frontend, "The release lists no SHA-256 for {}, so it was not verified",
+                    m_asset.name);
     }
 
     if (!file.commit()) {

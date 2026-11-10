@@ -38,9 +38,11 @@ These options control dependencies.
 - `ENABLE_CUBEB` (ON) Enables the cubeb audio backend
   - This option is subject for removal.
 - `YUZU_TESTS` (ON) Compile tests - requires Catch2
+- `DYNARMIC_TESTS` (OFF) Compile dynarmic's tests (`dynarmic_tests`)
+  - `YUZU_TESTS` and `BUILD_TESTING` do not turn it on: pass it as well
 - `ENABLE_LTO` (OFF) Enable link-time optimization
-  - Not recommended on Windows
-  - UNIX may be better off appending `-flto=thin` to compiler args
+  - With clang (Linux, MinGW) this is ThinLTO (`-flto=thin` when compiling and linking) and needs `llvm-ar` and lld (`-fuse-ld=lld` in `CMAKE_EXE_LINKER_FLAGS`). The release builds use it with lld's cache, `-Wl,--thinlto-cache-dir=<dir>`, so a relink only recompiles the modules that changed
+  - With MSVC it is full LTO (`/GL`), which is slow to link
 - `USE_FASTER_LINKER` (OFF) Check if a faster linker is available
   - Not recommended outside of Linux
 - `YUZU_INSTALL_UDEV_RULES` (OFF) Install udev rules to enable hidraw access
@@ -80,8 +82,15 @@ The following options are desktop only.
 
 - `ENABLE_LIBUSB` (ON) Enable the use of the libusb input backend (HIGHLY RECOMMENDED)
 - `ENABLE_OPENGL` (ON) Enable the OpenGL graphics backend
-  - Unavailable on Windows/ARM64 and on Android
+  - Unavailable on Windows/ARM64, macOS and Android
   - You probably shouldn't turn this off.
+
+### Graphics
+
+- `ENABLE_LSFG` (ON) Enable frame generation (Lossless Scaling's LSFG and the built-in FSR 3 style frame generation)
+- `ENABLE_RESHADE` (ON) Enable ReShade FX post-processing effects
+- `ENABLE_NVIDIA_DLSS` (ON for Windows on x86-64, MSVC or MinGW) Enable NVIDIA DLSS through NVIDIA Streamline, whose libraries are loaded at run time from the user's PC
+  - `EGLANTINE_STREAMLINE_SDK` (path, empty) Streamline SDK directory for its headers; empty downloads them
 
 ### Qt
 

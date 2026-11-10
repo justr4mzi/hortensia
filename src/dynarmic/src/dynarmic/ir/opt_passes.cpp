@@ -544,6 +544,23 @@ static void A64GetSetElimination(IR::Block& block) {
                 ir.SetInsertionPointBefore(&*get_inst);
                 get_inst->ReplaceUsesWith(ir.LeastSignificantWord(IR::U64{info.register_value}));
             }
+        } else if (!info.register_value.IsEmpty()
+            && info.set_instruction_present
+            && tracking_type == TrackingType::X
+            && info.tracking_type == TrackingType::W) {
+            // SetW r1 -> GetX r1 reads the 32-bit value zero-extended (no store and reload). Only
+            // after a write: a W value from GetW r1 says nothing about the upper half.
+            if (info.register_value.IsImmediate()) {
+                ReplaceUsesWith(*get_inst, false, u32(info.register_value.GetImmediateAsU64()));
+            } else {
+                A64::IREmitter ir{block};
+                ir.SetInsertionPointBefore(&*get_inst);
+                const IR::U64 extended = ir.ZeroExtendWordToLong(IR::U32{info.register_value});
+                get_inst->ReplaceUsesWith(extended);
+                // Later reads of X get the same value; the SetW stays the register's last write.
+                info.register_value = extended;
+                info.tracking_type = TrackingType::X;
+            }
         } else {
             info = {};
             info.register_value = IR::Value(&*get_inst);
@@ -1008,6 +1025,42 @@ static void FoldZeroExtendXToLong(IR::Inst& inst) {
     inst.ReplaceUsesWith(IR::Value{value});
 }
 
+/// RotateRight(x, r) & (ones >> r) is x >> r: UBFM's LSR alias, which the translator emits as a
+/// rotate and a mask (and on x64 a 64-bit mask is a constant to load first).
+static void FoldRotateRightAndMaskToShift(IR::Block& block, IR::Inst& inst) {
+    if ((inst.GetOpcode() != Op::And32 && inst.GetOpcode() != Op::And64) || inst.HasAssociatedPseudoOperation()) {
+        return;
+    }
+    const bool is_32_bit = inst.GetOpcode() == Op::And32;
+    const IR::Value lhs = inst.GetArg(0), rhs = inst.GetArg(1);
+    if (lhs.IsImmediate() || !rhs.IsImmediate()) {
+        return;
+    }
+    IR::Inst* const rotate = lhs.GetInstRecursive();
+    if (rotate->GetOpcode() != (is_32_bit ? Op::BitRotateRight32 : Op::BitRotateRight64) || !rotate->GetArg(1).IsImmediate()) {
+        return;
+    }
+    if (is_32_bit && (!rotate->GetArg(2).IsImmediate() || rotate->GetArg(2).GetU1())) {
+        return;
+    }
+    const unsigned bits = is_32_bit ? 32 : 64;
+    const unsigned r = rotate->GetArg(1).GetU8();
+    if (r == 0 || r >= bits) {
+        return;
+    }
+    const u64 ones = is_32_bit ? u64(0xffffffff) : ~u64(0);
+    if (rhs.GetImmediateAsU64() != (ones >> r)) {
+        return;
+    }
+    IR::IREmitter ir{block};
+    ir.SetInsertionPointBefore(&inst);
+    if (is_32_bit) {
+        inst.ReplaceUsesWith(ir.LogicalShiftRight(IR::U32{rotate->GetArg(0)}, ir.Imm8(u8(r))));
+    } else {
+        inst.ReplaceUsesWith(ir.LogicalShiftRight(IR::U64{rotate->GetArg(0)}, ir.Imm8(u8(r))));
+    }
+}
+
 static void ConstantPropagation(IR::Block& block) {
     for (auto& inst : block.instructions) {
         auto const opcode = inst.GetOpcode();
@@ -1145,6 +1198,7 @@ static void ConstantPropagation(IR::Block& block) {
         case Op::And32:
         case Op::And64:
             FoldAND(inst, opcode == Op::And32);
+            FoldRotateRightAndMaskToShift(block, inst);
             break;
         case Op::Eor32:
         case Op::Eor64:

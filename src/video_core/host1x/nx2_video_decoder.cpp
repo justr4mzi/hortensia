@@ -149,6 +149,13 @@ Nx2VideoDecoder::Nx2VideoDecoder(std::string_view mime) : impl{std::make_unique<
     if (gpu) {
         impl->hardware.emplace();
         impl->hardware->InitializeForDecoder(*impl->context, *impl->decoder);
+    } else {
+        // 2560x1440 VP9 movies decoded below 60 fps on one thread, and the client aborts when no
+        // frame is ready. Frame threads add a few frames of latency, covered by the client's
+        // queued inputs.
+        AVCodecContext* codec_context = impl->context->GetCodecContext();
+        codec_context->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        codec_context->thread_count = 4;
     }
     impl->open = impl->context->OpenContext(*impl->decoder);
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -188,7 +195,7 @@ void Nx2VideoDecoder::Decode(std::span<const u8> data, u64 pts, std::vector<Nx2P
     std::memcpy(impl->packet.data(), data.data(), data.size());
 
     // Convert MP4/avcC length-prefixed NALUs to Annex-B start codes for FFmpeg if needed.
-    if (impl->name.find("avc") != std::string::npos || impl->name.find("264") != std::string::npos) {
+    if (impl->codec == NvdecCommon::VideoCodec::H264) {
         impl->h264_packets.Convert(std::span<u8>{impl->packet.data(), data.size()});
     }
 

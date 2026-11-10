@@ -136,15 +136,27 @@ void EmitX64::EmitTestBit(EmitContext& ctx, IR::Inst* inst) {
     ctx.reg_alloc.DefineValue(code, inst, result);
 }
 
-static void EmitConditionalSelect(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bitsize) {
+static void EmitConditionalSelect(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bitsize, bool nzcv_in_host_flags) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
-    const Xbyak::Reg32 nzcv = ctx.reg_alloc.ScratchGpr(code, HostLoc::RAX).cvt32();
+    const IR::Cond cond = args[0].GetImmediateCond();
+    // With the guest NZCV still in the host flags (as after LoadRequiredFlagsForCondFromRax, but
+    // with the carry not inverted for HI and LS), test them directly; loading the operands must not
+    // change the flags then (no xor for a zero).
+    const bool invert_carry = nzcv_in_host_flags && (cond == IR::Cond::HI || cond == IR::Cond::LS);
+    ctx.reg_alloc.SetPreserveHostFlags(nzcv_in_host_flags);
+    const Xbyak::Reg32 nzcv = nzcv_in_host_flags ? Xbyak::Reg32{} : ctx.reg_alloc.ScratchGpr(code, HostLoc::RAX).cvt32();
     const Xbyak::Reg then_ = ctx.reg_alloc.UseGpr(code, args[1]).changeBit(bitsize);
     const Xbyak::Reg else_ = ctx.reg_alloc.UseScratchGpr(code, args[2]).changeBit(bitsize);
+    ctx.reg_alloc.SetPreserveHostFlags(false);
 
-    code.mov(nzcv, dword[code.ABI_JIT_PTR + code.GetJitStateInfo().offsetof_cpsr_nzcv]);
-
-    code.LoadRequiredFlagsForCondFromRax(args[0].GetImmediateCond());
+    if (nzcv_in_host_flags) {
+        if (invert_carry) {
+            code.cmc();
+        }
+    } else {
+        code.mov(nzcv, dword[code.ABI_JIT_PTR + code.GetJitStateInfo().offsetof_cpsr_nzcv]);
+        code.LoadRequiredFlagsForCondFromRax(cond);
+    }
 
     switch (args[0].GetImmediateCond()) {
     case IR::Cond::EQ:
@@ -196,20 +208,23 @@ static void EmitConditionalSelect(BlockOfCode& code, EmitContext& ctx, IR::Inst*
     default:
         UNREACHABLE();
     }
+    if (invert_carry) {
+        code.cmc();  // the flags still hold the guest NZCV for what follows
+    }
 
     ctx.reg_alloc.DefineValue(code, inst, else_);
 }
 
 void EmitX64::EmitConditionalSelect32(EmitContext& ctx, IR::Inst* inst) {
-    EmitConditionalSelect(code, ctx, inst, 32);
+    EmitConditionalSelect(code, ctx, inst, 32, std::exchange(nzcv_in_host_flags, false));
 }
 
 void EmitX64::EmitConditionalSelect64(EmitContext& ctx, IR::Inst* inst) {
-    EmitConditionalSelect(code, ctx, inst, 64);
+    EmitConditionalSelect(code, ctx, inst, 64, std::exchange(nzcv_in_host_flags, false));
 }
 
 void EmitX64::EmitConditionalSelectNZCV(EmitContext& ctx, IR::Inst* inst) {
-    EmitConditionalSelect(code, ctx, inst, 32);
+    EmitConditionalSelect(code, ctx, inst, 32, std::exchange(nzcv_in_host_flags, false));
 }
 
 static void EmitExtractRegister(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bit_size) {
@@ -926,11 +941,40 @@ static void EmitAdd(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, size_t 
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     auto& carry_in = args[2];
 
+    if (bitsize == 64 && ctx.FoldedAddressOffset(IR::Value{inst})) {
+        // Only memory accesses use this sum, and they add the offset themselves.
+        ctx.reg_alloc.DefineValue(code, inst, args[0]);
+        return;
+    }
+
     // Consider using LEA.
     if (!carry_inst && !overflow_inst && !nzcv_inst && carry_in.IsImmediate() && !carry_in.GetImmediateU1()) {
         if (args[1].IsImmediate() && args[1].FitsInImmediateS32()) {
-            Xbyak::Reg const result = ctx.reg_alloc.UseScratchGpr(code, args[0]).changeBit(bitsize);
-            code.lea(result, code.ptr[result + args[1].GetImmediateS32()]);
+            const u64 imm = args[1].GetImmediateS32();
+            // A source still needed afterwards is added into another register, not copied first.
+            // The 64-bit address is truncated for a 32-bit result (no address-size prefix).
+            if (args[0].IsInGpr(ctx.reg_alloc) && !ctx.reg_alloc.IsLastUseInGpr(args[0])) {
+                const Xbyak::Reg64 source = ctx.reg_alloc.UseGpr(code, args[0]);
+                Xbyak::Reg const result = ctx.reg_alloc.ScratchGpr(code).changeBit(bitsize);
+                code.lea(result, code.ptr[source + imm]);
+                ctx.reg_alloc.DefineValue(code, inst, result);
+            } else {
+                const Xbyak::Reg64 result = ctx.reg_alloc.UseScratchGpr(code, args[0]);
+                code.lea(result.changeBit(bitsize), code.ptr[result + imm]);
+                ctx.reg_alloc.DefineValue(code, inst, result);
+            }
+        } else if (!args[1].IsImmediate() && args[0].IsInGpr(ctx.reg_alloc) && args[1].IsInGpr(ctx.reg_alloc) &&
+                   !ctx.reg_alloc.IsLastUseInGpr(args[0]) && !ctx.reg_alloc.IsLastUseInGpr(args[1])) {
+            const Xbyak::Reg64 op1 = ctx.reg_alloc.UseGpr(code, args[0]);
+            const Xbyak::Reg64 op2 = ctx.reg_alloc.UseGpr(code, args[1]);
+            Xbyak::Reg const result = ctx.reg_alloc.ScratchGpr(code).changeBit(bitsize);
+            code.lea(result, code.ptr[op1 + op2]);
+            ctx.reg_alloc.DefineValue(code, inst, result);
+        } else if (!args[1].IsImmediate() && ctx.reg_alloc.IsLastUseInGpr(args[1]) && !ctx.reg_alloc.IsLastUseInGpr(args[0])) {
+            // Commutative: add into the operand that dies here.
+            const Xbyak::Reg64 result = ctx.reg_alloc.UseScratchGpr(code, args[1]);
+            const Xbyak::Reg64 op1 = ctx.reg_alloc.UseGpr(code, args[0]);
+            code.lea(result.changeBit(bitsize), code.ptr[result + op1]);
             ctx.reg_alloc.DefineValue(code, inst, result);
         } else {
             Xbyak::Reg const result = ctx.reg_alloc.UseScratchGpr(code, args[0]).changeBit(bitsize);
@@ -941,12 +985,15 @@ static void EmitAdd(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, size_t 
         return;
     }
 
-    const Xbyak::Reg64 nzcv = DoNZCV(code, ctx.reg_alloc, nzcv_inst);
+    // A GetNZCVFromOp without uses wants the NZCV in the host flags only (see EmitGetNZCVFromOp).
+    const bool nzcv_flags_only = nzcv_inst && !nzcv_inst->HasUses();
+    const Xbyak::Reg64 nzcv = DoNZCV(code, ctx.reg_alloc, nzcv_flags_only ? nullptr : nzcv_inst);
     const Xbyak::Reg result = ctx.reg_alloc.UseScratchGpr(code, args[0]).changeBit(bitsize);
     const Xbyak::Reg8 carry = DoCarry(code, ctx.reg_alloc, carry_in, carry_inst);
     const Xbyak::Reg8 overflow = overflow_inst ? ctx.reg_alloc.ScratchGpr(code).cvt8() : Xbyak::Reg8{-1};
 
-    if (args[1].IsImmediate() && args[1].GetType() == IR::Type::U32) {
+    // A 64-bit immediate goes in the instruction when it is a sign-extended imm32.
+    if (args[1].IsImmediate() && (args[1].GetType() == IR::Type::U32 || args[1].FitsInImmediateS32())) {
         const u64 op_arg = args[1].GetImmediateU64();
         if (carry_in.IsImmediate()) {
             if (carry_in.GetImmediateU1()) {
@@ -981,7 +1028,7 @@ static void EmitAdd(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, size_t 
         }
     }
 
-    if (nzcv_inst) {
+    if (nzcv_inst && !nzcv_flags_only) {
         code.lahf();
         code.seto(code.al);
         ctx.reg_alloc.DefineValue(code, nzcv_inst, nzcv);
@@ -1005,7 +1052,9 @@ void EmitX64::EmitAdd64(EmitContext& ctx, IR::Inst* inst) {
     EmitAdd(code, ctx, inst, 64);
 }
 
-static void EmitSub(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bitsize) {
+// Returns whether the host flags are left with CF the borrow (the guest's C inverted) for a
+// GetNZCVFromOp that wants the host flags only.
+static bool EmitSub(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bitsize) {
     const auto carry_inst = inst->GetAssociatedPseudoOperation(IR::Opcode::GetCarryFromOp);
     const auto overflow_inst = inst->GetAssociatedPseudoOperation(IR::Opcode::GetOverflowFromOp);
     const auto nzcv_inst = inst->GetAssociatedPseudoOperation(IR::Opcode::GetNZCVFromOp);
@@ -1022,10 +1071,12 @@ static void EmitSub(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bit
         code.lea(result, code.ptr[op1 - args[1].GetImmediateS32()]);
 
         ctx.reg_alloc.DefineValue(code, inst, result);
-        return;
+        return false;
     }
 
-    const Xbyak::Reg64 nzcv = DoNZCV(code, ctx.reg_alloc, nzcv_inst);
+    // A GetNZCVFromOp without uses wants the NZCV in the host flags only (see EmitGetNZCVFromOp).
+    const bool nzcv_flags_only = nzcv_inst && !nzcv_inst->HasUses() && !carry_inst && !overflow_inst;
+    const Xbyak::Reg64 nzcv = DoNZCV(code, ctx.reg_alloc, nzcv_flags_only ? nullptr : nzcv_inst);
     const Xbyak::Reg result = (is_cmp ? ctx.reg_alloc.UseGpr(code, args[0]) : ctx.reg_alloc.UseScratchGpr(code, args[0])).changeBit(bitsize);
     const Xbyak::Reg8 carry = DoCarry(code, ctx.reg_alloc, carry_in, carry_inst);
     const Xbyak::Reg8 overflow = overflow_inst ? ctx.reg_alloc.ScratchGpr(code).cvt8() : Xbyak::Reg8{-1};
@@ -1034,17 +1085,19 @@ static void EmitSub(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bit
 
     bool invert_output_carry = true;
 
+    // A 64-bit immediate goes in the instruction when it is a sign-extended imm32 (so is its NOT).
+    const bool imm_operand = args[1].IsImmediate() && (args[1].GetType() == IR::Type::U32 || args[1].FitsInImmediateS32());
     if (is_cmp) {
-        if (args[1].IsImmediate() && args[1].GetType() == IR::Type::U32) {
-            const u32 op_arg = args[1].GetImmediateU32();
+        if (imm_operand) {
+            const u32 op_arg = u32(args[1].GetImmediateU64());
             code.cmp(result, op_arg);
         } else {
             OpArg op_arg = ctx.reg_alloc.UseOpArg(code, args[1]);
             op_arg.setBit(bitsize);
             code.cmp(result, *op_arg);
         }
-    } else if (args[1].IsImmediate() && args[1].GetType() == IR::Type::U32) {
-        const u32 op_arg = args[1].GetImmediateU32();
+    } else if (imm_operand) {
+        const u32 op_arg = u32(args[1].GetImmediateU64());
         if (carry_in.IsImmediate()) {
             if (carry_in.GetImmediateU1()) {
                 code.sub(result, op_arg);
@@ -1074,7 +1127,7 @@ static void EmitSub(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bit
         }
     }
 
-    if (nzcv_inst) {
+    if (nzcv_inst && !nzcv_flags_only) {
         if (invert_output_carry) {
             code.cmc();
         }
@@ -1097,14 +1150,15 @@ static void EmitSub(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bit
     if (!is_cmp) {
         ctx.reg_alloc.DefineValue(code, inst, result);
     }
+    return nzcv_flags_only && invert_output_carry;
 }
 
 void EmitX64::EmitSub32(EmitContext& ctx, IR::Inst* inst) {
-    EmitSub(code, ctx, inst, 32);
+    host_carry_is_borrow = EmitSub(code, ctx, inst, 32);
 }
 
 void EmitX64::EmitSub64(EmitContext& ctx, IR::Inst* inst) {
-    EmitSub(code, ctx, inst, 64);
+    host_carry_is_borrow = EmitSub(code, ctx, inst, 64);
 }
 
 void EmitX64::EmitMul32(EmitContext& ctx, IR::Inst* inst) {
@@ -1483,8 +1537,18 @@ void EmitX64::EmitSignExtendWordToLong(EmitContext& ctx, IR::Inst* inst) {
     ctx.reg_alloc.DefineValue(code, inst, result);
 }
 
+// A source already zero-extended in its GPR is the result as it is. (Only in a GPR: a spilled
+// 32-bit value has no defined upper half in its stack slot.)
+static bool ZeroExtendIsNoOp(EmitContext& ctx, IR::Inst* inst, Argument& arg) {
+    return IsZeroExtendedResult(inst->GetArg(0)) && arg.IsInGpr(ctx.reg_alloc);
+}
+
 void EmitX64::EmitZeroExtendByteToWord(EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    if (ZeroExtendIsNoOp(ctx, inst, args[0])) {
+        ctx.reg_alloc.DefineValue(code, inst, args[0]);
+        return;
+    }
     const Xbyak::Reg64 result = ctx.reg_alloc.UseScratchGpr(code, args[0]);
     code.movzx(result.cvt32(), result.cvt8());
     ctx.reg_alloc.DefineValue(code, inst, result);
@@ -1492,6 +1556,10 @@ void EmitX64::EmitZeroExtendByteToWord(EmitContext& ctx, IR::Inst* inst) {
 
 void EmitX64::EmitZeroExtendHalfToWord(EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    if (ZeroExtendIsNoOp(ctx, inst, args[0])) {
+        ctx.reg_alloc.DefineValue(code, inst, args[0]);
+        return;
+    }
     const Xbyak::Reg64 result = ctx.reg_alloc.UseScratchGpr(code, args[0]);
     code.movzx(result.cvt32(), result.cvt16());
     ctx.reg_alloc.DefineValue(code, inst, result);
@@ -1509,6 +1577,23 @@ void EmitX64::EmitZeroExtendHalfToLong(EmitContext& ctx, IR::Inst* inst) {
 
 void EmitX64::EmitZeroExtendWordToLong(EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    if (ZeroExtendIsNoOp(ctx, inst, args[0])) {
+        ctx.reg_alloc.DefineValue(code, inst, args[0]);
+        return;
+    }
+    if (scalars_stay_in_xmm && args[0].IsInXmm(ctx.reg_alloc) && code.HasHostFeature(HostFeature::SSE41)) {
+        // Lane 0 of a vector is in an XMM register with the other lanes cleared already
+        // (EmitVectorGetElement32).
+        if (!inst->GetArg(0).IsImmediate() && inst->GetArg(0).GetInst()->GetOpcode() == IR::Opcode::VectorGetElement32) {
+            ctx.reg_alloc.DefineValue(code, inst, args[0]);
+            return;
+        }
+        // A float result stays in its XMM register: lane 0 kept, the others cleared.
+        const Xbyak::Xmm result = ctx.reg_alloc.UseScratchXmm(code, args[0]);
+        code.insertps(result, result, 0b0000'1110);
+        ctx.reg_alloc.DefineValue(code, inst, result);
+        return;
+    }
     const Xbyak::Reg64 result = ctx.reg_alloc.UseScratchGpr(code, args[0]);
     code.mov(result.cvt32(), result.cvt32());  // x64 zeros upper 32 bits on a 32-bit move
     ctx.reg_alloc.DefineValue(code, inst, result);
@@ -1516,6 +1601,18 @@ void EmitX64::EmitZeroExtendWordToLong(EmitContext& ctx, IR::Inst* inst) {
 
 void EmitX64::EmitZeroExtendLongToQuad(EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    if (scalars_stay_in_xmm && !inst->GetArg(0).IsImmediate() && args[0].IsInXmm(ctx.reg_alloc)) {
+        // Already in an XMM register with the upper quadword cleared (EmitZeroExtendWordToLong's
+        // insertps, EmitVectorGetElement64's movq): the same register.
+        switch (inst->GetArg(0).GetInst()->GetOpcode()) {
+        case IR::Opcode::ZeroExtendWordToLong:
+        case IR::Opcode::VectorGetElement64:
+            ctx.reg_alloc.DefineValue(code, inst, args[0]);
+            return;
+        default:
+            break;
+        }
+    }
     if (args[0].IsInGpr(ctx.reg_alloc)) {
         const Xbyak::Reg64 source = ctx.reg_alloc.UseGpr(code, args[0]);
         const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm(code);

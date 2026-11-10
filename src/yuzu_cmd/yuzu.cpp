@@ -5,14 +5,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
+#include <thread>
 #include <atomic>
 #include <iterator>
 #include <fstream>
 #include <vector>
 #include <cstdlib>
 #include <chrono>
-#include <cstdio>
 #include <csignal>
+#include <cstdio>
+#include <exception>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -37,6 +40,7 @@
 #include "common/scm_rev.h"
 #include "common/settings.h"
 #include "common/string_util.h"
+#include "common/x64/cpu_requirements.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/cpu_manager.h"
@@ -71,6 +75,8 @@
 #ifdef _WIN32
 // windows.h needs to be included before shellapi.h
 #include <windows.h>
+#include <dbghelp.h>
+#include <tlhelp32.h>
 #include <shellapi.h>
 #include "common/windows/timer_resolution.h"
 #endif
@@ -150,6 +156,244 @@ static LONG WINAPI WriteCrashDump(EXCEPTION_POINTERS* exception) {
                      path, error);
     }
     return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// With EDEN_NX2_CRASH_DUMP set, also report each C++ exception when it is thrown: its type,
+// what() for a std::exception, and the stack symbolized from the PDBs. An exception that escapes
+// a thread ends the process through std::terminate without reaching WriteCrashDump.
+static LONG WINAPI ReportCxxThrow(EXCEPTION_POINTERS* exception) {
+    constexpr DWORD MsvcCxxException = 0xe06d7363;
+    const EXCEPTION_RECORD& record = *exception->ExceptionRecord;
+    if (record.ExceptionCode != MsvcCxxException || record.NumberParameters < 4) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    static std::atomic<int> reported{};
+    if (reported.fetch_add(1) >= 32) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    static std::mutex mutex;
+    std::scoped_lock lock{mutex};
+    // x64 throw metadata is image-relative: ThrowInfo {attributes, unwind, forward_compat,
+    // catchable_types}; CatchableType {properties, type, mdisp, pdisp, vdisp, size, copy};
+    // TypeDescriptor {vftable, spare, name}.
+    const auto base = static_cast<uintptr_t>(record.ExceptionInformation[3]);
+    const auto* object = reinterpret_cast<const u8*>(record.ExceptionInformation[1]);
+    const auto* throw_info = reinterpret_cast<const s32*>(record.ExceptionInformation[2]);
+    std::fprintf(stderr, "C++ exception thrown on thread %lu:", GetCurrentThreadId());
+    const char* message = nullptr;
+    if (throw_info != nullptr && base != 0) {
+        const auto* types = reinterpret_cast<const s32*>(base + throw_info[3]);
+        for (s32 i = 0; i < types[0]; ++i) {
+            const auto* type = reinterpret_cast<const s32*>(base + types[1 + i]);
+            const char* name = reinterpret_cast<const char*>(base + type[1]) + 2 * sizeof(void*);
+            std::fprintf(stderr, " %s", name);
+            if (std::strcmp(name, ".?AVexception@std@@") == 0 && object != nullptr) {
+                message = reinterpret_cast<const std::exception*>(object + type[2])->what();
+            }
+        }
+    }
+    std::fprintf(stderr, "\n  what(): %s\n", message ? message : "(not a std::exception)");
+    using SymSetOptionsFn = DWORD(WINAPI*)(DWORD);
+    using SymInitializeFn = BOOL(WINAPI*)(HANDLE, PCSTR, BOOL);
+    using SymFromAddrFn = BOOL(WINAPI*)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+    using SymGetLineFn = BOOL(WINAPI*)(HANDLE, DWORD64, PDWORD, PIMAGEHLP_LINE64);
+    static const HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+    static const auto sym_from_addr =
+        dbghelp ? reinterpret_cast<SymFromAddrFn>(GetProcAddress(dbghelp, "SymFromAddr")) : nullptr;
+    static const auto sym_get_line = dbghelp ? reinterpret_cast<SymGetLineFn>(
+                                                   GetProcAddress(dbghelp, "SymGetLineFromAddr64"))
+                                             : nullptr;
+    static const bool symbols = [] {
+        if (dbghelp == nullptr) return false;
+        const auto set_options = reinterpret_cast<SymSetOptionsFn>(GetProcAddress(dbghelp, "SymSetOptions"));
+        const auto initialize = reinterpret_cast<SymInitializeFn>(GetProcAddress(dbghelp, "SymInitialize"));
+        if (set_options == nullptr || initialize == nullptr) return false;
+        set_options(SYMOPT_UNDNAME | SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS);
+        return initialize(GetCurrentProcess(), nullptr, TRUE) != FALSE;
+    }();
+    void* frames[24];
+    const USHORT count = RtlCaptureStackBackTrace(1, 24, frames, nullptr);
+    for (USHORT i = 0; i < count; ++i) {
+        alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256]{};
+        auto* symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
+        symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbol->MaxNameLen = 255;
+        DWORD64 displacement = 0;
+        const auto address = reinterpret_cast<DWORD64>(frames[i]);
+        if (symbols && sym_from_addr && sym_from_addr(GetCurrentProcess(), address, &displacement, symbol)) {
+            IMAGEHLP_LINE64 line{};
+            line.SizeOfStruct = sizeof(line);
+            DWORD line_displacement = 0;
+            if (sym_get_line && sym_get_line(GetCurrentProcess(), address, &line_displacement, &line)) {
+                std::fprintf(stderr, "  #%u %s (%s:%lu)\n", i, symbol->Name, line.FileName, line.LineNumber);
+            } else {
+                std::fprintf(stderr, "  #%u %s+%#llx\n", i, symbol->Name,
+                             static_cast<unsigned long long>(displacement));
+            }
+        } else {
+            PrintCodeAddress("frame", frames[i]);
+        }
+    }
+    std::fflush(stderr);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
+#ifdef _WIN32
+// EDEN_NX2_HANG_DUMP=<seconds>: if no frame is presented for that long, write every thread's
+// stack to stderr once (a hang's who-waits-on-whom). Each thread's chain is captured while it is
+// suspended with RtlVirtualUnwind into preallocated arrays only (a suspended thread may hold the
+// heap lock); symbols are looked up after all threads are running again.
+static void DumpAllThreadStacks(u64 presents) {
+    struct Captured {
+        DWORD id;
+        std::wstring name;
+        std::array<DWORD64, 32> pcs{};
+        size_t count{};
+    };
+    std::vector<Captured> threads;
+    threads.reserve(512);
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
+        if (entry.th32OwnerProcessID == GetCurrentProcessId() &&
+            entry.th32ThreadID != GetCurrentThreadId() && threads.size() < threads.capacity()) {
+            threads.push_back(Captured{entry.th32ThreadID});
+        }
+    }
+    CloseHandle(snapshot);
+    for (auto& thread : threads) {
+        const HANDLE handle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+                                             THREAD_QUERY_LIMITED_INFORMATION,
+                                         FALSE, thread.id);
+        if (handle == nullptr) {
+            continue;
+        }
+        PWSTR description = nullptr;
+        if (SUCCEEDED(GetThreadDescription(handle, &description)) && description != nullptr) {
+            thread.name = description;
+            LocalFree(description);
+        }
+        if (SuspendThread(handle) != static_cast<DWORD>(-1)) {
+            CONTEXT context{};
+            context.ContextFlags = CONTEXT_FULL;
+            if (GetThreadContext(handle, &context)) {
+                for (; thread.count < thread.pcs.size() && context.Rip != 0; ++thread.count) {
+                    thread.pcs[thread.count] = context.Rip;
+                    DWORD64 image_base = 0;
+                    auto* function = RtlLookupFunctionEntry(context.Rip, &image_base, nullptr);
+                    if (function == nullptr) {
+                        // A leaf (or code without unwind data, such as JIT output): return address
+                        // at the top of the stack.
+                        context.Rip = *reinterpret_cast<const DWORD64*>(context.Rsp);
+                        context.Rsp += 8;
+                    } else {
+                        PVOID handler_data = nullptr;
+                        DWORD64 establisher = 0;
+                        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, context.Rip, function, &context,
+                                         &handler_data, &establisher, nullptr);
+                    }
+                }
+            }
+            ResumeThread(handle);
+        }
+        CloseHandle(handle);
+    }
+    using SymSetOptionsFn = DWORD(WINAPI*)(DWORD);
+    using SymInitializeFn = BOOL(WINAPI*)(HANDLE, PCSTR, BOOL);
+    using SymFromAddrFn = BOOL(WINAPI*)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+    const HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+    const auto sym_from_addr =
+        dbghelp ? reinterpret_cast<SymFromAddrFn>(GetProcAddress(dbghelp, "SymFromAddr")) : nullptr;
+    if (dbghelp != nullptr) {
+        const auto set_options = reinterpret_cast<SymSetOptionsFn>(GetProcAddress(dbghelp, "SymSetOptions"));
+        const auto initialize = reinterpret_cast<SymInitializeFn>(GetProcAddress(dbghelp, "SymInitialize"));
+        if (set_options && initialize) {
+            set_options(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+            initialize(GetCurrentProcess(), nullptr, TRUE);
+        }
+    }
+    std::fprintf(stderr, "Hang: no frame presented for %s s (presents so far %llu); thread stacks:\n",
+                 std::getenv("EDEN_NX2_HANG_DUMP"), static_cast<unsigned long long>(presents));
+    for (const auto& thread : threads) {
+        std::fprintf(stderr, "thread %lu \"%ls\"\n", thread.id, thread.name.c_str());
+        for (size_t i = 0; i < thread.count; ++i) {
+            alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256]{};
+            auto* symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
+            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+            symbol->MaxNameLen = 255;
+            DWORD64 displacement = 0;
+            if (sym_from_addr && sym_from_addr(GetCurrentProcess(), thread.pcs[i], &displacement, symbol)) {
+                std::fprintf(stderr, "  #%zu %s+%#llx\n", i, symbol->Name,
+                             static_cast<unsigned long long>(displacement));
+            } else {
+                std::fprintf(stderr, "  #%zu %#llx\n", i, static_cast<unsigned long long>(thread.pcs[i]));
+            }
+        }
+    }
+    std::fflush(stderr);
+}
+
+static void StartHangWatchdog() {
+    const char* text = std::getenv("EDEN_NX2_HANG_DUMP");
+    const long long seconds = text ? std::strtoll(text, nullptr, 10) : 0;
+    if (seconds <= 0) {
+        return;
+    }
+    std::thread([seconds] {
+        u64 last = ~u64{};
+        auto since = std::chrono::steady_clock::now();
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds{1});
+            const u64 now = Core::g_nx2_present_count.load(std::memory_order_relaxed);
+            if (now != last) {
+                last = now;
+                since = std::chrono::steady_clock::now();
+            } else if (std::chrono::steady_clock::now() - since >= std::chrono::seconds{seconds}) {
+                DumpAllThreadStacks(now);
+                return;
+            }
+        }
+    }).detach();
+}
+
+// abort() and std::terminate end the process with a fail-fast that skips the exception filter:
+// with EDEN_NX2_CRASH_DUMP set, print the uncaught exception (if any) and the stack first.
+static void PrintAbortStack(const char* reason) {
+    std::fprintf(stderr, "%s on thread %lu\n", reason, GetCurrentThreadId());
+    void* frames[48];
+    const USHORT count = RtlCaptureStackBackTrace(0, 48, frames, nullptr);
+    for (USHORT i = 0; i < count; ++i) {
+        PrintCodeAddress("frame", frames[i]);
+    }
+    std::fflush(stderr);
+}
+
+static void InstallAbortReporting() {
+    if (std::getenv("EDEN_NX2_CRASH_DUMP") == nullptr) {
+        return;
+    }
+    std::set_terminate([] {
+        if (const std::exception_ptr current = std::current_exception()) {
+            try {
+                std::rethrow_exception(current);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "Uncaught exception: %s\n", e.what());
+            } catch (...) {
+                std::fprintf(stderr, "Uncaught non-standard exception\n");
+            }
+        }
+        PrintAbortStack("std::terminate");
+        std::_Exit(3);
+    });
+    std::signal(SIGABRT, [](int) {
+        PrintAbortStack("abort()");
+        std::_Exit(3);
+    });
 }
 #endif
 
@@ -413,7 +657,9 @@ static bool UnpackNup(const std::string& source, const std::string& output) {
     fmt::print(stderr, "\n");
     switch (result) {
     case FileSys::Nup::ExtractResult::Success:
-        fmt::print(stderr, "Extracted to {} in {:.1f} s\n", out_dir.string(), seconds);
+        // ExtractNup checks every file against its stored SHA-256 as it writes it.
+        fmt::print(stderr, "Extracted to {} in {:.1f} s, every file verified\n", out_dir.string(),
+                   seconds);
         return true;
     case FileSys::Nup::ExtractResult::Cancelled:
         fmt::print(stderr, "Cancelled\n");
@@ -546,8 +792,14 @@ static bool BuildWarm(Core::System& system, int argc, char** argv) {
 }
 
 extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
+    Common::X64::CheckCpuRequirements();
 #ifdef _WIN32
     SetUnhandledExceptionFilter(WriteCrashDump);
+    if (std::getenv("EDEN_NX2_CRASH_DUMP") != nullptr) {
+        AddVectoredExceptionHandler(1, ReportCxxThrow);
+    }
+    StartHangWatchdog();
+    InstallAbortReporting();
 #endif
     // SDL calls SDL_AppIterate back to back by default, which kept a host core at 100% polling
     // input; 240 Hz is plenty for input and the key script.
@@ -556,9 +808,26 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     *appstate = state;
 
 #ifdef _WIN32
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        freopen("CONOUT$", "wb", stdout);
-        freopen("CONOUT$", "wb", stderr);
+    // A GUI-subsystem program has no console of its own, so borrow the terminal's for the log. A
+    // stream the parent redirected (eden-cli > log.txt, tools/nx2/run_scenario.py's log files) keeps
+    // its redirection: reopening it on CONOUT$ would send the log to the parent's console instead.
+    const auto redirected = [](DWORD which) {
+        const HANDLE handle = GetStdHandle(which);
+        if (handle == nullptr || handle == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+        const DWORD type = GetFileType(handle);
+        return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
+    };
+    const bool out_redirected = redirected(STD_OUTPUT_HANDLE);
+    const bool err_redirected = redirected(STD_ERROR_HANDLE);
+    if (!(out_redirected && err_redirected) && AttachConsole(ATTACH_PARENT_PROCESS)) {
+        if (!out_redirected) {
+            freopen("CONOUT$", "wb", stdout);
+        }
+        if (!err_redirected) {
+            freopen("CONOUT$", "wb", stderr);
+        }
     }
     // Raise the CRT's open-file limit like the Qt frontend: loose RomFS folders keep thousands of
     // files open through the VFS cache.
@@ -777,7 +1046,8 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     // QLaunch launched applications (should) now reload shader cache.
     static std::mutex shader_cache_reload_mutex;
-    state->system.RegisterApplicationChangedCallback([&state](u64 changed_program_id) {
+    // By value: state is a local of SDL_AppInit, the callback runs long after it returns.
+    state->system.RegisterApplicationChangedCallback([state](u64 changed_program_id) {
         if (!Settings::values.use_disk_shader_cache.GetValue()) {
             return;
         }

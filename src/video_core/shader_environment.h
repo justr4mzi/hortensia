@@ -75,6 +75,7 @@ public:
     [[nodiscard]] std::optional<u64> Analyze();
 
     void SetCachedSize(size_t size_bytes);
+    [[nodiscard]] bool RequiresRasterizerClip() const;
 
     [[nodiscard]] size_t CachedSizeWords() const noexcept;
 
@@ -137,12 +138,17 @@ protected:
     Tegra::Texture::TICEntry ReadTextureInfo(GPUVAddr tic_addr, u32 tic_limit,
                                              bool via_header_index, u32 raw);
 
+    /// The sampler (TSC entry) of a texture handle, none when it is past the pool or unmapped.
+    std::optional<Tegra::Texture::TSCEntry> ReadSamplerInfo(GPUVAddr tsc_addr, u32 tsc_limit,
+                                                            bool via_header_index, u32 raw);
+
     Tegra::MemoryManager* gpu_memory{};
     GPUVAddr program_base{};
 
     std::vector<u64> code;
     ::Common::unordered_map<u32, Shader::TextureType> texture_types;
     ::Common::unordered_map<u32, Shader::TexturePixelFormat> texture_pixel_formats;
+    ::Common::unordered_map<u32, u32> texture_sampler_states;
     ::Common::unordered_map<u64, u32> cbuf_values;
     ::Common::unordered_map<u64, u8> storage_pointer_types; ///< IsCbufStorageBufferPointer answers
     ::Common::unordered_map<u64, Shader::ReplaceConstant> cbuf_replacements;
@@ -186,6 +192,8 @@ public:
 
     bool IsTexturePixelFormatInteger(u32 handle) override;
 
+    u32 ReadTextureSamplerState(u32 handle) override;
+
     u32 ReadViewportTransformState() override;
 
     std::optional<Shader::ReplaceConstant> GetReplaceConstBuffer(u32 bank, u32 offset) override;
@@ -213,6 +221,8 @@ public:
     Shader::TexturePixelFormat ReadTexturePixelFormat(u32 handle) override;
 
     bool IsTexturePixelFormatInteger(u32 handle) override;
+
+    u32 ReadTextureSamplerState(u32 handle) override;
 
     u32 ReadViewportTransformState() override;
 
@@ -286,6 +296,8 @@ public:
 
     [[nodiscard]] bool IsTexturePixelFormatInteger(u32 handle) override;
 
+    [[nodiscard]] u32 ReadTextureSamplerState(u32 handle) override;
+
     [[nodiscard]] u32 ReadViewportTransformState() override;
 
     [[nodiscard]] u32 LocalMemorySize() const override;
@@ -320,6 +332,7 @@ private:
     std::vector<u64> code;
     ::Common::unordered_map<u32, Shader::TextureType> texture_types;
     ::Common::unordered_map<u32, Shader::TexturePixelFormat> texture_pixel_formats;
+    ::Common::unordered_map<u32, u32> texture_sampler_states;
     ::Common::unordered_map<u64, u32> cbuf_values;
     ::Common::unordered_map<u64, u8> storage_pointer_types;
     ::Common::unordered_map<u64, Shader::ReplaceConstant> cbuf_replacements;

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <optional>
+#include <sstream>
 #include <boost/algorithm/string/replace.hpp>
 
 #include <fmt/format.h>
@@ -79,6 +80,26 @@ std::vector<Asset> Release::GetPlatformAssets(std::string_view platform,
     return {};
 }
 
+std::optional<Asset> Release::GetPlatformAsset() const {
+    // Release files are named eglantine-<platform> plus the package's extension; each build
+    // updates to the package it came in.
+#if defined(_WIN32)
+    static constexpr std::array<std::string_view, 1> extensions{".zip"};
+#elif defined(__ANDROID__)
+    static constexpr std::array<std::string_view, 1> extensions{".apk"};
+#elif defined(__linux__)
+    // The AppImage runtime sets APPIMAGE. The tar.gz build runs on the system's Qt instead, so
+    // its users get the tar.gz again.
+    static constexpr std::array<std::string_view, 2> appimage{".AppImage", ".tar.gz"};
+    static constexpr std::array<std::string_view, 2> tarball{".tar.gz", ".AppImage"};
+    const auto extensions =
+        std::getenv("APPIMAGE") != nullptr ? std::span{appimage} : std::span{tarball};
+#else
+    static constexpr std::array<std::string_view, 2> extensions{".zip", ".tar.gz"};
+#endif
+    return FindPlatformAsset(assets, Common::g_build_release_platform, extensions);
+}
+
 static inline u64 ParseIsoTimestamp(const std::string& iso) {
     if (iso.empty())
         return 0;
@@ -108,7 +129,7 @@ std::optional<Release> Release::FromJson(const nlohmann::json& json, const std::
     if (json.value("draft", false))
         return std::nullopt;
 
-    rel.tag = json.value("tag_name", std::string{});
+    rel.tag = StringField(json, "tag_name");
     if (rel.tag.empty())
         return std::nullopt;
 
@@ -116,8 +137,11 @@ std::optional<Release> Release::FromJson(const nlohmann::json& json, const std::
                     ? json["name"].get<std::string>() : rel.tag;
     rel.id = json.value("id", std::hash<std::string>{}(rel.title));
 
-    rel.published = ParseIsoTimestamp(json.value("published_at", std::string{}));
-    rel.prerelease = json.value("prerelease", false);
+    const auto id_field = json.find("id");
+    rel.id = id_field != json.end() && id_field->is_number_integer()
+                 ? id_field->get<u64>()
+                 : static_cast<u64>(std::hash<std::string>{}(rel.title));
+    rel.commit = StringField(json, "target_commitish");
 
     auto body = json.contains("body") && json["body"].is_string()
                     ? json["body"].get<std::string>() : rel.title;
@@ -174,7 +198,7 @@ std::optional<Release> Release::FromJson(const std::string_view& json, const std
         LOG_WARNING(Common, "Failed to parse JSON: {}", e.what());
     }
 
-    return {};
+    return std::nullopt;
 }
 
 std::vector<Release> Release::ListFromJson(const nlohmann::json& json, const std::string& host,
@@ -207,6 +231,13 @@ RequestResult Fetch(const std::string& url, const std::string& path) {
         constexpr std::size_t timeout_seconds = 15;
 
         std::unique_ptr<httplib::Client> client = std::make_unique<httplib::Client>(url);
+        // A URL httplib cannot parse (a bad port) leaves the client without a connection, and
+        // configuring it would dereference that.
+        if (!client->is_valid()) {
+            LOG_ERROR(Common, "Invalid URL {}{}", url, path);
+            return {};
+        }
+
         client->set_connection_timeout(timeout_seconds);
         client->set_read_timeout(timeout_seconds);
         client->set_write_timeout(timeout_seconds);
@@ -214,11 +245,6 @@ RequestResult Fetch(const std::string& url, const std::string& path) {
 #ifdef YUZU_BUNDLED_OPENSSL
         client->load_ca_cert_store(kCert, sizeof(kCert));
 #endif
-
-        if (client == nullptr) {
-            LOG_ERROR(Common, "Invalid URL {}{}", url, path);
-            return {};
-        }
 
         httplib::Request request{
             .method = "GET",

@@ -31,6 +31,7 @@
 #include "video_core/dirty_flags.h"
 #include "video_core/gpu_split.h"
 #include "video_core/memory_manager.h"
+#include "video_core/gpu_split.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/macro.h"
 #include "video_core/query_dma.h"
@@ -1405,13 +1406,13 @@ void MacroEngine::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, u
                     ++split_unexpected_writes;
                 }
                 if (address == 0x556) {
-                    // SET_RENDER_ENABLE_OVERRIDE: 0 use the render-enable condition, 1 always,
-                    // 2 never. Log a histogram every 20000 macro writes (pop-in diagnostics).
+                    // SET_RENDER_ENABLE_C (render_enable.mode): 0 false, 1 true, 2 conditional,
+                    // 3+ compare. Log a histogram every 20000 macro writes (pop-in diagnostics).
                     static std::array<u64, 4> modes{};
                     static u64 enable_writes{};
                     ++modes[value & 3];
                     if (++enable_writes % 20000 == 0) {
-                        LOG_INFO(HW_GPU, "Native MME render enable modes: use {} always {} never {} other {}",
+                        LOG_INFO(HW_GPU, "Native MME render enable modes: false {} true {} conditional {} compare {}",
                                  modes[0], modes[1], modes[2], modes[3]);
                     }
                 }
@@ -1522,8 +1523,9 @@ void MacroEngine::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, u
                 emit);
             if (!result.success) {
                 native_execution_failed = true;
-                LOG_ERROR(HW_GPU, "Native MME (JIT) failed: start={:#x}, consumed={}/{}, error={}",
-                          method, result.consumed, parameters.size(), result.error);
+                LOG_ERROR(HW_GPU,
+                          "Native MME (JIT) failed: start={:#x}, pc={:#x}, consumed={}/{}, error={}",
+                          method, result.pc, result.consumed, parameters.size(), result.error);
             }
             return;
         }

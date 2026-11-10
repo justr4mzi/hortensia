@@ -60,6 +60,7 @@ private:
 
 private:
     friend class RealVfsFile;
+    friend struct RealVfsCacheTestAccess;
     std::unique_lock<std::mutex> RefreshReference(const std::string& path, OpenMode perms,
                                                   FileReference& reference);
     void DropReference(std::unique_ptr<FileReference>&& reference, const std::string& path);

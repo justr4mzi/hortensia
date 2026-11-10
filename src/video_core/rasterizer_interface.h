@@ -223,6 +223,11 @@ public:
 
     virtual bool OnCPUWrite(PAddr addr, u64 size) = 0;
 
+    /// What the caches hold on a region (EDEN_NX2_WRITE_STATS).
+    [[nodiscard]] virtual std::string DescribeTracking(DAddr addr, u64 size) {
+        return {};
+    }
+
     /// Sync memory between guest and host.
     virtual void InvalidateGPUCache() = 0;
 
@@ -239,6 +244,9 @@ public:
 
     /// Notify the host renderer to wait for previous primitive and compute operations.
     virtual void WaitForIdle() = 0;
+
+    /// Emulate the NX2 PBDMA memory barrier when the backend requires an explicit barrier.
+    virtual void Nx2Membar() {}
 
     /// Notify the host renderer to wait for reads and writes to render targets and flush caches.
     virtual void FragmentBarrier() = 0;

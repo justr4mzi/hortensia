@@ -250,6 +250,7 @@ public:
             if (tick >= master_semaphore->CurrentTick()) {
                 Flush();
             }
+            VideoCommon::Nx2Profile::Scope wait_scope{VideoCommon::Nx2Profile::Zone::GpuWait};
             master_semaphore->Wait(tick);
         }
         const auto trace_waited = trace ? std::chrono::steady_clock::now()

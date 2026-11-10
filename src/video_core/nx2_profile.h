@@ -25,6 +25,9 @@
 
 // EDEN_NX2_GPU_PROFILE: time where the GPU thread spends its time. Each zone counts its own
 // (exclusive) time, nested zones excluded; every 10 s the thread logs each zone's share.
+// Each zone reads a fenced TSC twice (~30-50 ns per read) and that time lands in the enclosing
+// zone: with ~2 million method calls a second, "push" (their parent) shows hundreds of
+// milliseconds that are the profiler's own. Compare thread CPU time from a run without it.
 namespace VideoCommon::Nx2Profile {
 
 enum class Zone : u32 {
@@ -181,12 +184,32 @@ struct ThreadData {
 
 inline thread_local ThreadData t_data;
 
+// The zones wrap hot paths (~150,000 times a second): when profiling is off a scope must cost a
+// flag test, so the timing work stays out of line.
 class Scope {
 public:
     explicit Scope(Zone zone_) : zone{zone_}, enabled{g_zones_enabled} {
         if (!enabled) {
             return;
         }
+    }
+
+    ~Scope() {
+        if (enabled) [[unlikely]] {
+            End();
+        }
+    }
+
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
+
+private:
+#ifdef _MSC_VER
+    __declspec(noinline)
+#else
+    __attribute__((noinline))
+#endif
+    void Begin() {
         parent_child_ns = t_data.child_ns;
         t_data.child_ns = 0;
         parent = t_data.current;
@@ -224,10 +247,6 @@ public:
         }
     }
 
-    Scope(const Scope&) = delete;
-    Scope& operator=(const Scope&) = delete;
-
-private:
     Zone zone;
     Zone parent{Zone::Other};
     bool enabled;

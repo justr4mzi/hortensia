@@ -17,6 +17,10 @@
 
 #include "common/common_types.h"
 
+namespace VideoCommon::Nx2Profile {
+enum class Zone : u32;
+}
+
 namespace Core {
 class System;
 }
@@ -128,7 +132,16 @@ public:
 
     /// Whether the calling thread is the back.
     [[nodiscard]] static bool OnBackThread() {
-        return on_back_thread;
+        return back_thread_context;
+    }
+    /// Marks the calling thread as the GPU thread (the front, or the only one without the split).
+    static void MarkGpuThread() {
+        on_gpu_thread = true;
+    }
+    /// Whether the calling thread owns the Vulkan scheduler: the back while it runs, else the
+    /// GPU thread. Other threads (CPU cores, services) must not record or submit work.
+    [[nodiscard]] static bool OwnsScheduler() {
+        return Get().BackRunning() ? back_thread_context : on_gpu_thread;
     }
     /// Marks the calling thread as the GPU thread (the front, or the only one without the split).
     static void MarkGpuThread() {
@@ -156,7 +169,8 @@ public:
     }
 
     /// Starts the back thread once the split is wanted (EDEN_NX2_SPLIT=1, a Switch 2 title,
-    /// commands read without cache flushes). Called by the front between commands.
+    /// commands read without cache flushes). Called by the front between commands. Also stops it
+    /// when the settings no longer allow it, and hands the engines back (AddFrontEngine).
     void MaybeStart(Core::System& system);
     void Stop();
 
@@ -258,6 +272,13 @@ public:
     /// using back-owned state (the Vulkan scheduler) while the back runs entries.
     static inline bool check_owner{};
     static void CheckOwner(const char* where);
+
+    /// A semaphore release sent to the back at `address` (front thread only).
+    void NoteRelease(GPUVAddr address) {
+        sent_releases.insert_or_assign(address, write_position);
+    }
+    /// Waits for releases sent to the requested range to finish (front thread only).
+    void AwaitReleases(GPUVAddr address, u64 size);
 
     /// Makes what was sent visible to the back.
     void Publish();
@@ -457,6 +478,10 @@ private:
     /// Words between publishes: small right after a drain, while the back has nothing to do.
     size_t publish_every{PublishEvery};
     Tegra::Engines::EngineInterface* front_engine{};
+    /// Semaphore releases sent to the back: address, write position after them.
+    std::unordered_map<GPUVAddr, u64> sent_releases;
+    /// What gives the engines the front took over back their state (AddFrontEngine).
+    std::vector<std::function<void()>> hand_backs;
 
     // Back side.
     Tegra::Engines::EngineInterface* back_engine{};

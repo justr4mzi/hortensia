@@ -719,18 +719,14 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, u32 skip,
                 continue;
             const size_t layer_offset = i * input_layer_stride;
             compute_pass_descriptor_queue.Acquire(scheduler, 2);
-            compute_pass_descriptor_queue.AddBuffer(map.buffer,
-                                                    map.offset + layer_offset + swizzle.buffer_offset,
-                                                    input_layer_stride - swizzle.buffer_offset);
-            compute_pass_descriptor_queue.AddImage(
-                target.layer_view(swizzle.level - static_cast<s32>(skip), target.layers[i]));
+            compute_pass_descriptor_queue.AddBuffer(map.buffer, input_offset, input_range);
+            compute_pass_descriptor_queue.AddImage(all_layers
+                                                       ? target.level_view(host_level)
+                                                       : target.layer_view(host_level, target.layers[i]));
             const void* const descriptor_data{compute_pass_descriptor_queue.UpdateData()};
-            auto params = MakeBlockLinearSwizzle2DParams(swizzle, info);
-            params.layer_stride = input_layer_stride;
-            const u32 num_dispatches_x = Common::DivCeil(swizzle.num_tiles.width, 8U);
-            const u32 num_dispatches_y = Common::DivCeil(swizzle.num_tiles.height, 8U);
-            scheduler.Record([this, num_dispatches_x, num_dispatches_y, block_dims, params,
-                              descriptor_data](vk::CommandBuffer cmdbuf) {
+
+            scheduler.Record([this, num_dispatches_x, num_dispatches_y, num_dispatches_z, block_dims,
+                              params, descriptor_data](vk::CommandBuffer cmdbuf) {
                 const AstcPushConstants uniforms{
                     .blocks_dims = block_dims,
                     .layer_stride = params.layer_stride,
@@ -744,7 +740,7 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, u32 skip,
                 device.GetLogical().UpdateDescriptorSet(set, *descriptor_template, descriptor_data);
                 cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *layout, 0, set, {});
                 cmdbuf.PushConstants(*layout, VK_SHADER_STAGE_COMPUTE_BIT, uniforms);
-                cmdbuf.Dispatch(num_dispatches_x, num_dispatches_y, 1);
+                cmdbuf.Dispatch(num_dispatches_x, num_dispatches_y, num_dispatches_z);
             });
         }
     }

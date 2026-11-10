@@ -12,6 +12,8 @@ TEST_CASE("Ampere F2I round up preserves conversion mode", "[video_core][ampere]
     using Shader::Ampere::LowerToMaxwell;
     const Instruction exit{{0x0000794d, 0, 0x03800000, 0}};
 
+TEST_CASE("Ampere F2I round up preserves conversion mode", "[video_core][ampere]") {
+    const Instruction exit{{0x0000794d, 0, 0x03800000, 0}};
     for (const bool is_signed : {false, true}) {
         const Instruction convert{{0x00067305, 0x00000009,
                                    is_signed ? 0x0021b100U : 0x0020b000U, 0}};
@@ -28,7 +30,6 @@ TEST_CASE("Ampere F2I round up preserves conversion mode", "[video_core][ampere]
         REQUIRE(((*instruction >> 39) & 3) == 2);
         REQUIRE(((*instruction >> 44) & 1) == static_cast<u64>(is_signed));
     }
-
     const Instruction unsupported{{0x00067305, 0x00000009, 0x0020b001, 0}};
     REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(std::array{unsupported, exit})));
 }

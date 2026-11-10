@@ -405,6 +405,8 @@ add_library(core STATIC
     hle/service/acc/async_context.cpp
     hle/service/acc/async_context.h
     hle/service/acc/errors.h
+    hle/service/acc/private_identity.cpp
+    hle/service/acc/private_identity.h
     hle/service/acc/profile_manager.cpp
     hle/service/acc/profile_manager.h
     hle/service/am/am.cpp
@@ -1286,6 +1288,23 @@ if (HAS_NCE)
     target_link_libraries(core PRIVATE merry::oaknut)
 endif()
 
+# Native execution of application code on Apple silicon (cpu_backend = Hypervisor).
+if (HAS_HYPERVISOR)
+    target_sources(core PRIVATE
+        arm/hypervisor/arm_hypervisor.cpp
+        arm/hypervisor/arm_hypervisor.h
+        arm/hypervisor/hv_vm.cpp
+        arm/hypervisor/hv_vm.h)
+    # The NCE load/store interpreter performs accesses to unmapped pages.
+    if (NOT HAS_NCE)
+        target_sources(core PRIVATE
+            arm/nce/interpreter_visitor.cpp
+            arm/nce/interpreter_visitor.h
+            arm/nce/visitor_base.h)
+    endif()
+    target_link_libraries(core PRIVATE "-framework Hypervisor")
+endif()
+
 if (ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64 OR ARCHITECTURE_riscv64 OR ARCHITECTURE_loongarch64)
     target_sources(core PRIVATE
         arm/dynarmic/arm_dynarmic.h
@@ -1304,6 +1323,7 @@ if (ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64 OR ARCHITECTURE_riscv64 OR ARCHITE
         hle/service/jit/jit.cpp
         hle/service/jit/jit.h)
     target_link_libraries(core PRIVATE dynarmic::dynarmic)
+    target_include_directories(core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../dynarmic/src")
 endif()
 
 if (TARGET OpenSSL::SSL)

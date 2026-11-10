@@ -5,7 +5,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include <common/scope_exit.h>
 
 #include <ranges>
@@ -90,8 +98,13 @@ void EmulatedController::ReloadFromSettings() {
     const auto player_index = Service::HID::NpadIdTypeToIndex(npad_id_type);
     const auto& player = Settings::values.players.GetValue()[player_index];
 
+    static const bool input_trace = std::getenv("EDEN_NX2_INPUT_TRACE") != nullptr;
     for (std::size_t index = 0; index < player.buttons.size(); ++index) {
         button_params[index] = Common::ParamPackage(player.buttons[index]);
+        if (input_trace && index == static_cast<std::size_t>(Settings::NativeButton::A)) {
+            LOG_INFO(Service_HID, "player {} A binding: {}", player_index,
+                     button_params[index].Serialize());
+        }
     }
     for (std::size_t index = 0; index < player.analogs.size(); ++index) {
         stick_params[index] = Common::ParamPackage(player.analogs[index]);
@@ -337,8 +350,12 @@ void EmulatedController::LoadVirtualGamepadParams() {
 void EmulatedController::ReloadInput() {
     // If you load any device here add the equivalent to the UnloadInput() function
     LoadDevices();
+    static const bool input_trace = std::getenv("EDEN_NX2_INPUT_TRACE") != nullptr;
     for (std::size_t index = 0; index < button_devices.size(); ++index) {
         if (!button_devices[index]) {
+            if (input_trace) {
+                LOG_INFO(Service_HID, "button device {} unresolved (empty binding)", index);
+            }
             continue;
         }
         const auto uuid = Common::UUID{button_params[index].Get("guid", "")};
@@ -766,6 +783,13 @@ void EmulatedController::SetButton(const Common::Input::CallbackStatus& callback
 
     bool value_changed = false;
     const auto new_status = TransformToButton(callback);
+    {
+        static const bool input_trace = std::getenv("EDEN_NX2_INPUT_TRACE") != nullptr;
+        if (input_trace && new_status.value) {
+            LOG_INFO(Service_HID, "emulated button index={} value={} uuid={}", index,
+                     new_status.value, uuid.RawString());
+        }
+    }
     auto& current_status = controller.button_values[index];
 
     // Only read button values that have the same uuid or are pressed once
@@ -827,6 +851,14 @@ void EmulatedController::SetButton(const Common::Input::CallbackStatus& callback
     case Settings::NativeButton::A:
         controller.npad_button_state.a.Assign(current_status.value);
         controller.debug_pad_button_state.a.Assign(current_status.value);
+        {
+            static const bool input_trace = std::getenv("EDEN_NX2_INPUT_TRACE") != nullptr;
+            if (input_trace) {
+                LOG_INFO(Service_HID, "apply A npad_id={} value={} raw={:#x}",
+                         static_cast<u32>(npad_id_type), current_status.value,
+                         static_cast<u64>(controller.npad_button_state.raw));
+            }
+        }
         break;
     case Settings::NativeButton::B:
         controller.npad_button_state.b.Assign(current_status.value);
@@ -1801,6 +1833,54 @@ CaptureButtonState EmulatedController::GetCaptureButtons() const {
     if (is_configuring)
         return {};
     return controller.capture_button_state;
+}
+
+// EDEN_AUTO_BUTTONS=<start>,<end>,<button>[+<button>...][;...]: holds those buttons (a b x y l r zl
+// zr plus minus up down left right) between the two times (seconds after launch), for unattended
+// runs that have to get through menus.
+static const auto auto_press_epoch = std::chrono::steady_clock::now();
+
+static u64 AutoButtons() {
+    struct Window {
+        double start;
+        double end;
+        u64 mask;
+    };
+    static const auto windows = [] {
+        static constexpr std::array<std::pair<std::string_view, u64>, 14> names{{
+            {"a", 1ULL << 0}, {"b", 1ULL << 1}, {"x", 1ULL << 2}, {"y", 1ULL << 3},
+            {"l", 1ULL << 6}, {"r", 1ULL << 7}, {"zl", 1ULL << 8}, {"zr", 1ULL << 9},
+            {"plus", 1ULL << 10}, {"minus", 1ULL << 11}, {"left", 1ULL << 12},
+            {"up", 1ULL << 13}, {"right", 1ULL << 14}, {"down", 1ULL << 15},
+        }};
+        std::vector<Window> parsed;
+        for (const char* cursor = std::getenv("EDEN_AUTO_BUTTONS"); cursor && *cursor;) {
+            Window window{};
+            char buttons[64]{};
+            if (std::sscanf(cursor, "%lf,%lf,%63[a-z+]", &window.start, &window.end, buttons) == 3) {
+                for (std::string_view rest{buttons}; !rest.empty();) {
+                    const size_t plus = rest.find('+');
+                    const std::string_view name = rest.substr(0, plus);
+                    for (const auto& [button, bit] : names) {
+                        if (button == name) window.mask |= bit;
+                    }
+                    rest = plus == std::string_view::npos ? std::string_view{} : rest.substr(plus + 1);
+                }
+                parsed.push_back(window);
+            }
+            cursor = std::strchr(cursor, ';');
+            if (cursor) ++cursor;
+        }
+        return parsed;
+    }();
+    if (windows.empty()) return 0;
+    const double now =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - auto_press_epoch).count();
+    u64 mask = 0;
+    for (const auto& window : windows) {
+        if (now >= window.start && now <= window.end) mask |= window.mask;
+    }
+    return mask;
 }
 
 NpadButtonState EmulatedController::GetNpadButtons() const {

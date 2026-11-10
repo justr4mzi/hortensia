@@ -13,8 +13,10 @@
 #include <mutex>
 #include <set>
 #include <span>
+#include <string>
 #include <thread>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -32,9 +34,15 @@
 #include "core/gpu_dirty_memory_manager.h"
 #include "core/hardware_properties.h"
 #include "core/hle/kernel/k_page_table.h"
+#ifdef HAS_HYPERVISOR
+#include "core/arm/hypervisor/hv_vm.h"
+#endif
 #include "core/hle/kernel/k_process.h"
 #include "core/memory.h"
 #include "video_core/gpu.h"
+#include "video_core/nx2.h"
+#include "video_core/rasterizer_interface.h"
+#include "video_core/renderer_base.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/rasterizer_download_area.h"
@@ -45,6 +53,19 @@ u32& UnmappedReadFlag() {
     thread_local u32 flag{};
     return flag;
 }
+
+bool& QuietUnmappedAccesses() {
+    thread_local bool quiet{};
+    return quiet;
+}
+
+#ifdef HAS_HYPERVISOR
+/// The hypervisor VM when it mirrors this page table, so its stage-1 tables follow every change.
+static inline Core::Hv::Vm* HypervisorFor(const Common::PageTable& table) {
+    auto& vm = Core::Hv::Vm::Get();
+    return vm.IsAttached(table) ? &vm : nullptr;
+}
+#endif
 
 static inline bool AddressSpaceContains(const Common::PageTable& table, const Common::ProcessAddress addr, const std::size_t size) {
     const Common::ProcessAddress max_addr = 1ULL << table.GetAddressSpaceBits();
@@ -83,6 +104,11 @@ struct Memory::Impl {
                    GetInteger(target));
         MapPages(page_table, base / YUZU_PAGESIZE, size / YUZU_PAGESIZE, target,
                  Common::PageType::Memory);
+#ifdef HAS_HYPERVISOR
+        if (auto* vm = HypervisorFor(page_table)) {
+            vm->Map(GetInteger(base), size, GetInteger(target), perms);
+        }
+#endif
 
         if (current_page_table->fastmem_arena) {
             host_buffer->Map(GetInteger(base), GetInteger(target) - DramMemoryMap::Base, size, perms, separate_heap);
@@ -95,6 +121,11 @@ struct Memory::Impl {
         ASSERT_MSG((base & YUZU_PAGEMASK) == 0, "non-page aligned base: {:016X}", GetInteger(base));
         MapPages(page_table, base / YUZU_PAGESIZE, size / YUZU_PAGESIZE, 0,
                  Common::PageType::Unmapped);
+#ifdef HAS_HYPERVISOR
+        if (auto* vm = HypervisorFor(page_table)) {
+            vm->Unmap(GetInteger(base), size);
+        }
+#endif
 
         if (current_page_table->fastmem_arena) {
             host_buffer->Unmap(GetInteger(base), size, separate_heap);
@@ -105,6 +136,12 @@ struct Memory::Impl {
                        Common::MemoryPermission perms) {
         ASSERT_MSG((size & YUZU_PAGEMASK) == 0, "non-page aligned size: {:016X}", size);
         ASSERT_MSG((vaddr & YUZU_PAGEMASK) == 0, "non-page aligned base: {:016X}", vaddr);
+
+#ifdef HAS_HYPERVISOR
+        if (auto* vm = HypervisorFor(page_table)) {
+            vm->Protect(vaddr, size, perms);
+        }
+#endif
 
         if (!current_page_table->fastmem_arena) {
             return;
@@ -312,7 +349,9 @@ struct Memory::Impl {
     bool ReadBlockImpl(const Common::ProcessAddress addr, void* buffer, const std::size_t size, bool unsafe) {
         return WalkBlock(addr, size,
         [addr, size, &buffer](const std::size_t offset, const std::size_t copy_amount, const Common::ProcessAddress current_vaddr) {
-            LOG_ERROR(HW_Memory, "Unmapped @ {:#016x} (start address = {:#016x}, size = {})", GetInteger(current_vaddr), GetInteger(addr), size);
+            if (!QuietUnmappedAccesses()) {
+                LOG_ERROR(HW_Memory, "Unmapped @ {:#016x} (start address = {:#016x}, size = {})", GetInteger(current_vaddr), GetInteger(addr), size);
+            }
             std::memset(reinterpret_cast<u8*>(buffer) + offset, 0, copy_amount);
         },
         [&](const std::size_t offset, const std::size_t copy_amount, const u8* const ptr) {
@@ -354,16 +393,18 @@ struct Memory::Impl {
     bool WriteBlockImpl(const Common::ProcessAddress addr, const void* buffer, const std::size_t size, bool unsafe) {
         return WalkBlock(addr, size,
         [addr, size](const std::size_t offset, const std::size_t copy_amount, const Common::ProcessAddress current_vaddr) {
-            LOG_ERROR(HW_Memory, "Unmapped @ {:#016x} (start address = {:#016x}, size = {})", GetInteger(current_vaddr), GetInteger(addr), size);
+            if (!QuietUnmappedAccesses()) {
+                LOG_ERROR(HW_Memory, "Unmapped @ {:#016x} (start address = {:#016x}, size = {})", GetInteger(current_vaddr), GetInteger(addr), size);
+            }
         },
         [&](const std::size_t offset, const std::size_t copy_amount, u8* const ptr) {
             std::memcpy(ptr, reinterpret_cast<u8 const*>(buffer) + offset, copy_amount);
         },
         [&](const Common::ProcessAddress current_vaddr, const std::size_t offset, const std::size_t copy_amount, u8* const ptr) {
+            std::memcpy(ptr, reinterpret_cast<u8 const*>(buffer) + offset, copy_amount);
             if (!unsafe) {
                 HandleRasterizerWrite(GetInteger(current_vaddr), copy_amount);
             }
-            std::memcpy(ptr, reinterpret_cast<u8 const*>(buffer) + offset, copy_amount);
         });
     }
 
@@ -376,8 +417,8 @@ struct Memory::Impl {
             std::memset(ptr, 0, copy_amount);
         },
         [&](const Common::ProcessAddress current_vaddr, const std::size_t offset, const std::size_t copy_amount, u8* const ptr) {
-            HandleRasterizerWrite(GetInteger(current_vaddr), copy_amount);
             std::memset(ptr, 0, copy_amount);
+            HandleRasterizerWrite(GetInteger(current_vaddr), copy_amount);
         });
     }
 
@@ -582,16 +623,14 @@ struct Memory::Impl {
 
     /// Read traps replace reactive flushing's blanket read protection of every cached page: only
     /// pages the GPU writes are protected, and each one only until its first read
-    /// (EDEN_NX2_READ_TRAPS=0 turns them off). Under NCE every fault is taken as a write, so they
-    /// are not used there.
+    /// (EDEN_NX2_READ_TRAPS=0 turns them off). Under NCE the fault's ESR tells reads from writes.
     bool ReadTrapsEnabled() const {
         static const bool disabled = [] {
             const char* value = std::getenv("EDEN_NX2_READ_TRAPS");
             return value != nullptr && value[0] == '0';
         }();
         return !disabled && current_page_table->fastmem_arena &&
-               !Settings::values.use_reactive_flushing.GetValue() &&
-               Settings::values.cpu_backend.GetValue() != Settings::CpuBackend::Nce;
+               !Settings::values.use_reactive_flushing.GetValue();
     }
 
     void RasterizerArmReadTraps(u64 vaddr, u64 size) {
@@ -828,37 +867,56 @@ struct Memory::Impl {
     template <typename T>
     inline void Write(Common::ProcessAddress vaddr, const T data) noexcept requires(std::is_trivially_copyable_v<T>) {
         const u64 addr = GetInteger(vaddr);
+        bool cached = false;
         if (auto const ptr = GetPointerImpl(addr, [addr, data]() {
             LOG_ERROR(HW_Memory, "Unmapped Write{} @ {:#016x} = {:#016x}", sizeof(T) * 8, addr, u64(data));
-        }, [&]() { HandleRasterizerWrite(addr, sizeof(T)); }); ptr) [[likely]]
+        }, [&]() { cached = true; }); ptr) [[likely]] {
             std::memcpy(ptr, &data, sizeof(T));
+            // Report the write after the store. The GPU thread can apply a report at any time. It
+            // reads the bytes then and keeps the page protected, so an earlier report can lose them.
+            if (cached) [[unlikely]] {
+                HandleRasterizerWrite(addr, sizeof(T));
+            } else if (WriteStatsEnabled()) [[unlikely]] {
+                CountUntrappedWrite(addr);
+            }
+        }
     }
 
     template <typename T>
     bool WriteExclusive(Common::ProcessAddress vaddr, const T data, const T expected) {
+        bool cached = false;
         u8* const ptr = GetPointerImpl(
             GetInteger(vaddr),
             [vaddr, data]() {
                 LOG_ERROR(HW_Memory, "Unmapped WriteExclusive{} @ {:#016x} = {:#016x}",
                           sizeof(T) * 8, GetInteger(vaddr), static_cast<u64>(data));
             },
-            [&]() { HandleRasterizerWrite(GetInteger(vaddr), sizeof(T)); });
+            [&]() { cached = true; });
         if (ptr) {
-            return Common::AtomicCompareAndSwap(reinterpret_cast<T*>(ptr), data, expected);
+            const bool result = Common::AtomicCompareAndSwap(reinterpret_cast<T*>(ptr), data, expected);
+            if (cached && result) {
+                HandleRasterizerWrite(GetInteger(vaddr), sizeof(T));
+            }
+            return result;
         }
         return true;
     }
 
     bool WriteExclusive128(Common::ProcessAddress vaddr, const u128 data, const u128 expected) {
+        bool cached = false;
         u8* const ptr = GetPointerImpl(
             GetInteger(vaddr),
             [vaddr, data]() {
                 LOG_ERROR(HW_Memory, "Unmapped WriteExclusive128 @ {:#016x} = {:#016x}{:016X}",
                           GetInteger(vaddr), static_cast<u64>(data[1]), static_cast<u64>(data[0]));
             },
-            [&]() { HandleRasterizerWrite(GetInteger(vaddr), sizeof(u128)); });
+            [&]() { cached = true; });
         if (ptr) {
-            return Common::AtomicCompareAndSwap(reinterpret_cast<u64*>(ptr), data, expected);
+            const bool result = Common::AtomicCompareAndSwap(reinterpret_cast<u64*>(ptr), data, expected);
+            if (cached && result) {
+                HandleRasterizerWrite(GetInteger(vaddr), sizeof(u128));
+            }
+            return result;
         }
         return true;
     }
@@ -921,7 +979,150 @@ struct Memory::Impl {
         });
     }
 
+    // EDEN_NX2_WRITE_STATS: guest writes to pages the GPU caches track leave the JIT's fast path
+    // (one call through here each). Every 10 s, log how many there were, how many the caches
+    // collected (GPU-modified regions, so the page stays trapped) and the busiest pages.
+    struct WriteStats {
+        std::atomic<u64> writes{};
+        std::atomic<u64> on_cpu_write{};
+        std::atomic<u64> collected{};
+        std::mutex mutex;
+        std::unordered_map<u64, u64> pages;
+        std::chrono::steady_clock::time_point since{std::chrono::steady_clock::now()};
+    };
+    WriteStats write_stats;
+
+    static bool WriteStatsEnabled() {
+        static const bool enabled = std::getenv("EDEN_NX2_WRITE_STATS") != nullptr;
+        return enabled;
+    }
+
+    void CountTrappedWrite(VAddr v_address) {
+        if ((write_stats.writes.fetch_add(1, std::memory_order_relaxed) & 63) != 0) {
+            return;
+        }
+        std::scoped_lock lock{write_stats.mutex};
+        ++write_stats.pages[v_address >> YUZU_PAGEBITS];
+        const auto now = std::chrono::steady_clock::now();
+        if (now - write_stats.since < std::chrono::seconds{10}) {
+            return;
+        }
+        const double seconds = std::chrono::duration<double>(now - write_stats.since).count();
+        std::vector<std::pair<u64, u64>> top(write_stats.pages.begin(), write_stats.pages.end());
+        std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::string pages;
+        for (size_t i = 0; i < std::min<size_t>(top.size(), 8); ++i) {
+            pages += fmt::format(" {:#x}:{}", top[i].first << YUZU_PAGEBITS, top[i].second * 64);
+        }
+        static constexpr std::array<const char*, static_cast<size_t>(Tegra::Nx2WritePath::Count)> path_names{
+            "buffer:not registered", "buffer:GPU modified", "buffer:marked CPU modified",
+            "image:sparse", "image:by layer", "image:partial", "image:already modified",
+            "image:untracked", "no image"};
+        std::string paths;
+        for (size_t i = 0; i < path_names.size(); ++i) {
+            if (const u64 count = Tegra::g_nx2_write_paths[i].exchange(0); count != 0) {
+                paths += fmt::format(" {} {:.0f}/s", path_names[i], count / seconds);
+            }
+        }
+        // What holds the busiest pages trapped.
+        std::string holders;
+        for (size_t i = 0; i < std::min<size_t>(top.size(), 3); ++i) {
+            const u64 vaddr = top[i].first << YUZU_PAGEBITS;
+            const auto* pointer = GetPointerImpl(vaddr, []() {}, []() {});
+            if (pointer == nullptr) {
+                continue;
+            }
+            auto& device_memory = system.Host1x().MemoryManager();
+            Common::ScratchBuffer<u32> scratch;
+            device_memory.ApplyOpOnPointer(pointer, scratch, [&](DAddr address) {
+                holders += fmt::format(" [{:#x} device {:#x}: held by {}, {}]", vaddr, address,
+                                       device_memory.PageCachedCount(address),
+                                       system.GPU().Renderer().ReadRasterizer()->DescribeTracking(
+                                           address, YUZU_PAGESIZE));
+            });
+        }
+        LOG_INFO(HW_Memory, "trapped guest writes, busiest pages:{}", holders);
+        LOG_INFO(HW_Memory,
+                 "trapped guest writes: {:.0f}/s ({} pages), {:.0f}/s reached the caches, {:.0f}/s "
+                 "collected; busiest pages (writes):{}; cache paths:{}",
+                 write_stats.writes.exchange(0) / seconds, write_stats.pages.size(),
+                 write_stats.on_cpu_write.exchange(0) / seconds, write_stats.collected.exchange(0) / seconds,
+                 pages, paths);
+        write_stats.pages.clear();
+        write_stats.since = now;
+    }
+
+    // Writes through here to pages no cache traps: the JIT recompiles an access that faulted in
+    // fastmem to call here for good, so a page the caches protect once a frame keeps every later
+    // write of that instruction off the fast path. Every 10 s, the busiest pages and who tracks them.
+    struct UntrappedWriteStats {
+        std::atomic<u64> writes{};
+        std::mutex mutex;
+        std::unordered_map<u64, u64> pages;
+        std::chrono::steady_clock::time_point since{std::chrono::steady_clock::now()};
+    };
+    UntrappedWriteStats untrapped_stats;
+
+    void CountUntrappedWrite(VAddr v_address) {
+        if ((untrapped_stats.writes.fetch_add(1, std::memory_order_relaxed) & 63) != 0) {
+            return;
+        }
+        std::scoped_lock lock{untrapped_stats.mutex};
+        ++untrapped_stats.pages[v_address >> YUZU_PAGEBITS];
+        const auto now = std::chrono::steady_clock::now();
+        if (now - untrapped_stats.since < std::chrono::seconds{10}) {
+            return;
+        }
+        const double seconds = std::chrono::duration<double>(now - untrapped_stats.since).count();
+        std::vector<std::pair<u64, u64>> top(untrapped_stats.pages.begin(), untrapped_stats.pages.end());
+        std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        // Group the pages into 1 MiB regions: a streamed texture or buffer spans many.
+        std::unordered_map<u64, u64> regions;
+        for (const auto& [page, count] : top) {
+            regions[page >> 8] += count;
+        }
+        std::vector<std::pair<u64, u64>> top_regions(regions.begin(), regions.end());
+        std::sort(top_regions.begin(), top_regions.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::string text;
+        for (size_t i = 0; i < std::min<size_t>(top_regions.size(), 6); ++i) {
+            const u64 vaddr = top_regions[i].first << 20;
+            text += fmt::format(" [{:#x} MiB region: {:.0f}/s", vaddr, top_regions[i].second * 64 / seconds);
+            // Who tracks the busiest page of the region.
+            u64 best_page = 0, best = 0;
+            for (const auto& [page, count] : top) {
+                if ((page >> 8) == top_regions[i].first && count > best) {
+                    best = count;
+                    best_page = page;
+                }
+            }
+            {
+                const auto raw = current_page_table->entries[best_page].Raw();
+                text += fmt::format(", entry marked {} type {} pointer {:#x}", u64{raw.marked},
+                                    u64{raw.type},
+                                    current_page_table->entries[best_page].Pointer());
+            }
+            if (const auto* pointer = GetPointerImpl(best_page << YUZU_PAGEBITS, []() {}, []() {})) {
+                auto& device_memory = system.Host1x().MemoryManager();
+                Common::ScratchBuffer<u32> scratch;
+                device_memory.ApplyOpOnPointer(pointer, scratch, [&](DAddr address) {
+                    text += fmt::format(", page {:#x}: {}", best_page << YUZU_PAGEBITS,
+                                        system.GPU().Renderer().ReadRasterizer()->DescribeTracking(
+                                            address, YUZU_PAGESIZE));
+                });
+            }
+            text += "]";
+        }
+        LOG_INFO(HW_Memory, "untrapped slow-path guest writes: {:.0f}/s ({} pages); busiest:{}",
+                 untrapped_stats.writes.exchange(0) / seconds, untrapped_stats.pages.size(), text);
+        untrapped_stats.pages.clear();
+        untrapped_stats.since = now;
+    }
+
     void HandleRasterizerWrite(VAddr v_address, size_t size) {
+        if (WriteStatsEnabled()) [[unlikely]] {
+            CountTrappedWrite(v_address);
+        }
         const auto* p = GetPointerImpl(
             v_address, []() {}, []() {});
         constexpr size_t sys_core = Core::Hardware::NUM_CPU_CORES - 1;
@@ -954,6 +1155,10 @@ struct Memory::Impl {
                 // Short circuit the need to check for address/size
                 auto const do_collection = (address != 0 && size != 0)
                     && system.GPU().OnCPUWrite(address, size);
+                if (WriteStatsEnabled()) [[unlikely]] {
+                    write_stats.on_cpu_write.fetch_add(1, std::memory_order_relaxed);
+                    write_stats.collected.fetch_add(do_collection ? 1 : 0, std::memory_order_relaxed);
+                }
                 if (do_collection) {
                     current_area.last_address = subaddress;
                 } else {
@@ -1209,7 +1414,7 @@ void Memory::MarkRegionDebug(Common::ProcessAddress vaddr, u64 size, bool debug)
     impl->MarkRegionDebug(GetInteger(vaddr), size, debug);
 }
 
-bool Memory::InvalidateNCE(Common::ProcessAddress vaddr, size_t size) {
+bool Memory::InvalidateNCE(Common::ProcessAddress vaddr, size_t size, bool is_write) {
     [[maybe_unused]] bool mapped = true;
     [[maybe_unused]] bool rasterizer = false;
 
@@ -1221,7 +1426,43 @@ bool Memory::InvalidateNCE(Common::ProcessAddress vaddr, size_t size) {
             mapped = false;
         },
         [&] { rasterizer = true; });
-    if (rasterizer) {
+#ifdef HAS_HYPERVISOR
+    if (rasterizer && !is_write) {
+        if (auto* vm = HypervisorFor(*impl->current_page_table)) {
+            // The Hypervisor blocks reads of every cached page under reactive flushing. Answer
+            // the read as Dynarmic's slow path does (an area the GPU copies back at every fence
+            // at once, any other after waiting for the GPU), which also has the GPU's later
+            // writes there copied back at fences; then let the guest read the page natively and
+            // keep trapping its writes. Releasing the page as a write would cost a GPU sync or an
+            // ordered wait for the GPU thread per read, and the caches uploaded the page again
+            // and blocked its reads by the next frame: in Pokemon Pokopia's world ~1,500 such
+            // faults a second left the main thread running guest code 9% of the time.
+            impl->HandleRasterizerDownload(GetInteger(vaddr), size,
+                                           ReadbackDiagnostics::Caller::ScalarRead);
+            vm->AllowCachedReads(GetInteger(vaddr), size);
+            return mapped && ptr != nullptr;
+        }
+    }
+#endif
+    if (rasterizer && !is_write) {
+        // Flushes the GPU's writes and records the read (later GPU writes there are copied back
+        // at fences). A read trap is disarmed by this and leaves the page readable; a page read
+        // protected by reactive flushing is released as a write would release it.
+        const bool trapped = impl->IsReadTrapArmed(GetInteger(vaddr));
+        // Copy the GPU's writes back now (ordered): the invalidation below would otherwise find
+        // the area still GPU-modified and sync the whole GPU to preserve it (the Hypervisor
+        // backend's world in Pokemon Pokopia went from 8.4-10.5 ms a frame to 13.8-15.2 ms, when
+        // it still came through here).
+        Tegra::GPU::SetOrderedReadsOnThisThread(true);
+        SCOPE_EXIT {
+            Tegra::GPU::SetOrderedReadsOnThisThread(false);
+        };
+        impl->HandleRasterizerDownload(GetInteger(vaddr), size,
+                                       ReadbackDiagnostics::Caller::ScalarRead);
+        if (!trapped) {
+            impl->InvalidateGPUMemory(ptr, size);
+        }
+    } else if (rasterizer) {
         impl->InvalidateGPUMemory(ptr, size);
     }
 

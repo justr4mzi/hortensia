@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
-#include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -39,22 +39,9 @@
 #include "qt_common/game_list/game_list_p.h"
 
 #include "qt_common/game_list/model.h"
-#include "qt_common/game_list/discovery.h"
 #include "qt_common/game_list/worker.h"
 
 namespace {
-
-struct PendingRow {
-    explicit PendingRow(QList<QStandardItem*> row) : items{std::move(row)} {}
-    PendingRow(const PendingRow&) = delete;
-    QList<QStandardItem*> items;
-    ~PendingRow() {
-        qDeleteAll(items);
-    }
-    QList<QStandardItem*> Release() {
-        return std::exchange(items, {});
-    }
-};
 
 QString GetGameListCachedObject(const std::string& filename, const std::string& ext,
                                 const std::function<QString()>& generator) {
@@ -226,6 +213,36 @@ QString LooseExeFSName(const std::string& physical_name) {
         return QObject::tr("%1 (update)").arg(name);
     }
     return name;
+}
+
+// A loose dump's game list entry is its small main executable, so the size column would only
+// show a few dozen MB. Sum the dump's real contents instead: the ExeFS directory plus the
+// RomFS directory next to it, matching the loader's loose RomFS discovery.
+u64 LooseDumpSize(const std::filesystem::path& main_path) {
+    const auto exefs_dir = main_path.parent_path();
+
+    u64 total{};
+    std::error_code ec;
+    const auto accumulate = [&total, &ec](const std::filesystem::path& dir) {
+        for (std::filesystem::recursive_directory_iterator it{
+                 dir, std::filesystem::directory_options::skip_permission_denied, ec};
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            std::error_code entry_ec;
+            if (it->is_regular_file(entry_ec)) {
+                const auto size = it->file_size(entry_ec);
+                if (!entry_ec) {
+                    total += size;
+                }
+            }
+        }
+    };
+
+    accumulate(exefs_dir);
+    const auto romfs_dir = exefs_dir.parent_path() / "romfs";
+    if (std::filesystem::is_directory(romfs_dir, ec)) {
+        accumulate(romfs_dir);
+    }
+    return total;
 }
 
 QString FormatPatchNameVersions(const FileSys::PatchManager& patch_manager,
@@ -409,12 +426,11 @@ void GameListWorker::AddTitlesToGameList(GameListDir* parent_dir, GameListItemTy
 
         auto entry = MakeGameListEntry(file->GetFullPath(), name, file->GetSize(), icon, *loader,
                                        program_id, play_time_manager, patch);
-        auto pending = std::make_shared<PendingRow>(std::move(entry));
-        RecordEvent([=](GameListModel* model) { model->AddEntry(pending->Release(), parent_dir); });
+        RecordEvent([=](GameListModel* model) { model->AddEntry(entry, parent_dir); });
     }
 }
 
-void GameListWorker::ScanFileSystem(ScanTarget target, const std::vector<std::filesystem::path>& files,
+void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_path, bool deep_scan,
                                     GameListDir* parent_dir) {
     const auto process_candidate = [this, target,
                                     parent_dir](const std::filesystem::path& path) {
@@ -464,7 +480,7 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::vector<std::fi
             std::vector<u64> program_ids;
             loader->ReadProgramIds(program_ids);
 
-            const auto addEntry = [this, physical_name,
+            const auto addEntry = [this, &path, physical_name,
                                    parent_dir](std::unique_ptr<Loader::AppLoader>& app_loader,
                                                const u64 id) {
                 std::vector<u8> icon;
@@ -490,21 +506,14 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::vector<std::fi
                 const FileSys::PatchManager patch{id, system.GetFileSystemController(),
                                                   system.GetContentProvider()};
 
-                const bool loose_dump = IsExtractedNCAMain(physical_name);
-                const u64 size = loose_dump ? 0 : Common::FS::GetSize(physical_name);
+                const u64 size = IsExtractedNCAMain(physical_name)
+                                     ? LooseDumpSize(path)
+                                     : Common::FS::GetSize(physical_name);
 
                 auto entry = MakeGameListEntry(physical_name, name, size, icon, *app_loader, id,
                                                play_time_manager, patch);
 
-                if (loose_dump) {
-                    entry[GameListModel::COLUMN_SIZE]->setText(tr("Not scanned"));
-                    entry[GameListModel::COLUMN_SIZE]->setToolTip(
-                        tr("Folder size is not calculated during game discovery."));
-                }
-                auto pending = std::make_shared<PendingRow>(std::move(entry));
-                RecordEvent([=](GameListModel* model) {
-                    model->AddEntry(pending->Release(), parent_dir);
-                });
+                RecordEvent([=](GameListModel* model) { model->AddEntry(entry, parent_dir); });
             };
 
             if (res2 == Loader::ResultStatus::Success && program_ids.size() > 1 &&
@@ -529,27 +538,77 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::vector<std::fi
         }
     };
 
-    for (const auto& path : files) {
-        if (stop_requested) {
-            break;
+    // Loose ExeFS dumps: <game>/exefs/main, <game>/base/exefs/main and their updates in
+    // <game>/updates/<version>/exefs/main. Returns whether the directory is such a dump.
+    const auto probe_dump = [this, target, &process_candidate](const std::filesystem::path& dir) {
+        bool found = false;
+        const auto take = [&](const std::filesystem::path& main) {
+            if (Common::FS::IsFile(main)) {
+                found = true;
+                if (target == ScanTarget::PopulateGameList) {
+                    process_candidate(main);
+                }
+            }
+        };
+        for (const auto& content_root : {dir, dir / "base"}) {
+            take(content_root / "exefs" / "main");
+            const auto updates = content_root / "updates";
+            if (Common::FS::IsDir(updates)) {
+                Common::FS::IterateDirEntries(
+                    updates,
+                    [&](const std::filesystem::path& entry) {
+                        take(entry / "exefs" / "main");
+                        return !stop_requested;
+                    },
+                    Common::FS::DirEntryFilter::Directory);
+            }
         }
-        // Loose executables cannot contribute NCA content to the manual provider.
-        if (target == ScanTarget::FillManualContentProvider &&
-            IsExtractedNCAMain(Common::FS::PathToUTF8String(path))) {
-            continue;
-        }
-        process_candidate(path);
+        return found;
+    };
+
+    // Deep scans stop at loose dumps and RomFS trees, which can hold hundreds of thousands of
+    // files that are never games themselves.
+    std::function<void(const std::filesystem::path&, bool)> scan_dir;
+    scan_dir = [&](const std::filesystem::path& dir, bool recurse) {
+        Common::FS::IterateDirEntries(dir, [&](const std::filesystem::path& path) -> bool {
+            if (stop_requested) {
+                return false;
+            }
+
+            if (Common::FS::IsDir(path)) {
+                if (probe_dump(path)) {
+                    return true;
+                }
+                const auto name = QString::fromStdString(Common::FS::PathToUTF8String(path.filename()));
+                if (name.compare(QStringLiteral("romfs"), Qt::CaseInsensitive) == 0) {
+                    return true;
+                }
+                watch_list.append(QString::fromStdString(Common::FS::PathToUTF8String(path)));
+                if (recurse) {
+                    scan_dir(path, true);
+                }
+                return true;
+            }
+
+            const auto physical_name = Common::FS::PathToUTF8String(path);
+            if (HasSupportedFileExtension(physical_name) || IsExtractedNCAMain(physical_name)) {
+                process_candidate(path);
+            }
+            return true;
+        });
+    };
+
+    if (!probe_dump(dir_path)) {
+        scan_dir(dir_path, deep_scan);
     }
 }
 
 void GameListWorker::run() {
-    const auto started = std::chrono::steady_clock::now();
     watch_list.clear();
     provider->ClearAllEntries();
 
     const auto DirEntryReady = [&](GameListDir* game_list_dir) {
-        auto pending = std::make_shared<std::unique_ptr<GameListDir>>(game_list_dir);
-        RecordEvent([=](GameListModel* model) { model->AddDirEntry(pending->release()); });
+        RecordEvent([=](GameListModel* model) { model->AddDirEntry(game_list_dir); });
     };
 
     for (UISettings::GameDir& game_dir : game_dirs) {
@@ -579,32 +638,15 @@ void GameListWorker::run() {
         const auto parent_type = static_cast<GameListItemType>(game_list_dir->type());
         DirEntryReady(game_list_dir);
         if (scan) {
-            const auto discovery = GameListDiscovery::Discover(
-                std::filesystem::path(Common::FS::ToU8String(game_dir.path)), game_dir.deep_scan,
-                [](const auto& path) {
-                    const auto name = Common::FS::PathToUTF8String(path);
-                    return HasSupportedFileExtension(name) || IsExtractedNCAMain(name);
-                },
-                [this] { return stop_requested.load(); });
-            for (const auto& directory : discovery.directories) {
-                watch_list.append(QString::fromStdString(Common::FS::PathToUTF8String(directory)));
-            }
-            LOG_INFO(Frontend,
-                     "Discovery: candidates={} directories={} skipped_romfs={} errors={} cancelled={}",
-                     discovery.files.size(), discovery.directories.size(), discovery.skipped_romfs,
-                     discovery.errors, stop_requested.load());
-            ScanFileSystem(ScanTarget::FillManualContentProvider, discovery.files, game_list_dir);
-            ScanFileSystem(ScanTarget::PopulateGameList, discovery.files, game_list_dir);
+            ScanFileSystem(ScanTarget::FillManualContentProvider, game_dir.path, game_dir.deep_scan,
+                           game_list_dir);
+            ScanFileSystem(ScanTarget::PopulateGameList, game_dir.path, game_dir.deep_scan,
+                           game_list_dir);
         } else {
             AddTitlesToGameList(game_list_dir, parent_type);
         }
     }
 
-    watch_list.removeDuplicates();
-    LOG_INFO(Frontend, "Game discovery finished: elapsed_ms={} watched={} cancelled={}",
-             std::chrono::duration_cast<std::chrono::milliseconds>(
-                 std::chrono::steady_clock::now() - started).count(),
-             watch_list.size(), stop_requested.load());
     RecordEvent([this](GameListModel* model) { model->DonePopulating(watch_list); });
     processing_completed.Set();
 }

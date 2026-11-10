@@ -55,6 +55,36 @@ template<typename T>
 using HalfVectorArray = std::array<T, A64FullVectorWidth::value / mcl::bitsizeof<T> / 2>;
 
 using SharedLabel = Xbyak::Label*;
+/// Whether the x64 code of the instruction that produces value always leaves the result
+/// zero-extended from its type's width to 64 bits in a GPR: the 32-bit and narrower operations
+/// below write a 32-bit register (movzx, mov r32, 32-bit arithmetic, cmov r32), and the register
+/// allocator moves such a value with 32-bit moves, which keep that. (A value aliased onto a 64-bit
+/// register, as LeastSignificantWord, does not qualify.)
+[[nodiscard]] inline bool IsZeroExtendedResult(const IR::Value& value) noexcept {
+    if (value.IsImmediate()) {
+        return false;
+    }
+    switch (value.GetInst()->GetOpcode()) {
+    case IR::Opcode::A64ReadMemory8:
+    case IR::Opcode::A64ReadMemory16:
+    case IR::Opcode::A64ReadMemory32:
+    case IR::Opcode::A64GetW:
+    case IR::Opcode::ZeroExtendByteToWord:
+    case IR::Opcode::ZeroExtendHalfToWord:
+    case IR::Opcode::Add32:
+    case IR::Opcode::Sub32:
+    case IR::Opcode::And32:
+    case IR::Opcode::Or32:
+    case IR::Opcode::Eor32:
+    case IR::Opcode::ConditionalSelect32:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool FPCompareSwapsOperands(IR::Cond cond);
+
 struct EmitContext {
     EmitContext(RegAlloc& reg_alloc, IR::Block& block, boost::container::stable_vector<Xbyak::Label>& shared_labels);
     virtual ~EmitContext();
@@ -65,7 +95,23 @@ struct EmitContext {
         return &shared_labels.emplace_back();
     }
 
+    /// The offset of an Add64(base, imm) whose every use is the address of a memory access: it
+    /// emits no code and shares base's location, and the accesses add the offset themselves.
+    [[nodiscard]] inline std::optional<s32> FoldedAddressOffset(const IR::Value& address) const noexcept {
+        if (folded_addresses.empty() || address.IsImmediate()) {
+            return std::nullopt;
+        }
+        const IR::Inst* const inst = address.GetInst();
+        for (const auto& [folded, offset] : folded_addresses) {
+            if (folded == inst) {
+                return offset;
+            }
+        }
+        return std::nullopt;
+    }
+
     std::vector<std::function<void()>> deferred_emits;
+    boost::container::small_vector<std::pair<const IR::Inst*, s32>, 8> folded_addresses;
     RegAlloc& reg_alloc;
     IR::Block& block;
     boost::container::stable_vector<Xbyak::Label>& shared_labels;
@@ -106,6 +152,24 @@ public:
     virtual std::string LocationDescriptorToFriendlyName(const IR::LocationDescriptor&) const = 0;
     void EmitAddCycles(size_t cycles);
     Xbyak::Label EmitCond(IR::Cond cond);
+    // Set just before a terminal when the host flags still hold the guest NZCV that was last
+    // stored (an add or subtract materialized them and only register writes followed): EmitCond
+    // then tests them directly instead of reloading cpsr_nzcv. EmitCond clears it.
+    bool nzcv_in_host_flags = false;
+    // With nzcv_in_host_flags: CF is the borrow of the subtraction that set the flags (the
+    // inverse of the guest's C) instead of the guest's C. EmitCond clears it.
+    bool host_carry_is_borrow = false;
+    // Element 0 of a vector and the zero-extension of a scalar held in an XMM register stay in
+    // XMM registers (their other lanes cleared), so that float operations do not take them through
+    // general registers. Set by the A64 emitter for its blocks.
+    bool scalars_stay_in_xmm = false;
+    // A64: the FPCompare whose result the block's If terminal tests, with that condition.
+    // EmitFPCompare compares again after storing the NZCV (or only compares when nothing uses
+    // it), with the operands in the order the condition needs (FPCompareSwapsOperands), and
+    // EmitCond tests those host flags when fp_compare_in_host_flags is set before the terminal.
+    const IR::Inst* fp_compare_for_terminal = nullptr;
+    IR::Cond fp_compare_cond = IR::Cond::AL;
+    bool fp_compare_in_host_flags = false;
     BlockDescriptor RegisterBlock(const IR::LocationDescriptor& location_descriptor, CodePtr entrypoint, size_t size);
     void PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, IR::LocationDescriptor target);
 

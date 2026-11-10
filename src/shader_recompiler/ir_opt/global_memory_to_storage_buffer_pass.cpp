@@ -103,6 +103,16 @@ struct StorageInfo {
     bool untracked_writes{};
 };
 
+/// Native programs: whether the slot holds a storage buffer pointer, asking the environment once
+/// and keeping the answer the program now depends on.
+bool IsNativePointer(const StorageBufferAddr& slot, StorageInfo& info, Environment& env) {
+    const auto [it, is_new]{info.native_classifications.try_emplace(slot, false)};
+    if (is_new) {
+        it->second = env.IsCbufStorageBufferPointer(slot.index, slot.offset);
+    }
+    return it->second;
+}
+
 /// Returns true when the instruction is a global memory instruction
 bool IsGlobalMemory(const IR::Inst& inst) {
     switch (inst.GetOpcode()) {
@@ -445,7 +455,7 @@ std::optional<StorageBufferAddr> Track(const IR::Value& value, const Bias* bias)
         }
         return operand;
     };
-    return BreadthFirstSearch(value, pred, stop_at_memory);
+    return BreadthFirstSearchPruned(value, pred, exhausted, stop_at_memory);
 }
 
 /// Finds the one constant buffer word added directly into the low address, which is the base
@@ -1171,7 +1181,7 @@ small_vector<StorageBufferAddr, 4> NativePointerCandidates(const IR::U32& low_ad
             const StorageBufferAddr pointer{.index = index.U32(), .offset = offset.U32()};
             if (Common::IsAligned(pointer.offset, 8) &&
                 std::ranges::find(candidates, pointer) == candidates.end() &&
-                env.IsCbufStorageBufferPointer(pointer.index, pointer.offset)) {
+                IsNativePointer(pointer, info, env)) {
                 candidates.push_back(pointer);
             }
             break;
@@ -2172,6 +2182,18 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
                                                                   : StorageWriteExtent{},
         });
     }
+    if (env.IsNativeProgram() && info.left_global) {
+        // A native access left global picks its buffer at run time among all of the program's
+        // storage buffers, bounded by each binding's length: native pointers have no NVN size
+        // word, and the NVN slots hold unrelated arguments. A store can then land in any of
+        // them, so each is bound as written, or the buffer cache never sees the change.
+        program.info.native_global_bounds = true;
+        if (info.writes_left_global) {
+            for (StorageBufferDescriptor& desc : program.info.storage_buffers_descriptors) {
+                desc.is_written = true;
+            }
+        }
+    }
     for (const StorageInst& storage_inst : info.to_replace) {
         const StorageBufferAddr storage_buffer{storage_inst.storage_buffer};
         const auto it{info.set.find(storage_inst.storage_buffer)};
@@ -2198,6 +2220,13 @@ size_t StorageBufferLimit(const HostTranslateInfo& host_info) {
 void JoinStorageInfo(Info& base, Info& source, size_t limit) {
     base.requires_coherent_global_memory |= source.requires_coherent_global_memory;
     base.native_global_bounds |= source.native_global_bounds;
+    // Both programs read the same constant buffers (one stage): the merged program depends on
+    // the answers either was translated with.
+    auto& slots = base.native_pointer_slots;
+    slots.insert(slots.end(), source.native_pointer_slots.begin(),
+                 source.native_pointer_slots.end());
+    std::ranges::sort(slots);
+    slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
     auto& descriptors = base.storage_buffers_descriptors;
     for (auto& desc : source.storage_buffers_descriptors) {
         auto it{std::ranges::find_if(descriptors, [&desc](const auto& existing) {
@@ -2221,6 +2250,12 @@ void JoinStorageInfo(Info& base, Info& source, size_t limit) {
                                           descriptors.size() + 1, limit);
         }
         descriptors.push_back(desc);
+    }
+    // Native global stores of either program now select among both programs' buffers.
+    if (base.native_global_bounds && (base.stores_global_memory || source.stores_global_memory)) {
+        for (StorageBufferDescriptor& desc : descriptors) {
+            desc.is_written = true;
+        }
     }
 }
 

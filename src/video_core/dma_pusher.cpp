@@ -157,21 +157,6 @@ bool DmaPusher::Step() {
     if (!puller.ResumeAcquire(*this)) {
         return false;
     }
-    // Lists queued while the channel waited were read from memory, not as submitted: the game
-    // writes the commands a list runs before it releases the acquire, so the words at submit time
-    // could be older. Reading them as late as the parse is too late in Hyrule Warriors: Age of
-    // Imprisonment fights: a command ring the game had already refilled for a later frame, read
-    // as this frame's commands (methods on unbound subchannels, garbage QMDs, then a channel
-    // waiting forever on a release it never got). The acquire is released now, so the commands
-    // are written and the memory not yet reused: copy them here. EDEN_NX2_RESNAPSHOT=0: off.
-    if (ResnapshotEnabled() && suspensions.load(std::memory_order_relaxed) != suspensions_before) {
-        const u64 now = suspensions.load(std::memory_order_acquire);
-        for (CommandList& list : dma_pushbuffer) {
-            if (!list.submitted_offsets.empty()) {
-                RefreshSnapshot(list, now);
-            }
-        }
-    }
 
     CommandList& command_list = dma_pushbuffer.front();
 
@@ -179,7 +164,7 @@ bool DmaPusher::Step() {
     const size_t command_list_size = command_list.command_lists.size();
 
     if (prefetch_size == 0 && command_list_size == 0) {
-        dma_pushbuffer.pop_front();
+        dma_pushbuffer.pop();
         dma_pushbuffer_subindex = 0;
         return true;
     }
@@ -192,7 +177,7 @@ bool DmaPusher::Step() {
             return false;
         }
         command_resume_offset = 0;
-        dma_pushbuffer.pop_front();
+        dma_pushbuffer.pop();
         return true;
     }
 
@@ -383,7 +368,7 @@ bool DmaPusher::Step() {
             }
         }
         parked_methods.clear();
-        dma_pushbuffer.pop_front();
+        dma_pushbuffer.pop();
         dma_pushbuffer_subindex = 0;
     } else {
         signal_sync = command_list.command_lists[dma_pushbuffer_subindex].sync && Settings::values.sync_memory_operations.GetValue();
