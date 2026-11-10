@@ -19,7 +19,7 @@ This guide explains how to set up a public/private self hosted Eglantine server/
 
 - Install Docker: `apt update`, `apt install -y docker.io`, `systemctl enable --now docker`. Verify Docker installation: `docker --version`
 
-- (Optional) Install Eglantine AppImage: `chmod +x eglantine-linux-*.AppImage` This step is optional and only needed if you want to manage Eglantine locally on a VPS.
+- (Optional) Install Eglantine AppImage: `chmod +x hortensia-linux-*.AppImage` This step is optional and only needed if you want to manage Eglantine locally on a VPS.
 
 - Now, we configure the lobby itself. Run the server: `docker run -d --name eden-lobby --restart unless-stopped -p 24872:24872/udp ikuzen/yuzu-hdr-multiplayer-dedicated --room-name "My Eden Room" --password "MySecurePass2025" --max-members 8 --preferred-game "Mario Kart 8 Deluxe" --preferred-game-id "01000ABF0C84C000" --web-api-url "api.ynet-fun.xyz"` This command starts the server in the background, maps the UDP port, and sets your room settings.
 

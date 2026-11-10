@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Silence the audio of an unattended eden-cli run by editing its configuration file.
+"""Silence the audio of an unattended hortensia-cli run by editing its configuration file.
 
 Usage: mute_audio.py <config.ini> [<config.ini> ...]
 

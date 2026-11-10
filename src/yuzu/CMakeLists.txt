@@ -413,12 +413,12 @@ if (APPLE)
         # Signed outside the bundle: in place, codesign checks the bundle, whose MacOS folder
         # holds non-code files (nx2_switches.txt), and refuses.
         add_custom_command(TARGET yuzu POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:yuzu> ${CMAKE_CURRENT_BINARY_DIR}/eglantine-sign
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:yuzu> ${CMAKE_CURRENT_BINARY_DIR}/hortensia-sign
             COMMAND codesign --force --sign - --entitlements
                     ${CMAKE_SOURCE_DIR}/dist/macos/eglantine.entitlements
-                    ${CMAKE_CURRENT_BINARY_DIR}/eglantine-sign
-            COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/eglantine-sign $<TARGET_FILE:yuzu>
-            COMMENT "Signing eglantine with its entitlements (hypervisor, JIT)")
+                    ${CMAKE_CURRENT_BINARY_DIR}/hortensia-sign
+            COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/hortensia-sign $<TARGET_FILE:yuzu>
+            COMMENT "Signing hortensia with its entitlements (hypervisor, JIT)")
     endif()
 
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".dylib")

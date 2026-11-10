@@ -28,8 +28,8 @@ looks programs up from the command line.
   what vanished, frame dump bindings, disassembly). `updated`: UTC time of the last edit; merging
   keeps the newer text field by field.
 
-Your local copy (`EDEN_NX2_CATALOG_DIR`, default `%APPDATA%\eglantine\nx2-catalog` or
-`~/.local/share/eglantine/nx2-catalog`) collects what you name in the lab and carries over between
+Your local copy (`EDEN_NX2_CATALOG_DIR`, default `%APPDATA%\hortensia\nx2-catalog` or
+`~/.local/share/hortensia/nx2-catalog`) collects what you name in the lab and carries over between
 builds and checkouts. Before a commit:
 
 ```sh

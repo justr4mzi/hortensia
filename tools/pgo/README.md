@@ -15,7 +15,7 @@ our own code playing Pokémon Pokopia, and `train-profile.ps1` rebuilds it from 
    (`use_docked_mode=1`) and handheld (`use_docked_mode=0`). The window renders off-screen, never
    takes focus and is muted. `LLVM_PROFILE_FILE=<dir>/<run>-%p-%m.profraw` gives every process
    its own raw profile. `--clean-exit` matters: the profile runtime writes the file from an exit
-   handler, so the runner asks eden-cli to quit (WM_CLOSE to its window, SIGTERM elsewhere)
+   handler, so the runner asks hortensia-cli to quit (WM_CLOSE to its window, SIGTERM elsewhere)
    instead of killing it.
 3. **Merge.** MSYS2's `llvm-profdata merge --sparse` writes `eglantine.profdata`.
 
@@ -52,7 +52,7 @@ our own code playing Pokémon Pokopia, and `train-profile.ps1` rebuilds it from 
 ## Training a new profile
 
 Needs Windows, [MSYS2](https://www.msys2.org) (`winget install MSYS2.MSYS2`, in `C:\msys64`),
-Python 3 on `PATH`, a Pokopia dump and the emulator's user folder (`%APPDATA%\eglantine`) with keys,
+Python 3 on `PATH`, a Pokopia dump and the emulator's user folder (`%APPDATA%\hortensia`) with keys,
 firmware and a Pokopia save past the intro. The scenarios load that save; the same runs are what
 `tools/nx2` scenarios always do, but a game can autosave while it runs.
 

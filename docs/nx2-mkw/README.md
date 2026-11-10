@@ -32,7 +32,7 @@ Detailed design notes for the two main topics:
 
 | Branch | Content |
 | --- | --- |
-| `mkw-eglantine` | Eglantine `nx2` + the commits of [changes.md](changes.md): what releases are built from |
+| `mkw-hortensia` | Eglantine `nx2` + the commits of [changes.md](changes.md): what releases are built from |
 | `release-c`, `release-d` | Earlier releases, built on Takoroka's eden-nx2 of 2026-10-29 (superseded) |
 
 ## AI disclosure

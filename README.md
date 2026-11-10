@@ -38,7 +38,7 @@ On Windows, extract the entire build archive and run **hortensia.exe**. Only use
 
 ### Existing saves and settings
 
-The rebrand renames the data root to `hortensia` (`%APPDATA%\hortensia` on Windows, `~/.local/share/hortensia` elsewhere) and the log file to `hortensia_log.txt`, so saves, settings or shader caches stored by an earlier Eden, Eglantine or Lichii build are not loaded by this build. Nothing is moved or deleted automatically; back up your saves before testing experimental builds.
+The rebrand renames the data root to `hortensia` (`%APPDATA%\hortensia` on Windows, `~/.local/share/hortensia` elsewhere) and the log file to `hortensia_log.txt`, so saves, settings or shader caches stored by an earlier Eden, Eglantine or Hortensia build are not loaded by this build. Nothing is moved or deleted automatically; back up your saves before testing experimental builds.
 
 ## Compatibility and issue reports
 

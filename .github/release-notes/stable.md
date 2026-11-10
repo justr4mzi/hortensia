@@ -10,7 +10,7 @@
 - **Xenoblade Chronicles: Definitive Edition – Nintendo Switch 2 Edition:** runs at 60 fps in the opening instead of 30-38. A per-game setting stops the texture readback the game does every frame from waiting on the whole GPU queue.
 - **Super Mario Bros. Wonder – Nintendo Switch 2 Edition:** scenery no longer flickers dark blue. GPU timestamps now reflect when the work was submitted, so the game stops switching to its cheaper lighting path every other frame.
 - **Switch 2 Edition dumps, one loader for every layout:** extracted folders, NSP/XCI and NUP all serve the edition's other programs and add-ons the same way. Dumps without program 0 (Xenoblade 2) get a stand-in in every format. NUP files packed with older versions must be repacked to include the sibling programs.
-- **NUP tools:** *Extract NUP* (game list context menu, `eden-cli --extract-nup`) unpacks an archive back into the folder layout, checking every file's SHA-256. *Edit NUP Metadata* changes name, icon and display version in place without repacking.
+- **NUP tools:** *Extract NUP* (game list context menu, `hortensia-cli --extract-nup`) unpacks an archive back into the folder layout, checking every file's SHA-256. *Edit NUP Metadata* changes name, icon and display version in place without repacking.
 - The Xenoblade series (1, 2, X, 3), Orbitals and the Kirby Switch 2 Edition no longer trigger the unsupported-game warning.
 
 ### Known issues

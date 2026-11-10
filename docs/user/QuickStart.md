@@ -16,7 +16,7 @@ Use this guide to get started using Eglantine.
 
 ### Steps
 
-1. Download the latest `eglantine-windows-x86_64` zip from the [Releases](https://github.com/notsapinho/Eglantine/releases) page.
+1. Download the latest `hortensia-windows-x86_64` zip from the [Releases](https://github.com/notsapinho/Eglantine/releases) page.
     <aside>
     
     ***TIP***:  If you have questions about the requirements, architectures, or general information surrounding what release you need - see the [*Basics Guide*](./Basics.md) and [*Architectures Guide*](./Architectures.md).
@@ -28,7 +28,7 @@ Use this guide to get started using Eglantine.
     ***TIP***: If you want to run Eglantine completely portable (everything is stored in the folder you extracted it to) - create a folder called **user** if it is not there by default.
     
     </aside> 
-3. Run ***eglantine.exe*** to launch the program.  
+3. Run ***hortensia.exe*** to launch the program.  
     
     <aside>
 
@@ -54,7 +54,7 @@ Use this guide to get started using Eglantine.
 ### Steps
 
 1. Access Steam Desktop Mode.
-2. Download the latest `eglantine-linux-x86_64` AppImage from the [Releases](https://github.com/notsapinho/Eglantine/releases) page onto your Steam Deck and save it somewhere accessible.
+2. Download the latest `hortensia-linux-x86_64` AppImage from the [Releases](https://github.com/notsapinho/Eglantine/releases) page onto your Steam Deck and save it somewhere accessible.
     
     <aside>
         

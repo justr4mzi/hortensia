@@ -3,17 +3,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Makes (or replaces) the boat.dev snapshot the Linux x86_64 release job starts from
-# (runs-on: boat-large/from=eglantine-ci in .github/workflows/release-binaries.yml): Ubuntu with
+# (runs-on: boat-large/from=hortensia-ci in .github/workflows/release-binaries.yml): Ubuntu with
 # tools/ci/linux-deps.sh already run and Qt installed in /opt/Qt, so the job skips every install.
 #
 # Run it again after changing linux-deps.sh, the Qt version or PGO_LLVM_VERSION in the workflow;
 # saving under the same name replaces the snapshot, and the next job uses the new one. Needs the
 # boat CLI (https://docs.boat.dev), signed in to the account the CI installation belongs to, and jq.
 #
-# Usage: tools/ci/boat-snapshot.sh [name]     (default name: eglantine-ci)
+# Usage: tools/ci/boat-snapshot.sh [name]     (default name: hortensia-ci)
 set -euo pipefail
 
-name=${1:-eglantine-ci}
+name=${1:-hortensia-ci}
 here=$(cd "$(dirname "$0")" && pwd)
 workflow="$here/../../.github/workflows/release-binaries.yml"
 llvm=$(sed -n 's/^  PGO_LLVM_VERSION: "\([0-9]*\)".*/\1/p' "$workflow")
@@ -39,10 +39,10 @@ sudo /opt/aqt/bin/pip install -q aqtinstall
 sudo /opt/aqt/bin/aqt install-qt linux desktop $qt linux_gcc_64 -m qtcharts -O /opt/Qt
 test -x /opt/Qt/$qt/gcc_64/bin/qmake
 sudo apt-get clean
-echo \"$name: clang $llvm, Qt $qt, made \$(date -u +%F)\" | sudo tee /opt/eglantine-ci-ready"
+echo \"$name: clang $llvm, Qt $qt, made \$(date -u +%F)\" | sudo tee /opt/hortensia-ci-ready"
 
 # Only a finished setup writes the marker; never save a half-installed sandbox.
-boat exec "$id" -- cat /opt/eglantine-ci-ready | grep -q "$name: clang $llvm, Qt $qt" ||
+boat exec "$id" -- cat /opt/hortensia-ci-ready | grep -q "$name: clang $llvm, Qt $qt" ||
     { echo "the setup did not finish; nothing saved" >&2; exit 1; }
 boat snapshot "$id" "$name"
 echo "Saved boat snapshot '$name'."

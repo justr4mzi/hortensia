@@ -82,7 +82,7 @@ You can either use RenderDoc UI to launch Eglantine, or you can make Eglantine a
 On Windows PowerShell:
 ```powershell
 $env:ENABLE_VULKAN_RENDERDOC_CAPTURE='1'
-.\eglantine.exe
+.\hortensia.exe
 ```
 When RenderDoc is attached, Eglantine logs the default Windows capture folder:
 ```text

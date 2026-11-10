@@ -65,7 +65,7 @@ if(APPLE AND NOT CMAKE_GENERATOR MATCHES "Xcode")
     add_custom_command(TARGET yuzu-cmd POST_BUILD
         COMMAND codesign --force --sign - --entitlements
                 ${CMAKE_SOURCE_DIR}/dist/macos/eglantine.entitlements $<TARGET_FILE:yuzu-cmd>
-        COMMENT "Signing eden-cli with its entitlements (hypervisor, JIT)")
+        COMMENT "Signing hortensia-cli with its entitlements (hypervisor, JIT)")
 endif()
 
 if(WIN32)

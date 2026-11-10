@@ -17,7 +17,7 @@ EDEN_NX2_SPLIT=2
 # Batch GPU fence syncpoints to reduce host driver overhead and smooth frametimes.
 EDEN_NX2_FENCE_BATCH=1
 
-# --- Lichii-AMD defaults (tested with Ocarina of Time on an RX 9070 XT) ---
+# --- Hortensia-AMD defaults (tested with Ocarina of Time on an RX 9070 XT) ---
 # Submit native work to the GPU every 128 draws instead of 4096.
 EDEN_NX2_FLUSH_DRAWS=128
 

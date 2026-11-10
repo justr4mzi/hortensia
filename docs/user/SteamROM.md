@@ -95,7 +95,7 @@ We will need to create a new parser for the Emulators.  Unlike with the EmuDeck 
 
 <aside>
 
-***TIP***: In order to ensure that the matches occur correctly, it is recommended that you name the Eglantine AppImage ***eglantine.AppImage***, rather than what it downloads as.
+***TIP***: In order to ensure that the matches occur correctly, it is recommended that you name the Eglantine AppImage ***hortensia.AppImage***, rather than what it downloads as.
 
 </aside>
 

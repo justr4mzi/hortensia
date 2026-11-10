@@ -816,7 +816,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
 #ifdef _WIN32
     // A GUI-subsystem program has no console of its own, so borrow the terminal's for the log. A
-    // stream the parent redirected (eden-cli > log.txt, tools/nx2/run_scenario.py's log files) keeps
+    // stream the parent redirected (hortensia-cli > log.txt, tools/nx2/run_scenario.py's log files) keeps
     // its redirection: reopening it on CONOUT$ would send the log to the parent's console instead.
     const auto redirected = [](DWORD which) {
         const HANDLE handle = GetStdHandle(which);

@@ -1,7 +1,7 @@
 # Settings reference for Mario Kart World 1.8.0
 
 What every user-facing setting of this emulator really does, read from the code of branch
-`mkw-eglantine` at `71c606cdda` (Eglantine `nx2` de83c3140e merged on 2026-10-31), and what to set
+`mkw-hortensia` at `71c606cdda` (Eglantine `nx2` de83c3140e merged on 2026-10-31), and what to set
 for Mario Kart World (program id `0400C3F00006E000`, a Switch 2 title). Each entry names the
 function that reads the setting, so it can be checked again after an update. Measurements quoted
 come from [`NX2_NOTES.md`](../../NX2_NOTES.md), [`NX2_VRAM.md`](../../NX2_VRAM.md) and
@@ -651,7 +651,7 @@ dialog are reset when the emulator closes. None should be on while playing.
 
 | Label | Key | Default | Effect |
 | --- | --- | --- | --- |
-| Global Log Filter | `[Miscellaneous] log_filter` | `*:Info` | What goes to `%APPDATA%\eden\log\eden_log.txt`; Debug levels cost time |
+| Global Log Filter | `[Miscellaneous] log_filter` | `*:Info` | What goes to `%APPDATA%\eden\log\hortensia_log.txt`; Debug levels cost time |
 | Show Log in Console / Flush log output on each line | `[UI] showConsole`, `[Miscellaneous] flush_line` | `false` | Flushing every line is slow |
 | Enable Extended Logging** | `extended_logging` | `false` | Log size limit 1 GB instead of 100 MB |
 | Censor username in logs | `[Miscellaneous] censor_username` | `true` | |
@@ -692,7 +692,7 @@ The status bar also has buttons for anti-aliasing and the graphics API.
 ## Environment variables
 
 Set them before starting the emulator (e.g. `set EDEN_NX2_SPLIT=1` in a command prompt, then
-`eglantine.exe`). They are read once.
+`hortensia.exe`). They are read once.
 
 ### Behaviour and performance switches
 
@@ -749,7 +749,7 @@ entries). Each one makes the game slower or restores an old bug; NX2_NOTES gives
 | `EDEN_NX2_AUDIO_LEVEL=1` | Audio output peak every ~2 s |
 | `EDEN_NATIVE_DRAW_DIAGNOSTICS`, `EDEN_NATIVE_DRAW_CAPTURE`, `EDEN_NATIVE_FRAME_CAPTURE` | Native draw/QMD diagnostics and captures |
 
-### eden-cli only
+### hortensia-cli only
 
 `EDEN_NX2_CRASH_DUMP=<dir>` (crash stack and minidump), `EDEN_NX2_HIDE_WINDOW=1`,
 `EDEN_NX2_KEY_SCRIPT=...`, `EDEN_NX2_KEY_RECORD=<file>`, `EDEN_NX2_SAMPLE=<threads>` with

@@ -11,13 +11,13 @@ or stage where the image goes bad, with runs the agent drives itself.
   the diag zero-block `}` and ablation check before the DLSS-chain code.
 - `tools/nx2/lab_ctl.py` (scratch/oot-shader-lab): CLI over the same diag folder. Subcommands:
   `launch`, `press`, `capture`, `stats`, `drawlist`, `state`, `ablate`, `bisect`, `stop`.
-- `eden-cli` reads `<EDEN_NX2_DIAG_DIR>/keys.txt` live (`<code> <ms>` lines; SDL scancodes,
+- `hortensia-cli` reads `<EDEN_NX2_DIAG_DIR>/keys.txt` live (`<code> <ms>` lines; SDL scancodes,
   A=4 B=22 +=16, arrows 79-82). `EDEN_NX2_HIDE_WINDOW=1` hides the window, `EDEN_NX2_KEY_SCRIPT`
   is the timed version.
 
 ## Procedure
 
-1. **Config.** `eden-cli` reads `sdl2-config.ini`, whose graphics settings differ from the Qt
+1. **Config.** `hortensia-cli` reads `sdl2-config.ini`, whose graphics settings differ from the Qt
    app's (async shaders, accuracy, docked). Copy `qt-config.ini` to scratch and merge the SDL
    file's `player_0_button_*`/`lstick`/`rstick` lines into it. The Qt bindings are usually a
    gamepad, so key presses do nothing. Pass it with `launch --config`.

@@ -63,7 +63,7 @@ addr2line emitted warnings. Individual GPU split wait/back-loop samples are lead
 not established gameplay bottlenecks. Do not optimize from this trace alone.
 
 Harness compatibility backlog: current build writes profile/data/eden/log/orchid_log.txt,
-while MCP log/error tools read eden_log.txt. Read the actual log for errors;
+while MCP log/error tools read hortensia_log.txt. Read the actual log for errors;
 empty MCP classification is not a correctness pass. A preliminary test of the
 installed older binary (84e5a38a14) is excluded from current-source results.
 An exploratory Fast Fusion route was stopped after scope discovery and is excluded.
@@ -122,7 +122,7 @@ in src/common/logging.cpp switches to orchid_HWAOI_04003F40232DE000.txt. That
 file contains both the Qt cleanup marker and two shader error records at 285.135 s.
 The process returned 0 without force; manual inspection proves clean teardown,
 while MCP's finalized=false is a false negative caused by following the wrong log.
-The local eden_log.txt -> orchid_log.txt alias alone did not solve this.
+The local hortensia_log.txt -> orchid_log.txt alias alone did not solve this.
 
 Graphics gate: FAILED. Program 0x234f98dd00, stage 4, instruction 0xf0:
 “native instruction before exit setup state is dead”, op words
@@ -145,7 +145,7 @@ legacy data-2 save contains only SYDAT.BIN (~2 KB), so its mere presence
 does not establish an available progressed gameplay save.
 
 Setup input route: pokopia-first-setup-v1. Stopped cleanly with finalized=true
-and qt_teardown_seen=true after pointing this run's empty eden_log.txt at
+and qt_teardown_seen=true after pointing this run's empty hortensia_log.txt at
 orchid_PP_0400A3A01EE4C000.txt. This verifies the per-game log correction
 without changing the emulator or shared configuration.
 Filesystem seed pokopia-intro-language-set-20261107 saved successfully, ID

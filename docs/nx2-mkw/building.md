@@ -35,10 +35,10 @@ cmake -S . -B build/clang -G Ninja -DCMAKE_BUILD_TYPE=Release ^
 
 cmake --build build/clang --target yuzu yuzu-cmd --parallel 16
 
-windeployqt --release --no-translations --no-compiler-runtime build\clang\bin\eglantine.exe
+windeployqt --release --no-translations --no-compiler-runtime build\clang\bin\hortensia.exe
 ```
 
-Output: `build\clang\bin\eglantine.exe` (Qt frontend, target `yuzu`) and `eden-cli.exe` (target
+Output: `build\clang\bin\hortensia.exe` (Qt frontend, target `yuzu`) and `hortensia-cli.exe` (target
 `yuzu-cmd`). Eglantine renamed only the Qt frontend: earlier releases of this fork had `eden.exe`.
 
 Notes:
@@ -48,7 +48,7 @@ Notes:
   everywhere (for example `src/core/hle/service/nx2_gsv.h`) trigger long rebuilds.
 - Do not run the emulator while building: both reserve a lot of memory and the build can fail
   with "the paging file is too small".
-- `eglantine.exe` cannot be replaced while it is running: the link step then fails with
+- `hortensia.exe` cannot be replaced while it is running: the link step then fails with
   "permission denied".
 - In a `git worktree` checkout, `.git` is a file and the configure step stops with "file COPY
   cannot copy file .../hooks/pre-commit": rename `hooks\pre-commit` for the duration of the
@@ -73,20 +73,20 @@ config (`qt-config.ini`) or save data.
 Eglantine's workflow `.github/workflows/release-binaries.yml` builds a Linux AppImage (Ubuntu 24.04,
 Qt 6.8.3; runs on glibc 2.39 or newer) and a Windows zip on GitHub's machines. On the fork, start it
 by hand from the Actions tab or with
-`gh workflow run release-binaries.yml -R Wael3rd/Eglantine-MKW --ref mkw-eglantine -f publish_release=false`;
+`gh workflow run release-binaries.yml -R Wael3rd/Eglantine-MKW --ref mkw-hortensia -f publish_release=false`;
 the files are then artifacts of the run (kept 7 days), and `publish_release=true` would publish them
 as a pre-release instead. The Linux build is not tested here: it is built, not run.
 
 ## Updating from upstream
 
-Branch `mkw-eglantine` is Eglantine's `nx2` with the commits of [changes.md](changes.md) on top.
+Branch `mkw-hortensia` is Eglantine's `nx2` with the commits of [changes.md](changes.md) on top.
 To move it to a newer Eglantine:
 
 ```bat
-git remote add eglantine https://github.com/Djihads80/Eglantine.git
-git fetch eglantine nx2
-git switch mkw-eglantine
-git rebase eglantine/nx2
+git remote add hortensia https://github.com/Djihads80/Eglantine.git
+git fetch hortensia nx2
+git switch mkw-hortensia
+git rebase hortensia/nx2
 ```
 
 (`git remote add` only the first time.)
@@ -94,7 +94,7 @@ git rebase eglantine/nx2
 - A commit Eglantine has merged meanwhile (for example its PR #28, "nx2: execute command lists as
   submitted") is dropped by the rebase, or stops it as an empty commit: `git rebase --skip`.
 - On a conflict, keep Eglantine's version of its own code and put only our change back on top.
-  Then `git log --oneline eglantine/nx2..mkw-eglantine` must list the commits of changes.md:
+  Then `git log --oneline hortensia/nx2..mkw-hortensia` must list the commits of changes.md:
   update that page when the list changes.
 - Rebuild (see above), then retest before a release: Mario Kart World 1.8.0 boots past
   "Launching"; a race with an empty shader cache has slowdowns, not freezes; a few minutes of play

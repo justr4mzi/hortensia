@@ -86,5 +86,5 @@ cmake --build build/aarch64
 And finally, run the compiled executable with QEMU!
 
 ```sh
-qemu-aarch64 build/aarch64/bin/eglantine
+qemu-aarch64 build/aarch64/bin/hortensia
 ```

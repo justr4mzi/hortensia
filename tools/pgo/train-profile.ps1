@@ -5,7 +5,7 @@
     Trains eglantine.profdata, the profile the release PGO builds use (tools/pgo/README.md).
 
 .DESCRIPTION
-    1. Builds an instrumented (-fprofile-generate) eden-cli and eglantine with MSYS2's UCRT64
+    1. Builds an instrumented (-fprofile-generate) hortensia-cli and hortensia with MSYS2's UCRT64
        clang, configured like the "Configure MinGW PGO" step of release-binaries.yml, and bundles
        its DLLs so it runs outside MSYS2.
     2. Plays Pokemon Pokopia through the training scenarios with tools/nx2/run_scenario.py, docked
@@ -13,7 +13,7 @@
     3. Merges them with MSYS2's llvm-profdata into eglantine.profdata at the repository root.
 
     The runs render off-screen, never take focus and are muted, so the PC stays usable. They use
-    the normal emulator user folder (%APPDATA%\eglantine): keys, firmware and a Pokopia save that is
+    the normal emulator user folder (%APPDATA%\hortensia): keys, firmware and a Pokopia save that is
     past the intro must be there.
 
 .EXAMPLE
@@ -30,8 +30,8 @@ param(
     # Run reports and the raw profiles.
     [string] $WorkDir = 'build\pgo-training',
     # The sdl2-config.ini the runs read their key mappings and settings from. Default: the one in
-    # the emulator's user folder. With a portable user folder next to the instrumented eden-cli
-    # (<BuildDir>\bin\user) and its config here, the training leaves %APPDATA%\eglantine alone.
+    # the emulator's user folder. With a portable user folder next to the instrumented hortensia-cli
+    # (<BuildDir>\bin\user) and its config here, the training leaves %APPDATA%\hortensia alone.
     [string] $Config,
     [string] $Output = 'eglantine.profdata',
     [string[]] $Scenarios = @(
@@ -136,10 +136,10 @@ clang --version | head -1
     Invoke-Msys2 'package' @"
 export PATH="/ucrt64/bin:`$PATH"
 cd '$buildUnix/bin'
-test -f eglantine.exe
-test -f eden-cli.exe
+test -f hortensia.exe
+test -f hortensia-cli.exe
 windeployqt6 --no-translations --no-compiler-runtime --no-opengl-sw \
-  --no-system-dxc-compiler --no-system-d3d-compiler eglantine.exe > /dev/null
+  --no-system-dxc-compiler --no-system-d3d-compiler hortensia.exe > /dev/null
 deps() {
   objdump -p "`$1" | awk '/DLL Name:/ {print `$3}' | while read -r dll; do
     [ -z "`$dll" ] && continue
@@ -154,7 +154,7 @@ deps() {
     fi
   done
 }
-for exe in eglantine.exe eden-cli.exe; do
+for exe in hortensia.exe hortensia-cli.exe; do
   deps "`$exe"
 done
 find . -name '*.dll' | while read -r dll; do
@@ -163,11 +163,11 @@ done
 "@
 }
 
-$exe = Join-Path (Resolve-Path $BuildDir).Path 'bin\eden-cli.exe'
+$exe = Join-Path (Resolve-Path $BuildDir).Path 'bin\hortensia-cli.exe'
 $raw = Join-Path $WorkDir 'raw'
 $runs = Join-Path $WorkDir 'runs'
 if (-not $SkipTraining) {
-    if (-not (Test-Path $exe)) { throw "No instrumented eden-cli at $exe" }
+    if (-not (Test-Path $exe)) { throw "No instrumented hortensia-cli at $exe" }
     if (-not (Test-Path $Game)) { throw "No game at $Game" }
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) { $python = $python.Source; $pythonArgs = @() }

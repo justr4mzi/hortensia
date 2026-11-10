@@ -5,7 +5,7 @@
 - Windows 10 or 11, 64-bit.
 - A Vulkan GPU. 8 GB of video memory is the minimum; see [video memory](#video-memory).
 - 16 GB of RAM.
-- The Microsoft Visual C++ 2015-2022 Redistributable (x64), if `eglantine.exe` does not start.
+- The Microsoft Visual C++ 2015-2022 Redistributable (x64), if `hortensia.exe` does not start.
 - **Your own** dump of Mario Kart World and **your own** `prod.keys`. Nothing of the kind is
   included in this repository or its releases.
 
@@ -36,7 +36,7 @@ Optional files that make the game list and the in-game version correct (the dump
 ## First launch
 
 1. Put `prod.keys` in `%APPDATA%\eden\keys\`.
-2. Start `eglantine.exe`.
+2. Start `hortensia.exe`.
 3. *File > Load File*, pick `...\updates\917504\exefs\main`.
 
 The first minutes of a new course compile shaders: short slowdowns are expected. Compiled shaders
@@ -44,10 +44,10 @@ are kept in `%APPDATA%\eden\cache\shader\0400c3f00006e000\`, so the next runs ar
 
 ### Eglantine and Eden names
 
-Since this fork is based on Eglantine, the program is `eglantine.exe` (it was `eden.exe` in the
+Since this fork is based on Eglantine, the program is `hortensia.exe` (it was `eden.exe` in the
 earlier releases) and its window title starts with "Eglantine". The command-line build is still
-`eden-cli.exe`, and the user folder is still Eden's: `%APPDATA%\eden` (keys, `config\qt-config.ini`,
-saves, shader cache, `log\eden_log.txt`), or a `user` folder next to the executable if there is
+`hortensia-cli.exe`, and the user folder is still Eden's: `%APPDATA%\eden` (keys, `config\qt-config.ini`,
+saves, shader cache, `log\hortensia_log.txt`), or a `user` folder next to the executable if there is
 one (portable install). Settings, saves and shader caches of the earlier releases are used as they
 are.
 
@@ -91,10 +91,10 @@ Details: [`NX2_VRAM.md`](../../NX2_VRAM.md).
 | Slow overall | GPU accuracy High | GPU accuracy Low |
 | Emulator freezes on a still image, log shows `Native MME ... parameter FIFO underflow` | GPU macro desync in the split GPU thread | Start with the environment variable `EDEN_NX2_SPLIT=1` (safer, slightly slower) |
 | Crash while the map loads (AMD) | The driver reports no sparse block size and older builds divided by it | Fixed in this release |
-| Closing or stopping hangs | Older builds | Fixed in this release; otherwise end `eglantine.exe` in the Task Manager |
+| Closing or stopping hangs | Older builds | Fixed in this release; otherwise end `hortensia.exe` in the Task Manager |
 
 Clearing the shader cache: close the emulator and delete
 `%APPDATA%\eden\cache\shader\0400c3f00006e000`.
 
-When reporting a problem, attach `%APPDATA%\eden\log\eden_log.txt` (it is overwritten at each
+When reporting a problem, attach `%APPDATA%\eden\log\hortensia_log.txt` (it is overwritten at each
 launch: copy it before starting the emulator again) and a screenshot.

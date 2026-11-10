@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright 2026 Eglantine Project
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Run eden-cli through a scripted scenario and report what the emulator did wrong.
+"""Run hortensia-cli through a scripted scenario and report what the emulator did wrong.
 
     python tools/nx2/run_scenario.py <scenario> [--out DIR] [--env NAME=VALUE ...]
 
@@ -39,12 +39,12 @@ import frames as frame_tools  # noqa: E402
 import thread_cpu  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-DEFAULT_EXE = REPO / "build" / "bin" / ("eden-cli.exe" if os.name == "nt" else "eden-cli")
+DEFAULT_EXE = REPO / "build" / "bin" / ("hortensia-cli.exe" if os.name == "nt" else "hortensia-cli")
 TAP_SECONDS = 0.3
 
 
 def request_quit(process):
-    """Ask eden-cli to quit the way closing its window does: it shuts the emulation down and
+    """Ask hortensia-cli to quit the way closing its window does: it shuts the emulation down and
     returns from main, so exit handlers run (an instrumented build writes its .profraw in one).
     Returns False when there was nothing to ask."""
     if os.name != "nt":
@@ -80,10 +80,10 @@ def default_config():
         return portable
     if os.name == "nt":
         base = pathlib.Path(os.environ.get("APPDATA", pathlib.Path.home() / ".config"))
-        return base / "eglantine" / "config" / "sdl2-config.ini"
-    # Elsewhere the config is in XDG_CONFIG_HOME/eglantine, with no config subfolder.
+        return base / "hortensia" / "config" / "sdl2-config.ini"
+    # Elsewhere the config is in XDG_CONFIG_HOME/hortensia, with no config subfolder.
     base = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or pathlib.Path.home() / ".config")
-    return base / "eglantine" / "sdl2-config.ini"
+    return base / "hortensia" / "sdl2-config.ini"
 
 
 def key_map(config_path):

@@ -220,19 +220,19 @@ deps() {
             cp "$dllpath" "$dll"
 
             # also grab the dependencies of the dependent DLL; e.g.
-            # double-conversion is a dep of Qt6Core.dll but NOT eglantine.exe
+            # double-conversion is a dep of Qt6Core.dll but NOT hortensia.exe
             deps "$dllpath"
         fi
     done
 }
 
-# NB: must be done in a directory containing eglantine.exe and eden-cli.exe
-deps eglantine.exe
-deps eden-cli.exe
+# NB: must be done in a directory containing hortensia.exe and hortensia-cli.exe
+deps hortensia.exe
+deps hortensia-cli.exe
 
 # deploy Qt plugins and such
 windeployqt6 --no-compiler-runtime --no-opengl-sw --no-system-dxc-compiler \
-    --no-system-d3d-compiler eglantine.exe
+    --no-system-d3d-compiler hortensia.exe
 
 # grab deps for Qt plugins
 find ./*/ -name "*.dll" | while read -r dll; do deps "$dll"; done

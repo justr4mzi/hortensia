@@ -469,7 +469,7 @@ class GamePropertiesFragment : Fragment() {
 
                 val shaderCacheDir = File(
                     DirectoryInitialization.userDirectory +
-                        "/cache/shader/eglantine/" + args.game.settingsName.lowercase()
+                        "/cache/shader/hortensia/" + args.game.settingsName.lowercase()
                 )
                 if (shaderCacheDir.exists()) {
                     add(

@@ -65,7 +65,7 @@ both under- and overshoot; constant full speed was not established.
 The initial audit attempt crashed because the physical core's transient debug
 interface is cleared before SVC dispatch. The corrected audit uses the process
 interface by core index. The legacy local MCP collector still expects
-eden_log.txt; actual evidence is in the per-game Orchid log instead.
+hortensia_log.txt; actual evidence is in the per-game Orchid log instead.
 
 ## Overworld diagnosis and separated 30-FPS audit
 

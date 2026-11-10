@@ -131,19 +131,19 @@ jobs:
       - name: Package Windows binary
         shell: pwsh
         run: |
-          foreach ($exe in 'eglantine.exe', 'eden-cli.exe') {
+          foreach ($exe in 'hortensia.exe', 'hortensia-cli.exe') {
             if (-not (Test-Path "build/release/bin/$exe")) {
               throw "build/release/bin/$exe was not produced"
             }
           }
-          windeployqt --release --no-translations build/release/bin/eglantine.exe
+          windeployqt --release --no-translations build/release/bin/hortensia.exe
 
       # The artifact is the bin folder itself: GitHub zips artifacts on download, and uploading a
       # zip gave a zip inside a zip. The release job zips it once for the release.
       - name: Upload Windows binary
         uses: actions/upload-artifact@v7
         with:
-          name: eglantine-windows-x86_64-${{ inputs.sha }}
+          name: hortensia-windows-x86_64-${{ inputs.sha }}
           path: build/release/bin/
           if-no-files-found: error
           retention-days: 7
@@ -254,10 +254,10 @@ jobs:
           set -euo pipefail
           export PATH="/ucrt64/bin:$PATH"
           cd build/release/bin
-          test -f eglantine.exe
-          test -f eden-cli.exe
+          test -f hortensia.exe
+          test -f hortensia-cli.exe
           windeployqt6 --no-translations --no-compiler-runtime --no-opengl-sw \
-            --no-system-dxc-compiler --no-system-d3d-compiler eglantine.exe
+            --no-system-dxc-compiler --no-system-d3d-compiler hortensia.exe
           deps() {
             objdump -p "$1" | awk '/DLL Name:/ {print $3}' | while read -r dll; do
               [ -z "$dll" ] && continue
@@ -273,7 +273,7 @@ jobs:
               fi
             done
           }
-          for exe in eglantine.exe eden-cli.exe; do
+          for exe in hortensia.exe hortensia-cli.exe; do
             deps "$exe"
           done
           find . -name '*.dll' | while read -r dll; do
@@ -283,7 +283,7 @@ jobs:
       - name: Upload MinGW binary
         uses: actions/upload-artifact@v7
         with:
-          name: eglantine-windows-x86_64-pgo-${{ inputs.sha }}
+          name: hortensia-windows-x86_64-pgo-${{ inputs.sha }}
           path: build/release/bin/
           if-no-files-found: error
           retention-days: 7

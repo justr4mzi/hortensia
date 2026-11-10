@@ -9,8 +9,8 @@ when known, by their shader hash (the frame dump "shaders" value and reject_shad
 of the lowered code, so it changes when the lowering of that program changes).
 
 The shader lab keeps a local copy per user that carries over between builds and checkouts
-(EDEN_NX2_CATALOG_DIR, default %APPDATA%/eglantine/nx2-catalog or
-~/.local/share/eglantine/nx2-catalog). It merges the repo copy into it at start and saves new
+(EDEN_NX2_CATALOG_DIR, default %APPDATA%/hortensia/nx2-catalog or
+~/.local/share/hortensia/nx2-catalog). It merges the repo copy into it at start and saves new
 labels there. Before committing, compare the two and bring new entries into the repo:
 
     python3 -I tools/nx2/catalog.py status        # exit 1 when the local copy has more
@@ -49,7 +49,7 @@ def local_dir():
         base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return os.path.join(base, "eglantine", "nx2-catalog")
+    return os.path.join(base, "hortensia", "nx2-catalog")
 
 
 def now():

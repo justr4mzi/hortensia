@@ -75,7 +75,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v8
         with:
-          pattern: eglantine-*-${{ inputs.sha }}
+          pattern: hortensia-*-${{ inputs.sha }}
           path: artifacts
 
       # Asset names drop the commit sha: the tag already identifies the build, and stable names let

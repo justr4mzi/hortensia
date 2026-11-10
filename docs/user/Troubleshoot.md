@@ -29,13 +29,13 @@ None
 ```
 **Example Error Message Entry in Windows Event Viewer**
 ```text
-Faulting application name: eglantine.exe, version: 0.0.0.0, time stamp: 0x6795dc3c
+Faulting application name: hortensia.exe, version: 0.0.0.0, time stamp: 0x6795dc3c
 Faulting module name: ntdll.dll, version: 10.0.26100.3037, time stamp: 0x95e6c489
 Exception code: 0xc0000005
 Fault offset: 0x0000000000014778
 Faulting process id: 0x2AF0
 Faulting application start time: 0x1DB7C30D2972402
-Faulting application path: C:\temp\eglantine-windows-x86_64\eglantine.exe
+Faulting application path: C:\temp\hortensia-windows-x86_64\hortensia.exe
 Faulting module path: C:\WINDOWS\SYSTEM32\ntdll.dll
 Report Id: 4c8a6e13-9637-438c-b4d0-e802d279af66
 Faulting package full name: 
@@ -48,12 +48,12 @@ Faulting package-relative application ID:
 
 <aside>
 
-#### Issue 1: Missing libraries next to eglantine.exe
+#### Issue 1: Missing libraries next to hortensia.exe
 
-*The release zip carries every library Eglantine needs (Qt, the C++ runtime and the rest) as DLLs next to `eglantine.exe`. If only the exe was copied out of the folder, or the zip was only partly extracted, Windows cannot find them and the program cannot start.*
+*The release zip carries every library Eglantine needs (Qt, the C++ runtime and the rest) as DLLs next to `hortensia.exe`. If only the exe was copied out of the folder, or the zip was only partly extracted, Windows cannot find them and the program cannot start.*
 
 1. Extract the whole release zip into a folder of its own.
-2. Run `eglantine.exe` from that folder. Make a shortcut to it if you want it elsewhere, instead of moving the exe.
+2. Run `hortensia.exe` from that folder. Make a shortcut to it if you want it elsewhere, instead of moving the exe.
 3. Launch Eglantine again; if the main window appears, you are good to go. If not, proceed to the next issue.
 
 A build you compiled yourself with MSVC also needs Microsoft's [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170) on a PC without Visual Studio.
@@ -75,13 +75,13 @@ A build you compiled yourself with MSVC also needs Microsoft's [Visual C++ Redis
 5. Look for an entry with the Level of Error, and look for a message similar to the following
     
     ```text
-    Faulting application name: eglantine.exe, version: 0.0.0.0, time stamp: 0x6795dc3c
+    Faulting application name: hortensia.exe, version: 0.0.0.0, time stamp: 0x6795dc3c
     Faulting module name: ntdll.dll, version: 10.0.26100.3037, time stamp: 0x95e6c489
     Exception code: 0xc0000005
     Fault offset: 0x0000000000014778
     Faulting process id: 0x2AF0
     Faulting application start time: 0x1DB7C30D2972402
-    Faulting application path: C:\temp\eglantine-windows-x86_64\eglantine.exe
+    Faulting application path: C:\temp\hortensia-windows-x86_64\hortensia.exe
     Faulting module path: C:\WINDOWS\SYSTEM32\ntdll.dll
     Report Id: 4c8a6e13-9637-438c-b4d0-e802d279af66
     Faulting package full name: 

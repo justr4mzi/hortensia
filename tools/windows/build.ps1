@@ -7,7 +7,7 @@
 
 .DESCRIPTION
     Loads the Visual C++ environment, makes sure glslangValidator is reachable, configures
-    CMake on first run, then builds the GUI (eglantine.exe) and CLI (eden-cli.exe).
+    CMake on first run, then builds the GUI (hortensia.exe) and CLI (hortensia-cli.exe).
     Qt and SDL3 are downloaded by CPM into .cache/cpm on the first configure.
 
     glslangValidator comes from the Vulkan SDK (found through VULKAN_SDK). The SDK installer
@@ -68,4 +68,4 @@ if ($Reconfigure -or -not (Test-Path "$BuildDir\CMakeCache.txt")) {
 cmake --build $BuildDir --target @Targets --parallel
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)" }
 
-Write-Host "Built: $BuildDir\bin\eglantine.exe and $BuildDir\bin\eden-cli.exe"
+Write-Host "Built: $BuildDir\bin\hortensia.exe and $BuildDir\bin\hortensia-cli.exe"

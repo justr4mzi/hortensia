@@ -6,14 +6,14 @@ author: kraibse
 license: MIT
 metadata:
   hermes:
-    tags: [eglantine, eden, switch2, automation, headless, eden-cli, playtest]
+    tags: [hortensia, eden, switch2, automation, headless, hortensia-cli, playtest]
     related_skills: [nx2-shader-triage, switch-emulator-diagnostics]
 ---
 
 # Driving Eglantine NX2 runs unattended
 
 Boot a Switch 2 title hidden, press buttons, capture and measure frames, and read the diagnostics,
-all without the user. Built on `eden-cli` (SDL frontend) and the shader lab's diagnostics folder.
+all without the user. Built on `hortensia-cli` (SDL frontend) and the shader lab's diagnostics folder.
 
 ## When to Use
 
@@ -31,14 +31,14 @@ all without the user. Built on `eden-cli` (SDL frontend) and the shader lab's di
   `scripts/to_gameplay.sh`) plus about 1 minute of gameplay is enough for a fix check. Don't run
   4-5 minute walks or sleep through long fixed waits. Ask before a long series of runs if the user
   may be at the PC.
-- **Use the user's graphics settings, your key bindings.** `eden-cli` reads `sdl2-config.ini`, whose
+- **Use the user's graphics settings, your key bindings.** `hortensia-cli` reads `sdl2-config.ini`, whose
   graphics settings differ from the Qt app's (async shaders, accuracy, docked). Make a scratch copy
   of `~/.config/eden/qt-config.ini`, merge in the SDL file's `player_0_button_*`, `lstick`, `rstick`
   and `motion` lines (the Qt ones are usually a gamepad, so keys do nothing), and pass
   `launch --config`.
 - **Never `cd` into dumps or run scripts from them.** Pass paths as arguments, and run Python
   with `-I`.
-- Check `pgrep -af 'eden-cli|eglantine'` before launching: only one instance should own the GPU.
+- Check `pgrep -af 'hortensia-cli|hortensia'` before launching: only one instance should own the GPU.
   When the user says they're testing manually, `lab_ctl stop` the lab instance at once.
 - **Lab-run every port before the user gets the build**, at least boot-to-save plus a walk.
   Sync and fence-timing changes from forks can deadlock in this tree's GPU split even when they
@@ -64,7 +64,7 @@ $L bisect --kind p --bad "b < 0.3 * g"    # halve active programs until the expr
 $L stop
 ```
 
-- Live keys: `eden-cli` polls `<EDEN_NX2_DIAG_DIR>/keys.txt` (`<scancode> [ms]` lines; it renames
+- Live keys: `hortensia-cli` polls `<EDEN_NX2_DIAG_DIR>/keys.txt` (`<scancode> [ms]` lines; it renames
   and deletes the file). `EDEN_NX2_KEY_SCRIPT` is the timed, at-launch alternative;
   `EDEN_NX2_KEY_RECORD=<file>` records a session in the same format. A `gpu low` / `gpu high`
   line sets the GPU accuracy mid-game and applies it, like the Qt app's Change GPU Mode hotkey.
@@ -80,7 +80,7 @@ $L stop
 
 ## Procedure
 
-1. Build `eden-cli` (`ninja -C build eden-cli`). The Qt `yuzu` target doesn't rebuild it.
+1. Build `hortensia-cli` (`ninja -C build hortensia-cli`). The Qt `yuzu` target doesn't rebuild it.
 2. Prepare `$D/qt-copy.ini` as above, once per session.
 3. Launch, wait for the title (title-specific timing in references), and press through to the
    scene. Write the sequence as a small script in `$D` so later runs repeat it exactly.
@@ -103,14 +103,14 @@ $L stop
    pixels >0.3 brighter than the median of the 8 frames around them and makes a sheet of the worst
    event. 400-600 frames (20-30 s in the lab) caught ~1 flash per run in OoT.
 9. **A/B a fix against the build without it** when the symptom is intermittent: save the fix
-   (`git diff <files> > fix.patch`), `git checkout -- <files>`, build `eden-cli`, copy it to scratch,
+   (`git diff <files> > fix.patch`), `git checkout -- <files>`, build `hortensia-cli`, copy it to scratch,
    `git apply fix.patch`, rebuild, then run both with `launch --binary <path>` and the same script.
    Compare a counter (verifier differences, luma spread, stall lines), not just "didn't crash".
 
 ### A crash the user reports from the Qt app
 
-Read the log timeline before any stack: `~/.local/share/eden/log/eden_log.txt` (the previous run
-is `eden_log.txt.old.txt`).
+Read the log timeline before any stack: `~/.local/share/eden/log/hortensia_log.txt` (the previous run
+is `hortensia_log.txt.old.txt`).
 
 ```bash
 tr -d '\000' < $LOG | grep -a -E "LogSettings: M- Renderer.gpu_accuracy|GPU thread split|Waited [0-9]+ s|Shutdown requested|Userspace PANIC|failed to stop|SIGSEGV"
@@ -152,7 +152,7 @@ tr -d '\000' < $LOG | grep -a -E "LogSettings: M- Renderer.gpu_accuracy|GPU thre
 - The shader lab browser UI (`EDEN_NX2_LAB=open`) and `lab_ctl` share the same files and can run
   together. The lab shows each program's shader catalogue entry and saves new names to the local
   catalogue (`tools/nx2/catalog.py`); `catalog.py status` / `merge` before a commit (AGENTS.md).
-- The debug server (`EDEN_NX2_DEBUG_SERVER`, `docs/nx2/debug-mcp.md`) works in `eden-cli` too:
+- The debug server (`EDEN_NX2_DEBUG_SERVER`, `docs/nx2/debug-mcp.md`) works in `hortensia-cli` too:
   `input_sequence` replays exact frame-timed moves, `capture_frame` dumps the frame's passes.
 
 ## References
@@ -163,4 +163,4 @@ tr -d '\000' < $LOG | grep -a -E "LogSettings: M- Renderer.gpu_accuracy|GPU thre
   Extra args go to `launch`; a later `--config`/`--binary` overrides the script's.
 - `references/gpu-split-hangs.md`: freeze signatures, GPU split invariants, fence-behaviour modes,
   lab configs per fence mode, live stacks under gdb.
-- `scripts/eden-gdb.sh`: `eden-cli` under gdb for `launch --binary` (stacks on SIGINT).
+- `scripts/eden-gdb.sh`: `hortensia-cli` under gdb for `launch --binary` (stacks on SIGINT).

@@ -220,7 +220,7 @@ def command_launch(args):
     for stale in os.listdir(args.diag_dir):
         if re.match(r"^(diag-state\.json|draw-list|draw-list-\d+\.tsv|capture-\d+\.tga)$", stale):
             os.unlink(os.path.join(args.diag_dir, stale))
-    binary = args.binary or os.path.join(REPO, "build", "bin", "eden-cli")
+    binary = args.binary or os.path.join(REPO, "build", "bin", "hortensia-cli")
     log = open(os.path.join(args.diag_dir, "emulator.log"), "w")
     command = [binary] + (["-c", args.config] if args.config else []) + ["-g", args.game]
     process = subprocess.Popen(command, env=environment, stdout=log,
@@ -304,7 +304,7 @@ BUTTONS = {"a": 4, "b": 22, "x": 29, "y": 27, "l": 9, "r": 11, "zl": 20, "zr": 2
 
 
 def command_press(args):
-    """Queues key presses for the running eden-cli (<diag dir>/keys.txt, read live)."""
+    """Queues key presses for the running hortensia-cli (<diag dir>/keys.txt, read live)."""
     lines = []
     for item in args.keys:
         name, _, count = item.partition("*")
@@ -319,7 +319,7 @@ def command_press(args):
         deadline = time.time() + 10
         while os.path.exists(path):
             if time.time() > deadline:
-                sys.exit("keys.txt is not being read: is eden-cli running with this diag dir?")
+                sys.exit("keys.txt is not being read: is hortensia-cli running with this diag dir?")
             time.sleep(0.05)
         write_atomic(path, line + "\n")
         time.sleep(args.hold / 1000 + args.gap)
@@ -390,7 +390,7 @@ def main():
     parser.add_argument("-d", "--diag-dir", required=True)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    launch = commands.add_parser("launch", help="start eden-cli with the diagnostics enabled")
+    launch = commands.add_parser("launch", help="start hortensia-cli with the diagnostics enabled")
     launch.add_argument("--game", required=True)
     launch.add_argument("--dump-dir")
     launch.add_argument("--tensor", action="store_true", help="set EDEN_NX2_TENSOR=1")
@@ -400,7 +400,7 @@ def main():
     launch.add_argument("--max-seconds", type=int, default=900,
                         help="stop the emulator after this long (0: never)")
     launch.add_argument("--binary")
-    launch.add_argument("--config", help="eden-cli -c: a configuration file (e.g. a copy of qt-config.ini)")
+    launch.add_argument("--config", help="hortensia-cli -c: a configuration file (e.g. a copy of qt-config.ini)")
     launch.set_defaults(func=command_launch)
 
     commands.add_parser("stop").set_defaults(func=command_stop)
@@ -428,7 +428,7 @@ def main():
             sub.add_argument("--active", type=int, default=120)
             sub.add_argument("--bad", required=True, help="Python expression over the image stats")
 
-    press = commands.add_parser("press", help="tap buttons on the running eden-cli: a b plus up*3 ...")
+    press = commands.add_parser("press", help="tap buttons on the running hortensia-cli: a b plus up*3 ...")
     press.add_argument("keys", nargs="+", help="button names (or scancodes), name*N to repeat")
     press.add_argument("--hold", type=int, default=120, help="milliseconds each press is held")
     press.add_argument("--gap", type=float, default=0.3, help="seconds between presses")

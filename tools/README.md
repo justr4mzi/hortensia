@@ -5,7 +5,7 @@ Tools for Eglantine and its subprojects. When adding new scripts please use `#!/
 ## Switch 2
 
 - [`nx2`](./nx2): Python tools for the Switch 2 work (standard library only):
-  - `run_scenario.py`: Runs `eden-cli` through a scripted scenario (see [`nx2/scenarios`](./nx2/scenarios)) and reports what the emulator did wrong.
+  - `run_scenario.py`: Runs `hortensia-cli` through a scripted scenario (see [`nx2/scenarios`](./nx2/scenarios)) and reports what the emulator did wrong.
   - `thread_cpu.py`: Per-thread CPU time of a running emulator, by thread name (Windows).
   - `pokopia_fps_mod.py`: Writes a frame-rate mod (exefs IPS patch) for Pokémon Pokopia, like the ones in [`mods`](../mods).
   - `frames.py`: Turns `EDEN_NX2_FRAME_CAPTURE` output into PNGs and a contact sheet.
@@ -22,7 +22,7 @@ Tools for Eglantine and its subprojects. When adding new scripts please use `#!/
 
 ## macOS
 
-- `macos/package.sh`: Packages a local build into a self-contained `eglantine.app` zip and checks it (see [Build.md](../docs/Build.md#macos-packages)).
+- `macos/package.sh`: Packages a local build into a self-contained `hortensia.app` zip and checks it (see [Build.md](../docs/Build.md#macos-packages)).
 
 ## CI
 

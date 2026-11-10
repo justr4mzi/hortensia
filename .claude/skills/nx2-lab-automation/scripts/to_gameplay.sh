@@ -12,7 +12,7 @@ if [ -f "$D/qt-copy.ini" ]; then
 fi
 $L stop 2>/dev/null
 $L launch --hidden --max-seconds 420 --config "$D/qt-copy.ini" \
-  --dump-dir ~/Documents/hermes/eglantine/oot-shader-dump --game "$GAME" "$@"
+  --dump-dir ~/Documents/hermes/hortensia/oot-shader-dump --game "$GAME" "$@"
 sleep 84; $L press a --hold 200   # title (fully up by ~81 s) -> load screen
 sleep 9;  $L press a --hold 200   # newest save
 sleep 4;  $L press a --hold 200   # confirm

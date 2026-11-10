@@ -3,7 +3,7 @@
 - Game: `/run/media/kraibse/SOINC/emulation/Switch 2/games/The Legend of Zelda Ocarina of TIme [04004860224DEC000].nup`
   (a standalone update NUP; boots the update program directly). Shader cache key `0400486024dec000`.
 - Firmware: `/run/media/kraibse/SOINC/emulation/Switch 2/firmware/firmware` (user-provided).
-- Shader dumps: `~/Documents/hermes/eglantine/oot-shader-dump` (all 1937 lowered as of 6b934346d7).
+- Shader dumps: `~/Documents/hermes/hortensia/oot-shader-dump` (all 1937 lowered as of 6b934346d7).
 
 ## Reaching a scene
 

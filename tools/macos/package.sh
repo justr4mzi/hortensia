@@ -13,14 +13,14 @@ trap 'rm -rf "$stage"' EXIT HUP INT TERM
 app="$stage/orchid.app"
 ditto "$build_dir/bin/orchid.app" "$app"
 rm -f "$app/Contents/MacOS/nx2_switches.txt"
-cp "$build_dir/bin/eden-cli" "$app/Contents/MacOS/eden-cli"
+cp "$build_dir/bin/hortensia-cli" "$app/Contents/MacOS/hortensia-cli"
 cp "$source_dir/dist/macos/orchid.entitlements" "$app/Contents/Resources/"
 mkdir -p "$app/Contents/Resources/licenses"
 cp -R "$source_dir/dist/licenses/." "$app/Contents/Resources/licenses/"
 test -s "$app/Contents/Frameworks/libMoltenVK.dylib"
 
 "${QT_ROOT_DIR:?QT_ROOT_DIR must point to the Qt installation}/bin/macdeployqt" "$app" \
-    "-executable=$app/Contents/MacOS/eden-cli" -always-overwrite
+    "-executable=$app/Contents/MacOS/hortensia-cli" -always-overwrite
 
 rm -f "$app/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin.dylib"
 find "$app/Contents" -type f | while IFS= read -r binary; do
@@ -36,7 +36,7 @@ find "$app/Contents" -type f | while IFS= read -r binary; do
             esac
         done
 done
-for executable in orchid eden-cli; do
+for executable in orchid hortensia-cli; do
     binary="$app/Contents/MacOS/$executable"
     if ! otool -l "$binary" | awk '/cmd LC_RPATH/ {getline; getline; print $2}' |
         grep -qx '@executable_path/../Frameworks'; then
@@ -50,7 +50,7 @@ find "$app/Contents/Frameworks" "$app/Contents/PlugIns" -type f | while IFS= rea
     fi
 done
 codesign --force --sign - --entitlements "$app/Contents/Resources/orchid.entitlements" \
-    "$app/Contents/MacOS/eden-cli"
+    "$app/Contents/MacOS/hortensia-cli"
 codesign --force --sign - --entitlements "$app/Contents/Resources/orchid.entitlements" "$app"
 
 ditto -c -k --sequesterRsrc --keepParent "$app" "$output"
@@ -95,7 +95,7 @@ find "$app" -type f | while IFS= read -r binary; do
     done
 done
 
-for executable in orchid eden-cli; do
+for executable in orchid hortensia-cli; do
     codesign --display --entitlements :- "$app/Contents/MacOS/$executable" \
         > "$stage/$executable-entitlements.plist"
     test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-jit' \
@@ -116,7 +116,7 @@ env = os.environ.copy()
 for name in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"):
     env.pop(name, None)
 
-cli = subprocess.run([str(app / "Contents/MacOS/eden-cli")],
+cli = subprocess.run([str(app / "Contents/MacOS/hortensia-cli")],
                      capture_output=True, text=True, timeout=30, env=env)
 output = cli.stdout + cli.stderr
 if cli.returncode != 1 or "No ROM specified" not in output:

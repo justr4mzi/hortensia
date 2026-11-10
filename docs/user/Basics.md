@@ -44,7 +44,7 @@ The recommended way is to create a `.bat` file alongside the emulator `.exe`; co
 ```bat
 set "__GL_THREADED_OPTIMIZATIONS=1"
 set "SOME_OTHER_VAR=1"
-eglantine.exe
+hortensia.exe
 ```
 
 Android doesn't have a convenient way to set environment variables.
@@ -54,7 +54,7 @@ For other platforms, the recommended method is using a shell script:
 ```sh
 export __GL_THREADED_OPTIMIZATIONS=1
 export SOME_OTHER_VAR=1
-./eglantine
+./hortensia
 ```
 
 Then just running `chmod +x script.sh && source script.sh`.

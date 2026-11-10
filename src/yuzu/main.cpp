@@ -43,7 +43,7 @@
 #include <windows.h>
 #include "common/fs/path_util.h"
 
-// Crash report for the Qt frontend (eden-cli has EDEN_NX2_CRASH_DUMP): on an unhandled exception
+// Crash report for the Qt frontend (hortensia-cli has EDEN_NX2_CRASH_DUMP): on an unhandled exception
 // or abort(), write eden-crash-<pid>.txt (fault and stack as module+offset, resolve with the
 // module's PDB) and eden-crash-<pid>.dmp to the crash_dumps folder. The log is written
 // asynchronously, so a crash cuts it short and says nothing. Fastmem faults are handled before.
@@ -105,7 +105,7 @@ static void WriteCrashReport(EXCEPTION_POINTERS* exception) {
                               : INVALID_HANDLE_VALUE;
     if (file != INVALID_HANDLE_VALUE) {
         const ExceptionInformation information{GetCurrentThreadId(), exception, FALSE};
-        // MiniDumpWithThreadInfo, as eden-cli: larger dump types fail on Eden's address space.
+        // MiniDumpWithThreadInfo, as hortensia-cli: larger dump types fail on Eden's address space.
         write(GetCurrentProcess(), GetCurrentProcessId(), file, 0x1000,
               exception ? &information : nullptr, nullptr, nullptr);
         CloseHandle(file);

@@ -1,7 +1,7 @@
 # Fire Emblem: Fortune's Weave (`04007EF01F8AE000`) — bring-up notes
 
 Base: `nx2-20261031` (`60ef6d275`), branch `fe-fortunes-weave`. Linux build (CachyOS,
-GCC 16, radv 26.99.99 / RX 9070 XT), `eden-cli`, loose ExeFS dump with update `131072` (2.0.0).
+GCC 16, radv 26.99.99 / RX 9070 XT), `hortensia-cli`, loose ExeFS dump with update `131072` (2.0.0).
 
 ## State (2026-10-31)
 
@@ -12,14 +12,14 @@ The game logic itself keeps running (~56 presents/s, vblank-paced, no hangs, no 
 
 ## How to run a loose dump from the CLI
 
-`eden-cli` opens `<path>/main`, so the path must be the **exefs directory**, not the game folder:
+`hortensia-cli` opens `<path>/main`, so the path must be the **exefs directory**, not the game folder:
 
 ```
 SDL_VIDEODRIVER=wayland WAYLAND_DISPLAY=wayland-1 \
-  ./eden-cli -g "/home/leon/Switch2/Fire Emblem Fortune's Weave/updates/131072/exefs"
+  ./hortensia-cli -g "/home/leon/Switch2/Fire Emblem Fortune's Weave/updates/131072/exefs"
 ```
 
-The update's `romfs/` is found next to that `exefs/` directory. Log: `~/.local/share/eden/log/eden_log.txt`.
+The update's `romfs/` is found next to that `exefs/` directory. Log: `~/.local/share/eden/log/hortensia_log.txt`.
 
 ## Blockers, in order of first hit
 

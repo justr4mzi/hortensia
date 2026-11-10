@@ -1447,7 +1447,7 @@ namespace {
 void RemoveOldSharedShaderCache(u64 title_id) {
     const auto shared_dir{Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir).parent_path() /
                           fmt::format("{:016x}", title_id)};
-    const auto is_eglantines = [](const std::filesystem::path& path,
+    const auto is_hortensias = [](const std::filesystem::path& path,
                                   const std::array<char, 8>& magic) {
         std::ifstream file(path, std::ios::binary);
         std::array<char, 8> found{};
@@ -1458,12 +1458,12 @@ void RemoveOldSharedShaderCache(u64 title_id) {
     constexpr std::array<char, 8> OldPipelineMagic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
     constexpr std::array<char, 8> OldDriverCacheMagic{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
     size_t removed = 0;
-    if (is_eglantines(shared_dir / "vulkan.bin", OldPipelineMagic)) {
+    if (is_hortensias(shared_dir / "vulkan.bin", OldPipelineMagic)) {
         removed += Common::FS::RemoveFile(shared_dir / "vulkan.bin") ? 1 : 0;
         // The used-pipeline list is Eglantine's own file, kept next to its pipeline cache.
         removed += Common::FS::RemoveFile(shared_dir / "vulkan_used.bin") ? 1 : 0;
     }
-    if (is_eglantines(shared_dir / "vulkan_pipelines.bin", OldDriverCacheMagic)) {
+    if (is_hortensias(shared_dir / "vulkan_pipelines.bin", OldDriverCacheMagic)) {
         removed += Common::FS::RemoveFile(shared_dir / "vulkan_pipelines.bin") ? 1 : 0;
     }
     if (removed != 0) {

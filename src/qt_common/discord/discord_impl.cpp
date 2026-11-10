@@ -34,7 +34,7 @@ namespace {
 
 // Community-maintained names and covers, keyed by title ID: <TITLEID>.txt and <TITLEID>.png
 constexpr char COVERS_HOST[] = "raw.githubusercontent.com";
-constexpr char COVERS_PATH[] = "/mushymeow/eglantine-covers/main/";
+constexpr char COVERS_PATH[] = "/mushymeow/hortensia-covers/main/";
 
 std::optional<std::string> FetchFromCovers(const std::string& file_name, bool want_body) {
     httplib::SSLClient client(COVERS_HOST);

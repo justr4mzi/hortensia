@@ -26,7 +26,7 @@ e902aca64 sylvieistaken/selevet-eglantine: already in Orchid via 9c34939757
 04c62be63 Greencus/Eglantine: hypervisor exit stats, macOS
 0926d935a YLTai/Eglantine: 3 s sensor re-enable watchdog left out (would toggle sensors forever on pads that never stream); baseline reset ported
 0a41327ff failaip12/Eglantine-upstream: kind_map lock already in Orchid
-0e74ac4d5 Vortex727/eglantine-zortos293: AVX-512 CLZ16 vpmovdw, already in Orchid
+0e74ac4d5 Vortex727/hortensia-zortos293: AVX-512 CLZ16 vpmovdw, already in Orchid
 10e30299f andrewleeog/Eglantine: HSETP2 0x234 already lowered
 13d34459c Quixomatic/Eglantine: built-in MCP server
 13ff6939b CarlosKeese/Eglantine: FSEL 0xd08 conflicts with Orchid's MUFU 0xd08; FRND cbuf part ported
@@ -48,14 +48,14 @@ e902aca64 sylvieistaken/selevet-eglantine: already in Orchid via 9c34939757
 47e27f93e NicholasBly/Eglantine: subgroup size only for warp ops, changes RADV compute wave size, needs benchmark, misses uses_tensor_mul_add
 4cd10d83f exploitizm/Eglantine: GPU-queue lock deadlock, Orchid's Nx2GpuCommandScope already publishes GPU work after the locks drop
 50b4ee7bb MarekMarecgy/Eglantine: vdec Start completes handed-out images; Start word layout (w[3]=~syncpoint, w[4]=value) conflicts with the release fence layout, needs a DKB tutorial-video log first
-52a1fc70c Vortex727/eglantine-zortos293: memory_tracker mock batch updates, already in Orchid
-543e2c47a Vortex727/eglantine-zortos293: ampere_sured MSVC C4388, already in Orchid
+52a1fc70c Vortex727/hortensia-zortos293: memory_tracker mock batch updates, already in Orchid
+543e2c47a Vortex727/hortensia-zortos293: ampere_sured MSVC C4388, already in Orchid
 5bfdb6836 nowhere02 (yuri2301, andrewleeog): same as f4eea1b0b
 5c56d78b8 ryzendew/Eglantine: tensor/cooperative matrix rework on an old base, big feature
 60bc4fa0c nowhere02 (several forks): VOTEU/LDC/F2I forms already lowered in Orchid
 62680295d NicholasBly/Eglantine: punch holes instead of memset, already in Orchid
 678d5c318 NicholasBly/Eglantine: TranscodeAstcToBcn wait already true in Orchid
-67e5e2db0 Vortex727/eglantine-zortos293: device_memory_manager unregistered asid guard, already in Orchid
+67e5e2db0 Vortex727/hortensia-zortos293: device_memory_manager unregistered asid guard, already in Orchid
 695a54dc2 ominixisboss/Eglantine: u8path replacement, already in Orchid
 6bef20f02 YLTai/Eglantine: motion diagnostics logging
 7216c23ad QcCodingBear/Eglantine: Windows arena release/fallback MEM_RELEASE size, already in Orchid
@@ -68,7 +68,7 @@ e902aca64 sylvieistaken/selevet-eglantine: already in Orchid via 9c34939757
 8681f9554 CarlosKeese/Eglantine: TXD channel mask already in Orchid
 86d34d703 adamhahnHU/EglantineAMD: same update RomFS layering as 8faac3056, held for the same decision
 875d2d4e1 JayceeB1/Eglantine: drops ISBERD mode checks, guessed
-8bd1a3420 Vortex727/eglantine-zortos293: cemuhook loopback bind, already in Orchid
+8bd1a3420 Vortex727/hortensia-zortos293: cemuhook loopback bind, already in Orchid
 8c5c6fea2 Greencus/Eglantine: Hypervisor.framework backend, macOS feature
 8c6e975d2 ryzendew/Eglantine: follow-up of 5c56d78b8
 8faac3056 exploitizm/Eglantine: layer base + updates/<ver> ExeFS/RomFS; Orchid dumps carry full patched update RomFS, layering doubles the MKW RomFS build (206k files); needs a decision (only for delta-extracted dumps)
@@ -90,23 +90,23 @@ b504f4e82 cira0100/Eglantine-public: NSP Switch 2 detection, covered by c5d1f95e
 b6922a0bd MarekMarecgy/Eglantine: arm64 backend honours Unsafe_IgnoreGlobalMonitor (+ env knob); plausible arm64 perf win but arm64-only code, cannot compile here; port with an aarch64 CI run
 b76aa4962 MFS-code/Eglantine-steamdeck: -Werror shadow fixes in code Orchid does not have
 bcf8471dc nowhere02 (several forks): IsGeneric Generic31W already in Orchid
-be45bc3a6 andrewleeog/Eglantine: eden-cli terminate backtrace knob, debug tooling
+be45bc3a6 andrewleeog/Eglantine: hortensia-cli terminate backtrace knob, debug tooling
 c547743ec FZout/Eglantine: same update RomFS layering as 8faac3056, held for the same decision
-c6e6627f7 andrewleeog/Eglantine: eden-cli key script HID keyboard press, harness tooling
+c6e6627f7 andrewleeog/Eglantine: hortensia-cli key script HID keyboard press, harness tooling
 caa117b0f MarekMarecgy/Eglantine: same as 50b4ee7bb
 cbf63c94c smarkyie/Eglantine: tests registration for 24f0358ec
 cc91f3291 MFS-code/Eglantine-steamdeck: guest CPU/wait profiler, panic strings; host memory release already covered by Orchid's granule punch-hole
 cd481689b exploitizm/Eglantine: F2I U16 cbuf abs/neg, already in Orchid (4cd674a06d from Selevet)
 d1a55f813 yumekiru/Eglantine-WiimoteSupport: Wiimote MotionPlus calibration, feature
 d55cf6985 SmileyTatsu/Eglantine: destroy and recreate DeviceMemory on Switch 2 stop; lifetime risk (references held by GPU/device memory managers), Orchid already punches freed granules
-dc2f50397 Vortex727/eglantine-zortos293: rest of the asid guard, already in Orchid
+dc2f50397 Vortex727/hortensia-zortos293: rest of the asid guard, already in Orchid
 df48e995e NicholasBly/Eglantine: native reader already uses ReadBlock
 e0d2ac4f7 MFS-code/Eglantine-steamdeck: AppleClang zstd waiver, already in Orchid
 e6e81664e MFS-code/Eglantine-steamdeck: link-register clobber check already skips no-destination ops
 e7498b8f4 Quixomatic/Eglantine: IPC/SVC observers for the MCP server
 eac6bacf3 cila-git/Eglantine-intel-fix: same series
 ef29281d7 NicholasBly/Eglantine: FindBuffer page table bound already in Orchid
-f27246957 Vortex727/eglantine-zortos293: CoreTiming test flag reset, already in Orchid
+f27246957 Vortex727/hortensia-zortos293: CoreTiming test flag reset, already in Orchid
 f4eea1b0b FZout/Eglantine: NUM_STORAGE_BUFFERS already MAX_SSBOS (32)
 f9ce89d57 yumekiru/Eglantine-WiimoteSupport: Wiimote MotionPlus, feature
 fe6e26379 Greencus/Eglantine: merge duplicate cleanup of its own merge
@@ -139,15 +139,15 @@ f314dc672 zortos293/Eglantine: shader-sweep cache format flag, tooling Orchid do
 51c850a79 zortos293/Eglantine: static shader extraction and NUP export tooling, debug-only
 5c3581501 zortos293/Eglantine: native rejection capture diagnostics, debug-only
 7d9596a4b zortos293/Eglantine: rejected-stage capture diagnostics, debug-only
-8dc4ca15a Drizz1le/Lichii: pausing instead of resetting query counters can retain banks indefinitely; bound follow-ups truncate valid queries at 256 slots without general compaction
-015f76283 Drizz1le/Lichii: follow-up resets paused counters after 256 slots, truncating valid long occlusion queries
-5ad6c8501 anthonyloukinas/Lichii: same 256-slot query truncation as 015f76283
-47e1e9520 Kajcsi/Lichii: same 256-slot query truncation as 015f76283
-2aecf0e5a favoritul/Lichii: same 256-slot query truncation as 015f76283
+8dc4ca15a Drizz1le/Hortensia: pausing instead of resetting query counters can retain banks indefinitely; bound follow-ups truncate valid queries at 256 slots without general compaction
+015f76283 Drizz1le/Hortensia: follow-up resets paused counters after 256 slots, truncating valid long occlusion queries
+5ad6c8501 anthonyloukinas/Hortensia: same 256-slot query truncation as 015f76283
+47e1e9520 Kajcsi/Hortensia: same 256-slot query truncation as 015f76283
+2aecf0e5a favoritul/Hortensia: same 256-slot query truncation as 015f76283
 1122ab239 zortos293/Eglantine: clear-overwritten upload component included in port of 27226d256
 ebf388f07 zortos293/Eglantine: clear-overwritten upload follow-up included in port of 27226d256
-3e94f7fdc Vortex727/eglantine-zortos293: duplicate of global ATOM.CAS ported from a6e5217c7
-b7306e210 Vortex727/eglantine-zortos293: runtime routing/R254 follow-up adapted in Orchid's CAS port; keep Orchid's existing unmapped fallback
+3e94f7fdc Vortex727/hortensia-zortos293: duplicate of global ATOM.CAS ported from a6e5217c7
+b7306e210 Vortex727/hortensia-zortos293: runtime routing/R254 follow-up adapted in Orchid's CAS port; keep Orchid's existing unmapped fallback
 7e1d64555 zortos293/Eglantine: gather mutex is inapplicable; Orchid FlushRegion does not use the invalidating gather path and no concurrent Gather caller was found; unrelated CLI restart
 77cbc3e7c zortos293/Eglantine: nested AMD demote-return fix already ported from Drizz1le commit 8bee51c11
 47c6ecdb5 pattex67/Aubepine: duplicate nested AMD demote-return fix already ported from Drizz1le commit 8bee51c11
@@ -156,13 +156,13 @@ b7306e210 Vortex727/eglantine-zortos293: runtime routing/R254 follow-up adapted 
 5b89a3daf zortos293/Eglantine: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
 dfd71f3ba zortos293/Eglantine: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
 e093a5cd7 zortos293/Eglantine: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
-de16a4de5 Vortex727/eglantine-zortos293: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
-e44ee5c79 Vortex727/eglantine-zortos293: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
-d7020c843 Vortex727/eglantine-zortos293: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
+de16a4de5 Vortex727/hortensia-zortos293: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
+e44ee5c79 Vortex727/hortensia-zortos293: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
+d7020c843 Vortex727/hortensia-zortos293: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
 1f7978ec2 pattex67/Aubepine: standalone query pause can retain banks indefinitely; unsafe without bounded lifecycle
 caa4ca8d5 zortos293/Eglantine: 256-slot query cap truncates valid long queries without compaction
-d2ddd044b Vortex727/eglantine-zortos293: 256-slot query cap truncates valid long queries without compaction
-87203d593 Vortex727/eglantine-zortos293: 256-slot query cap truncates valid long queries without compaction
+d2ddd044b Vortex727/hortensia-zortos293: 256-slot query cap truncates valid long queries without compaction
+87203d593 Vortex727/hortensia-zortos293: 256-slot query cap truncates valid long queries without compaction
 936aca8d9 pattex67/Aubepine: 256-slot query cap truncates valid long queries without compaction
 baf60ba8 larryliu985/Eglantine: Orchid already tracks ISBEWR data registers; resetting occlusion queries after one bank can truncate valid long reset-to-report windows
 f26ad432a zortos293/Eglantine: broad Ocarina rendering bundle mixes title-specific pointer tables, cache behavior, timing and diagnostics; reviewed individual fixes separately, not safe as a whole
@@ -170,76 +170,76 @@ f356d39ba zortos293/Eglantine: mixed Ocarina Ampere bundle; carries, indexed sub
 7c0b5e791 zortos293/Eglantine: page-table range caching is a profiling-led performance change; separate Orchid invalidation and benchmark review needed
 0db1cdbd8 zortos293/Eglantine: XCI/XCZ program metadata already uses Loader::ReadProgramMetadata before clock selection
 91d525da3 CloudP4bbs/Eglantine: extended ISETP and ARRAY_2D TLD4 already handled by Orchid's broader lowering
-1a8f736fb chuppatricky/Lichii: per-tap, half-output and depth-compare TLD4 forms already handled by Orchid's broader lowering
+1a8f736fb chuppatricky/Hortensia: per-tap, half-output and depth-compare TLD4 forms already handled by Orchid's broader lowering
 678a3f5c4 hedigrrr1/Hedfix: indexed U8/S8/U16/S16 ULDC widths already handled by Orchid; existing alignment restrictions remain intentional
-0eb5ab566 trianglebraindev/Lichii: indexed subword ULDC forms already handled by Orchid
-175993701 trianglebraindev/Lichii: UIADD3 carry through any UPn already handled by Orchid
-cda9d498e trianglebraindev/Lichii: ULEA carry through any UPn already handled by Orchid
+0eb5ab566 trianglebraindev/Hortensia: indexed subword ULDC forms already handled by Orchid
+175993701 trianglebraindev/Hortensia: UIADD3 carry through any UPn already handled by Orchid
+cda9d498e trianglebraindev/Hortensia: ULEA carry through any UPn already handled by Orchid
 3815e14a5 hedigrrr1/Hedfix: ULEA carry and P2R register-write accounting already handled by Orchid
-d31c027b6 trianglebraindev/Lichii: native MME DMA read already flushes QueryCache and BufferCache before reading
+d31c027b6 trianglebraindev/Hortensia: native MME DMA read already flushes QueryCache and BufferCache before reading
 7859ef415 Deidakom/Peachy: duplicate of the native MME QueryCache/BufferCache flush already in Orchid
 12bb1815f larryliu985/Eglantine: ISBEWR handling already exists; resetting after one query bank can truncate valid long reset-to-report windows
-161f5e9bb chuppatricky/Lichii: fence-submit fix requires Scheduler::DeferFlush/FlushDeferred absent from Orchid; Orchid's InnerFence queues and flushes directly
+161f5e9bb chuppatricky/Hortensia: fence-submit fix requires Scheduler::DeferFlush/FlushDeferred absent from Orchid; Orchid's InnerFence queues and flushes directly
 f0d3ce0ed larryliu985/Eglantine: Orchid Drain waits through BackLoop completion before front Puller work; no concurrent idle hook or context rotation exists
-ceed7ca7f Shenopi/Lichii: duplicate of 161f5e9bb; Orchid has no deferred-work submit path
-bca2feb05 Drizz1le/Lichii: duplicate deferred-fence submit fix; Orchid has no Scheduler::DeferFlush path
-592dcfba1 sexyboomer888-gif/Lichii: duplicate deferred-fence submit fix; Orchid has no Scheduler::DeferFlush path
-6ab6131a5 sexyboomer888-gif/Lichii: helper declaration for deferred-fence submission, inapplicable without that scheduler path
-edaf83169 sexyboomer888-gif/Lichii: helper flush for deferred submissions, inapplicable without that scheduler path
-459b53ed3 Drizz1le/Lichii: clear-overwritten guest upload already ported from zortos293/Eglantine 27226d256
-dafcd6c78 Drizz1le/Lichii: clear-overwritten upload IsFullClear follow-up already ported from zortos293/Eglantine 27226d256
-1123229ba sexyboomer888-gif/Lichii: duplicate of clear-overwritten guest upload ported from zortos293/Eglantine 27226d256
-ae7037b65 Shenopi/Lichii: duplicate RED/SURED register-shadowing fix already ported from chuppatricky/Lichii fc5d6dc31
-2416d0968 Drizz1le/Lichii: duplicate RED/SURED data-register shadowing ported from chuppatricky/Lichii fc5d6dc31
-40631acb6 Jav1B/Lichii: duplicate RED/SURED data-register shadowing ported from chuppatricky/Lichii fc5d6dc31
+ceed7ca7f Shenopi/Hortensia: duplicate of 161f5e9bb; Orchid has no deferred-work submit path
+bca2feb05 Drizz1le/Hortensia: duplicate deferred-fence submit fix; Orchid has no Scheduler::DeferFlush path
+592dcfba1 sexyboomer888-gif/Hortensia: duplicate deferred-fence submit fix; Orchid has no Scheduler::DeferFlush path
+6ab6131a5 sexyboomer888-gif/Hortensia: helper declaration for deferred-fence submission, inapplicable without that scheduler path
+edaf83169 sexyboomer888-gif/Hortensia: helper flush for deferred submissions, inapplicable without that scheduler path
+459b53ed3 Drizz1le/Hortensia: clear-overwritten guest upload already ported from zortos293/Eglantine 27226d256
+dafcd6c78 Drizz1le/Hortensia: clear-overwritten upload IsFullClear follow-up already ported from zortos293/Eglantine 27226d256
+1123229ba sexyboomer888-gif/Hortensia: duplicate of clear-overwritten guest upload ported from zortos293/Eglantine 27226d256
+ae7037b65 Shenopi/Hortensia: duplicate RED/SURED register-shadowing fix already ported from chuppatricky/Hortensia fc5d6dc31
+2416d0968 Drizz1le/Hortensia: duplicate RED/SURED data-register shadowing ported from chuppatricky/Hortensia fc5d6dc31
+40631acb6 Jav1B/Hortensia: duplicate RED/SURED data-register shadowing ported from chuppatricky/Hortensia fc5d6dc31
 fe6a388a4 zortos293/Eglantine: draw-only guard leaves transform-feedback/query counter lifecycle commands unpaired after a failed bind; safe adaptation needs coordinated state handling
 729128674c17dfeaac0c89eeae76e85762253903 rdodoa/Eglantine: TIC trace-key narrowing affects a diagnostic path Orchid does not have
-170b078205956ebe584fd4738153a274b59b533d janvitos/Lichii: Orchid already fails NSO loads on decompression errors and checks the exact decoded segment size
+170b078205956ebe584fd4738153a274b59b533d janvitos/Hortensia: Orchid already fails NSO loads on decompression errors and checks the exact decoded segment size
 0ca2032bf Djihads80/Eglantine: application rebrand/translation changes only
-162a9736f Zagiacomo/Lichii: combines opt-in split submission batching and frame-ahead presentation performance changes
-16b828559 Zagiacomo/Lichii: profile-led 4 KiB page-run cache change needs separate memory-map benchmarks
-1ab25fcc3 Zagiacomo/Lichii: debug MCP adapter test only
-1bb8ff8dd Zagiacomo/Lichii: disabled-by-default DMA/cache profiling experiments
-1fbc888d4 Zagiacomo/Lichii: debug sampler lifecycle change for fork-only tooling
-440f0c2ac Zagiacomo/Lichii: clean upload and repeated-index-bind optimizations are performance-led
-4a0bc9a00 Zagiacomo/Lichii: GPU-thread method dispatch optimization needs separate profiling
-5e7611aae Zagiacomo/Lichii: per-method and per-macro profiling diagnostics
-66a5c2f7a Zagiacomo/Lichii: game-specific recommended settings
-766c668f0 Zagiacomo/Lichii: pipeline retention window is a performance and memory policy change
-8d14da5e4 Zagiacomo/Lichii: range-cache walk optimization needs profiling and invalidation review
-9384cdcfe Zagiacomo/Lichii: opt-in performance switches and verification mode
-c38631643 Zagiacomo/Lichii: MaxContinuousRange run-cache optimization is profile-led
-f17682097 Zagiacomo/Lichii: memory-manager run caching changes mapping behavior and needs profiling
-1ce968a2d DrSergioRFilho/Lichii: mirrors an inline QMD 0xb0 write only for the fork's optional compute sink
-284213c69 DrSergioRFilho/Lichii: opt-in macro state sink on the split back thread
-2e9b9f695 DrSergioRFilho/Lichii: opt-in lighter-fence behavior changes synchronization
-2fd44b84f DrSergioRFilho/Lichii: deferred fence submit path is absent from Orchid's scheduler
-3c85f8fee DrSergioRFilho/Lichii: opt-in buffer-download coalescing needs separate performance review
-40182460c DrSergioRFilho/Lichii: opt-in split-drain bypass for macro DMA reads changes synchronization
-4695bd159 DrSergioRFilho/Lichii: FENCE_LIGHT synchronization mode is optional and not validated in Orchid
-6b3d5ac86 DrSergioRFilho/Lichii: opt-in guest-memory uniform comparison is a performance change
-71a403f8b DrSergioRFilho/Lichii: compute sink environment option is fork-specific
-8637b8dc1 DrSergioRFilho/Lichii: NUP cache sizing and decompression timing are fork-specific performance settings
-a15582c2b DrSergioRFilho/Lichii: opt-in per-draw handle-page cache needs profiling
-c0170d261 DrSergioRFilho/Lichii: empty-cache-environment fix belongs to a fork-only NUP cache feature
-cc09e727a DrSergioRFilho/Lichii: opt-in pipeline-key refresh optimization needs profiling
-d0aeffe0f DrSergioRFilho/Lichii: coarse host sleeps change timing and are opt-in
-d7dffbd85 DrSergioRFilho/Lichii: opt-in split-ring batching changes synchronization
-e56b37fc0 DrSergioRFilho/Lichii: GEQUAL split-drain bypass is a timing optimization
-e691cc3f2 DrSergioRFilho/Lichii: broad split synchronization/performance rewrite needs a separate correctness review
-424b58a7e JoranF/Lichii: CI-only MinGW PGO dependency change
-ac5db9343 JoranF/Lichii: RegisterAction already rechecks under Orchid's shared lock; decoder has no received_any fallback state
-d2ad83095 Shenopi/Lichii: fork-specific Windows CI selection
-3985ac21c Shenopi/Lichii: native 4096-draw submission budget and deferred barrier are performance changes
-3cc3f8017 Shenopi/Lichii: changes update-check defaults for this fork
-546d2dab7 Shenopi/Lichii: diagnostic variable rename for MSVC
-5a0cdcbee Shenopi/Lichii: upload-scan and index-bind optimizations are performance-led
-7422d906a Shenopi/Lichii: broad event-driven GPU, split-thread and presentation timing rewrite needs separate validation
-cbd051b2b Shenopi/Lichii: optional AV1 software-decoder strategy requires platform and runtime review
-d51b04d80 Shenopi/Lichii: cross-platform clock calibration and CPU barrier rewrites change timing semantics
-0e67cbf3d xTektor/Lichii: loose NUP RomFS export is a new feature
-4ed61c7eb xTektor/Lichii: duplicate of the NUP LayeredFS fix ported from DrSergioRFilho/Lichii fe29f5c45
-4df372950 Walnutoast830/Lichii: program-index fallback is already covered by FSP_SRV's current-process RomFS fallback
+162a9736f Zagiacomo/Hortensia: combines opt-in split submission batching and frame-ahead presentation performance changes
+16b828559 Zagiacomo/Hortensia: profile-led 4 KiB page-run cache change needs separate memory-map benchmarks
+1ab25fcc3 Zagiacomo/Hortensia: debug MCP adapter test only
+1bb8ff8dd Zagiacomo/Hortensia: disabled-by-default DMA/cache profiling experiments
+1fbc888d4 Zagiacomo/Hortensia: debug sampler lifecycle change for fork-only tooling
+440f0c2ac Zagiacomo/Hortensia: clean upload and repeated-index-bind optimizations are performance-led
+4a0bc9a00 Zagiacomo/Hortensia: GPU-thread method dispatch optimization needs separate profiling
+5e7611aae Zagiacomo/Hortensia: per-method and per-macro profiling diagnostics
+66a5c2f7a Zagiacomo/Hortensia: game-specific recommended settings
+766c668f0 Zagiacomo/Hortensia: pipeline retention window is a performance and memory policy change
+8d14da5e4 Zagiacomo/Hortensia: range-cache walk optimization needs profiling and invalidation review
+9384cdcfe Zagiacomo/Hortensia: opt-in performance switches and verification mode
+c38631643 Zagiacomo/Hortensia: MaxContinuousRange run-cache optimization is profile-led
+f17682097 Zagiacomo/Hortensia: memory-manager run caching changes mapping behavior and needs profiling
+1ce968a2d DrSergioRFilho/Hortensia: mirrors an inline QMD 0xb0 write only for the fork's optional compute sink
+284213c69 DrSergioRFilho/Hortensia: opt-in macro state sink on the split back thread
+2e9b9f695 DrSergioRFilho/Hortensia: opt-in lighter-fence behavior changes synchronization
+2fd44b84f DrSergioRFilho/Hortensia: deferred fence submit path is absent from Orchid's scheduler
+3c85f8fee DrSergioRFilho/Hortensia: opt-in buffer-download coalescing needs separate performance review
+40182460c DrSergioRFilho/Hortensia: opt-in split-drain bypass for macro DMA reads changes synchronization
+4695bd159 DrSergioRFilho/Hortensia: FENCE_LIGHT synchronization mode is optional and not validated in Orchid
+6b3d5ac86 DrSergioRFilho/Hortensia: opt-in guest-memory uniform comparison is a performance change
+71a403f8b DrSergioRFilho/Hortensia: compute sink environment option is fork-specific
+8637b8dc1 DrSergioRFilho/Hortensia: NUP cache sizing and decompression timing are fork-specific performance settings
+a15582c2b DrSergioRFilho/Hortensia: opt-in per-draw handle-page cache needs profiling
+c0170d261 DrSergioRFilho/Hortensia: empty-cache-environment fix belongs to a fork-only NUP cache feature
+cc09e727a DrSergioRFilho/Hortensia: opt-in pipeline-key refresh optimization needs profiling
+d0aeffe0f DrSergioRFilho/Hortensia: coarse host sleeps change timing and are opt-in
+d7dffbd85 DrSergioRFilho/Hortensia: opt-in split-ring batching changes synchronization
+e56b37fc0 DrSergioRFilho/Hortensia: GEQUAL split-drain bypass is a timing optimization
+e691cc3f2 DrSergioRFilho/Hortensia: broad split synchronization/performance rewrite needs a separate correctness review
+424b58a7e JoranF/Hortensia: CI-only MinGW PGO dependency change
+ac5db9343 JoranF/Hortensia: RegisterAction already rechecks under Orchid's shared lock; decoder has no received_any fallback state
+d2ad83095 Shenopi/Hortensia: fork-specific Windows CI selection
+3985ac21c Shenopi/Hortensia: native 4096-draw submission budget and deferred barrier are performance changes
+3cc3f8017 Shenopi/Hortensia: changes update-check defaults for this fork
+546d2dab7 Shenopi/Hortensia: diagnostic variable rename for MSVC
+5a0cdcbee Shenopi/Hortensia: upload-scan and index-bind optimizations are performance-led
+7422d906a Shenopi/Hortensia: broad event-driven GPU, split-thread and presentation timing rewrite needs separate validation
+cbd051b2b Shenopi/Hortensia: optional AV1 software-decoder strategy requires platform and runtime review
+d51b04d80 Shenopi/Hortensia: cross-platform clock calibration and CPU barrier rewrites change timing semantics
+0e67cbf3d xTektor/Hortensia: loose NUP RomFS export is a new feature
+4ed61c7eb xTektor/Hortensia: duplicate of the NUP LayeredFS fix ported from DrSergioRFilho/Hortensia fe29f5c45
+4df372950 Walnutoast830/Hortensia: program-index fallback is already covered by FSP_SRV's current-process RomFS fallback
 1420728f0 Deidakom/Peachy: project issue and contribution documentation only
 65e865ed0 Deidakom/Peachy: profile-led MaxContinuousRange cache needs independent invalidation and benchmark review
 73a5b2232 Deidakom/Peachy: storage-binding profiling and fork-specific diagnostics
@@ -249,89 +249,89 @@ b59990bd4 Deidakom/Peachy: writer-wait bypass is a synchronization optimization,
 c50cd0a9b Deidakom/Peachy: scheduler-owner guard depends on a keep-page WriteMemory API Orchid does not have
 ded6a1751 Deidakom/Peachy: opt-in Windows sampling profiler feature
 ec4cd586b Deidakom/Peachy: duplicate macro-DMA split-drain optimization
-d1d218717 tiagocarmosantos/Lichii: opt-in zero-count task/mesh draw diagnostics
-09fe67c66 Kipchun/Lichii-GUI: Switch-style home screen is a UI feature
-56997fb8d Kipchun/Lichii-GUI: application appearance and settings UI features
-cec41ffda blazn56ace/Lichii: Windows runner generator selection only
-fdbf03042 leadaenima/Lichii: rejected-hash shader diagnostics, not a product fix
-f9221d518 huseinalsharra14-sketch/Lichii2: game-specific upscale stand-in constant-buffer size
-a2b5c3f7e peop8d/LichiibeebsNX2: frame-trace diagnostics only
-c63fe2db9 peop8d/LichiibeebsNX2: profile data update only
-0ed2db63a trianglebraindev/Lichii: experimental unresolved-shadow fallback changes rendering
-1ba9a3a89 trianglebraindev/Lichii: runtime log-filter option only
-2ccc5b4bf trianglebraindev/Lichii: experimental SSBO GPU-written-range cap
-3d96fb69b trianglebraindev/Lichii: CI-only Windows build selection
-7121972be trianglebraindev/Lichii: explicitly experimental query-DMA synchronization mode
-77e575cf5 trianglebraindev/Lichii: query-DMA trace diagnostics only
-84e9b54ef trianglebraindev/Lichii: profile-led MaxContinuousRange cache requires separate invalidation review
-9ff99f6db trianglebraindev/Lichii: Switch 2 idle-spin timing policy is platform-specific
-ad5930c10 trianglebraindev/Lichii: CI-only Windows build selection
-b489b15c2 trianglebraindev/Lichii: explicitly experimental query-DMA synchronization mode
-c4a169691 trianglebraindev/Lichii: shader-hash update diagnostics only
-fefb48da1 trianglebraindev/Lichii: experimental bindless-handle tracing and skip mode
-11f66766c sexyboomer888-gif/Lichii: experimental Ocarina-specific rebased-write tracking
-e7a273169 sexyboomer888-gif/Lichii: Ocarina-specific rebased-write tracking requires separate shader/storage review
-279c89082 sexyboomer888-gif/Lichii: opt-in selected-write tracking is a fork-specific performance option
-397ab82b0 sexyboomer888-gif/Lichii: GPU profiler sampling setup only
-4cfba9328 sexyboomer888-gif/Lichii: deferred submit API absent from Orchid's scheduler
-556e7a904 sexyboomer888-gif/Lichii: declares Ocarina visual-workaround state only
-9464ac887 sexyboomer888-gif/Lichii: duplicate selected-write state for its opt-in feature
-b67d9f7b1 sexyboomer888-gif/Lichii: deferred fence submit path is absent from Orchid
-bb2840d23 sexyboomer888-gif/Lichii: CI-only clang PGO build change
-c4f241be2 sexyboomer888-gif/Lichii: Ocarina-specific selected-write descriptor plumbing needs separate review
-cf306d26b sexyboomer888-gif/Lichii: deferred submission helper absent from Orchid's scheduler
-cfd32c4dc sexyboomer888-gif/Lichii: GPU profiler environment setup only
-d0227b5d1 sexyboomer888-gif/Lichii: temporary Ocarina-only visual workaround
-e2f22adad sexyboomer888-gif/Lichii: Ocarina-specific selected-write descriptor plumbing needs separate review
-e563f7a56 sexyboomer888-gif/Lichii: Ocarina-only visual workaround application
-f5e59bd89 sexyboomer888-gif/Lichii: CI-only Windows build selection
-340ac446c quentingimenez/Lichii: Ocarina vegetation and sky visual workaround
+d1d218717 tiagocarmosantos/Hortensia: opt-in zero-count task/mesh draw diagnostics
+09fe67c66 Kipchun/Hortensia-GUI: Switch-style home screen is a UI feature
+56997fb8d Kipchun/Hortensia-GUI: application appearance and settings UI features
+cec41ffda blazn56ace/Hortensia: Windows runner generator selection only
+fdbf03042 leadaenima/Hortensia: rejected-hash shader diagnostics, not a product fix
+f9221d518 huseinalsharra14-sketch/Hortensia2: game-specific upscale stand-in constant-buffer size
+a2b5c3f7e peop8d/HortensiabeebsNX2: frame-trace diagnostics only
+c63fe2db9 peop8d/HortensiabeebsNX2: profile data update only
+0ed2db63a trianglebraindev/Hortensia: experimental unresolved-shadow fallback changes rendering
+1ba9a3a89 trianglebraindev/Hortensia: runtime log-filter option only
+2ccc5b4bf trianglebraindev/Hortensia: experimental SSBO GPU-written-range cap
+3d96fb69b trianglebraindev/Hortensia: CI-only Windows build selection
+7121972be trianglebraindev/Hortensia: explicitly experimental query-DMA synchronization mode
+77e575cf5 trianglebraindev/Hortensia: query-DMA trace diagnostics only
+84e9b54ef trianglebraindev/Hortensia: profile-led MaxContinuousRange cache requires separate invalidation review
+9ff99f6db trianglebraindev/Hortensia: Switch 2 idle-spin timing policy is platform-specific
+ad5930c10 trianglebraindev/Hortensia: CI-only Windows build selection
+b489b15c2 trianglebraindev/Hortensia: explicitly experimental query-DMA synchronization mode
+c4a169691 trianglebraindev/Hortensia: shader-hash update diagnostics only
+fefb48da1 trianglebraindev/Hortensia: experimental bindless-handle tracing and skip mode
+11f66766c sexyboomer888-gif/Hortensia: experimental Ocarina-specific rebased-write tracking
+e7a273169 sexyboomer888-gif/Hortensia: Ocarina-specific rebased-write tracking requires separate shader/storage review
+279c89082 sexyboomer888-gif/Hortensia: opt-in selected-write tracking is a fork-specific performance option
+397ab82b0 sexyboomer888-gif/Hortensia: GPU profiler sampling setup only
+4cfba9328 sexyboomer888-gif/Hortensia: deferred submit API absent from Orchid's scheduler
+556e7a904 sexyboomer888-gif/Hortensia: declares Ocarina visual-workaround state only
+9464ac887 sexyboomer888-gif/Hortensia: duplicate selected-write state for its opt-in feature
+b67d9f7b1 sexyboomer888-gif/Hortensia: deferred fence submit path is absent from Orchid
+bb2840d23 sexyboomer888-gif/Hortensia: CI-only clang PGO build change
+c4f241be2 sexyboomer888-gif/Hortensia: Ocarina-specific selected-write descriptor plumbing needs separate review
+cf306d26b sexyboomer888-gif/Hortensia: deferred submission helper absent from Orchid's scheduler
+cfd32c4dc sexyboomer888-gif/Hortensia: GPU profiler environment setup only
+d0227b5d1 sexyboomer888-gif/Hortensia: temporary Ocarina-only visual workaround
+e2f22adad sexyboomer888-gif/Hortensia: Ocarina-specific selected-write descriptor plumbing needs separate review
+e563f7a56 sexyboomer888-gif/Hortensia: Ocarina-only visual workaround application
+f5e59bd89 sexyboomer888-gif/Hortensia: CI-only Windows build selection
+340ac446c quentingimenez/Hortensia: Ocarina vegetation and sky visual workaround
 5fe52072f Quixomatic/Eglantine: Ocarina foliage visual workaround
-ea93212fc Jav1B/Lichii: FSR3 frame interpolation feature
-df2ab4040 Jav1B/Lichii: duplicate deferred fence submission; API is absent from Orchid
+ea93212fc Jav1B/Hortensia: FSR3 frame interpolation feature
+df2ab4040 Jav1B/Hortensia: duplicate deferred fence submission; API is absent from Orchid
 0349e1123 JayceeB1/Eglantine: duplicate deferred fence submission; API is absent from Orchid
-38cd18932 JayceeB1/Eglantine: duplicate RED/SURED data-register fix already ported from chuppatricky/Lichii fc5d6dc31
+38cd18932 JayceeB1/Eglantine: duplicate RED/SURED data-register fix already ported from chuppatricky/Hortensia fc5d6dc31
 31a95d067 JayceeB1/Eglantine: broad build and feature integration bundle is not a standalone generally validated fix
 a62364d8 JayceeB1/Eglantine: title-specific GPU clock scaling under Boost/Overclock changes timing
 ad3a31b27 JayceeB1/Eglantine: FSR3 frame interpolation feature
 3416a7837 msxdan/Eglantine: bubblewrap launcher and gamepad/audio integration are new platform features
 bd46da522 hedigrrr1/Hedfix: ISETP test comparison only
-d18652914 hedigrrr1/Hedfix: duplicate of F2IP port from trianglebraindev/Lichii ac82c78b5; UIADD3 carry already supported
+d18652914 hedigrrr1/Hedfix: duplicate of F2IP port from trianglebraindev/Hortensia ac82c78b5; UIADD3 carry already supported
 de8420116 hedigrrr1/Hedfix: game-specific IMAD pointer and Ocarina movie-input changes
-0e359430f daniel-lynch/Lichii: task/mesh program pointer binding is platform-specific feature work
-23bb52c71 daniel-lynch/Lichii: cherry-pick notes only
-2ceb6e8ea daniel-lynch/Lichii: trial merge notes only
-3a25320ba daniel-lynch/Lichii: opt-in Ocarina debug harness features
-6402a7d65 daniel-lynch/Lichii: fork-specific storage-size performance switch
-d412c8825 daniel-lynch/Lichii: test coverage only
-e4d345000 daniel-lynch/Lichii: duplicate of NUP LayeredFS fix ported from DrSergioRFilho/Lichii fe29f5c45
-e7651b599 daniel-lynch/Lichii: fork-specific uniform-buffer upload performance switch
-fae98ec51 daniel-lynch/Lichii: Ocarina-specific debug script defaults
-4498443f1 computererguy/Lichii: Android game-folder scan feature
-6652f9c36 computererguy/Lichii: Android NUP game discovery feature
-6708ea78f computererguy/Lichii: measured GPU acquire/drain performance shortcut needs sync review
-853b0e893 computererguy/Lichii: Android log-sharing and game-folder diagnostics
-065bbfd67 soooldierboooy/Lichii: MSVC build-option and optimization documentation only
-072d8b47a soooldierboooy/Lichii: contributor work notes only
-48fe39ad5 soooldierboooy/Lichii: performance-work notes only
-c6b551165 soooldierboooy/Lichii: CI-only Windows manual-build option
+0e359430f daniel-lynch/Hortensia: task/mesh program pointer binding is platform-specific feature work
+23bb52c71 daniel-lynch/Hortensia: cherry-pick notes only
+2ceb6e8ea daniel-lynch/Hortensia: trial merge notes only
+3a25320ba daniel-lynch/Hortensia: opt-in Ocarina debug harness features
+6402a7d65 daniel-lynch/Hortensia: fork-specific storage-size performance switch
+d412c8825 daniel-lynch/Hortensia: test coverage only
+e4d345000 daniel-lynch/Hortensia: duplicate of NUP LayeredFS fix ported from DrSergioRFilho/Hortensia fe29f5c45
+e7651b599 daniel-lynch/Hortensia: fork-specific uniform-buffer upload performance switch
+fae98ec51 daniel-lynch/Hortensia: Ocarina-specific debug script defaults
+4498443f1 computererguy/Hortensia: Android game-folder scan feature
+6652f9c36 computererguy/Hortensia: Android NUP game discovery feature
+6708ea78f computererguy/Hortensia: measured GPU acquire/drain performance shortcut needs sync review
+853b0e893 computererguy/Hortensia: Android log-sharing and game-folder diagnostics
+065bbfd67 soooldierboooy/Hortensia: MSVC build-option and optimization documentation only
+072d8b47a soooldierboooy/Hortensia: contributor work notes only
+48fe39ad5 soooldierboooy/Hortensia: performance-work notes only
+c6b551165 soooldierboooy/Hortensia: CI-only Windows manual-build option
 0677e1bca Dimiduh/Peachy: release workflow update only
 2d40fd9fc rdodoa/Eglantine: texture-header traces and video-frame dumps are diagnostics
-2dad83095 Shenopi/Lichii: fork-specific Windows CI selection
-45ad41563 daniel-lynch/Lichii: duplicate NUP LayeredFS fix ported from DrSergioRFilho/Lichii fe29f5c45
-4b7e75858 vouion/Lichii: video scaler test pixel-range adjustment only
+2dad83095 Shenopi/Hortensia: fork-specific Windows CI selection
+45ad41563 daniel-lynch/Hortensia: duplicate NUP LayeredFS fix ported from DrSergioRFilho/Hortensia fe29f5c45
+4b7e75858 vouion/Hortensia: video scaler test pixel-range adjustment only
 5ac536346 mohsinous/NS2: release workflow update only
 67bf34c8e Quixomatic/Eglantine: Ocarina-specific performance bundle
 6c5023447 Deidakom/Peachy: project logo/branding only
-71df3417c dxpn00-lang/Lichii: release workflow update only
-72e97786f sexyboomer888-gif/Lichii: Ocarina diagnostic state declaration
-80a144844 vouion/Lichii: clang-cl portability fixes require separate Windows build validation
+71df3417c dxpn00-lang/Hortensia: release workflow update only
+72e97786f sexyboomer888-gif/Hortensia: Ocarina diagnostic state declaration
+80a144844 vouion/Hortensia: clang-cl portability fixes require separate Windows build validation
 8dea47dff yuri2301/Eglantine: reverses macro-DMA performance change and adjusts fork diagnostics
 914ea92f1 Deidakom/Peachy: app rebrand only
 95b437098 yuri2301/Eglantine: profile-led descriptor-buffer setting change
 bc6aeecb1 Hydro74000/Edlws: fork-specific generated-UI ignore and policy files
 c6cf43efe Alleexxi/Eglantine: new platform font-service feature
-c940c0929 Dimiduh/Lichii: release workflow update only
-d06ea45b0 vouion/Lichii: sysmix counters and clock logs are diagnostics; audio behavior is unchanged
+c940c0929 Dimiduh/Hortensia: release workflow update only
+d06ea45b0 vouion/Hortensia: sysmix counters and clock logs are diagnostics; audio behavior is unchanged
 d4e0bcf18 Deidakom/Peachy: README rebrand only
 e0d911b28 Hydro74000/Edlws: logo replacement only

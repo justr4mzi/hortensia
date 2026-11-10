@@ -92,7 +92,7 @@ jobs:
         # World at about half the speed.) Windows uses MSYS2's MinGW clang, which mangles names like
         # the Linux builds: MSVC cannot read an LLVM .profdata file.
         # The x86_64 Linux job runs on a boat.dev sandbox (8 vCPU, 16 GB: https://docs.boat.dev/ci)
-        # started from the eglantine-ci snapshot, which has every package, clang, CMake and Qt
+        # started from the hortensia-ci snapshot, which has every package, clang, CMake and Qt
         # installed (tools/ci/boat-snapshot.sh). boat has no Windows or Arm machines, so those
         # jobs stay on GitHub's runners.
         # The x86_64 builds target x86-64-v3 (YUZU_BUILD_PRESET v3: AVX2, BMI2, FMA; Intel Haswell

@@ -3,11 +3,11 @@
 Base: the [Eglantine](https://github.com/Djihads80/Eglantine) project's `nx2` branch at
 `ea33ad1865` ("vulkan: write the driver pipeline cache atomically; reject truncated ones",
 2026-10-30). Eglantine's `nx2` carries Takoroka's Switch 2 work and the Mario Kart World 1.8.0
-fixes that the earlier releases of this fork had to add themselves. Branch `mkw-eglantine` is that
+fixes that the earlier releases of this fork had to add themselves. Branch `mkw-hortensia` is that
 base plus the commits below, and nothing else:
 
 ```bat
-git log --oneline --reverse eglantine/nx2..mkw-eglantine
+git log --oneline --reverse hortensia/nx2..mkw-hortensia
 ```
 
 They are grouped by purpose below, under their exact subjects; each commit message gives the
@@ -122,7 +122,7 @@ before) and `EDEN_NX2_CNTFRQ=<Hz>` (guest counter rate); Takoroka's (`EDEN_NX2_S
 ## Proposing a change upstream
 
 Each commit stands on its own on top of Eglantine's `nx2`, so it can go to Eglantine as one pull
-request (`git cherry-pick` onto a branch from `eglantine/nx2`). Eglantine follows Eden's
+request (`git cherry-pick` onto a branch from `hortensia/nx2`). Eglantine follows Eden's
 [AI policy](../policies/AI.md): replace the `Co-Authored-By: Claude` trailer with an
 `Assisted-by:` one, and the human submitting it must have tested it and be able to explain every
 line.

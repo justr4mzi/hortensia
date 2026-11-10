@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 -->
 
-# Lichii-AMD
+# Hortensia-AMD
 
-Lichii-AMD is [Lichii](https://github.com/zortos293/Lichii) with fixes for **AMD Radeon** GPUs, tested with
-**The Legend of Zelda: Ocarina of Time** for Switch 2 (`0400486024DEC000`). It is built on Lichii's `nx2`
+Hortensia-AMD is [Hortensia](https://github.com/zortos293/Lichii) with fixes for **AMD Radeon** GPUs, tested with
+**The Legend of Zelda: Ocarina of Time** for Switch 2 (`0400486024DEC000`). It is built on Hortensia's `nx2`
 branch at `65e979adb3`, which in turn builds on Eglantine, Eden, yuzu and Sudachi. This fork is not
 affiliated with Nintendo, AMD or the upstream projects.
 
@@ -14,8 +14,8 @@ affiliated with Nintendo, AMD or the upstream projects.
 
 ## Download and setup
 
-Download the zip from the [releases page](https://github.com/nauxph/Lichii-AMD/releases), extract all
-of it and run `lichii.exe`.
+Download the zip from the [releases page](https://github.com/nauxph/Hortensia-AMD/releases), extract all
+of it and run `hortensia.exe`.
 
 You need:
 
@@ -37,23 +37,23 @@ large shader compiles for the first time, its draws are skipped instead of freez
 Asynchronous shader building can stay off. To turn the skipping off, put `EDEN_NX2_HEAVY_SKIP=0` in
 `nx2_switches.txt` (see Switches).
 
-## Changes from Lichii
+## Changes from Hortensia
 
 The commits are on the `amd` branch.
 
 - **Shader stutter in combat, on area changes and in new places.**
-  - Switch 2 pipelines are kept for the session, up to an eighth of the RAM (port of Lichii #313).
+  - Switch 2 pipelines are kept for the session, up to an eighth of the RAM (port of Hortensia #313).
     Before, a pipeline unused for 2.5 minutes was destroyed, and going back to an area or fighting
     again rebuilt hundreds at once. One 90-minute session rebuilt about 10,000 and held draws for
     214 s, because AMD's driver cache missed many of the rebuilds.
   - A draw waiting for its pipeline builds that pipeline right away instead of waiting behind the
-    whole queue (port of Lichii #321).
+    whole queue (port of Hortensia #321).
   - While a shader of 4,000 or more instructions compiles for the first time, its draws are
-    skipped unless that could lose data. This is the heavy skip from Lichii #579, on by default
+    skipped unless that could lose data. This is the heavy skip from Hortensia #579, on by default
     here and also without asynchronous shaders. Draws held per new pipeline went from 111-124 ms to
     2-20 ms, and the worst freeze from 7-11 s to under 1 s, with no missing objects seen. A large
     object can appear a moment late in a new place.
-- **Ocarina's image filter on the GPU's matrix units** (Lichii #583). The game's tensor-core image
+- **Ocarina's image filter on the GPU's matrix units** (Hortensia #583). The game's tensor-core image
   filter runs on 16x16x16 cooperative matrices on GPUs that have them. On the RX 9070 XT the GPU
   went from about 64% to about 13% busy.
 - **Occlusion query copies (frame rate).** On AMD drivers, the occlusion query results the game reads
@@ -72,23 +72,23 @@ The commits are on the `amd` branch.
   | 1% low | 15.2 fps | 23.9 fps |
 
 - **Green sky, fog and water.** Read-only table pointers are bound as far as a storage buffer
-  reaches, up to 1 GiB (Lichii #351, which replaced this fork's port of #292). The fog pass reads its
+  reaches, up to 1 GiB (Hortensia #351, which replaced this fork's port of #292). The fog pass reads its
   light probes past the old 64 MiB cap, and on AMD it read garbage there.
 - **Black water and foliage, then a yellow-white image.** After an area change, such as entering a
   house and coming back, Kokiri Forest's water and foliage turned black, and later the whole image
   turned yellow-white until a restart. The foliage and water shaders read the same light probes past
   the 64 MiB cap that graphics draws had, and get the same reach as the fog now. Float min, max and
   clamp also use NaN-defined SPIR-V instructions
-  (Lichii #432), like Maxwell's FMNMX, which returns the operand that isn't NaN, so a NaN no longer
+  (Hortensia #432), like Maxwell's FMNMX, which returns the operand that isn't NaN, so a NaN no longer
   spreads across the screen through the bloom.
 - **Flickering HUD, minimap and dialogs.** A full memory barrier runs around every render pass
   (`EDEN_NX2_RP_BARRIER=1`, on by default in this build). It costs about 0.05 ms a frame.
-- **Movies in sync with their sound.** Ports of Lichii #251 (movie clock) and #278
+- **Movies in sync with their sound.** Ports of Hortensia #251 (movie clock) and #278
   (`EDEN_NX2_FS_READ_MBPS=0`).
-- **Other ports.** Lichii #204 and #215 (macro DMA reads wait for pending query results), #243
+- **Other ports.** Hortensia #204 and #215 (macro DMA reads wait for pending query results), #243
   (early macro DMA reads), #268 (texture cache budget) and #259 (opt-in `EDEN_NX2_PREFLUSH`, which
   should stay **off** on AMD because it turns water and grass black).
-- **Lichii `nx2` up to `65e979adb3`.** Among its changes:
+- **Hortensia `nx2` up to `65e979adb3`.** Among its changes:
   - #550 keeps the pipelines prebuilt from the disk cache until a draw first uses them.
   - #353 fixes the coloured blocks along the Hyrule Field horizon on AMD.
   - #397 stops buffer downloads from writing the GPU's older copy over newer CPU writes.
@@ -102,7 +102,7 @@ The commits are on the `amd` branch.
 
 ## Switches
 
-The `nx2_switches.txt` next to `lichii.exe` sets this build's defaults: the GPU split, fence
+The `nx2_switches.txt` next to `hortensia.exe` sets this build's defaults: the GPU split, fence
 batching, 128-draw submissions, the render pass barrier and unthrottled game file reads. To change
 one, copy its line into `%APPDATA%\eden\nx2_switches.txt`, which wins over the file next to the
 executable, then restart. `EDEN_NX2_HEAVY_SKIP=0` there turns off the skipping of heavy shaders.
@@ -118,22 +118,22 @@ executable, then restart. `EDEN_NX2_HEAVY_SKIP=0` there turns off the skipping o
 
 ## License and source
 
-Lichii-AMD is GPL-3.0-or-later; see `LICENSE.txt` and `LICENSES/`. The source for each release is
+Hortensia-AMD is GPL-3.0-or-later; see `LICENSE.txt` and `LICENSES/`. The source for each release is
 its tagged commit on the `amd` branch of this repository.
 
 ---
 
 ## Português
 
-O Lichii-AMD é o [Lichii](https://github.com/zortos293/Lichii) com correções para placas **AMD Radeon**,
+O Hortensia-AMD é o [Hortensia](https://github.com/zortos293/Lichii) com correções para placas **AMD Radeon**,
 testado com **The Legend of Zelda: Ocarina of Time** de Switch 2 (`0400486024DEC000`). Ele parte do
-branch `nx2` do Lichii, que por sua vez vem do Eglantine, do Eden, do yuzu e do Sudachi. Não tem
+branch `nx2` do Hortensia, que por sua vez vem do Eglantine, do Eden, do yuzu e do Sudachi. Não tem
 ligação com a Nintendo, com a AMD nem com os projetos originais.
 
 ### Como usar
 
-Baixe o zip na [página de releases](https://github.com/nauxph/Lichii-AMD/releases), extraia tudo e
-abra o `lichii.exe`.
+Baixe o zip na [página de releases](https://github.com/nauxph/Hortensia-AMD/releases), extraia tudo e
+abra o `hortensia.exe`.
 
 Você precisa de:
 
@@ -153,12 +153,12 @@ a sessão, e, enquanto um shader muito pesado compila pela primeira vez, os dese
 em vez de travar o jogo. A compilação assíncrona pode ficar desligada. Para desligar o pulo, coloque
 `EDEN_NX2_HEAVY_SKIP=0` no `nx2_switches.txt`.
 
-### O que muda em relação ao Lichii
+### O que muda em relação ao Hortensia
 
 - **Cópia das queries de oclusão:** nas placas AMD, os resultados são copiados depois de uma única
   barreira, sem esperar query por query. Na mesma cena, o FPS passou de 19,7 para 34,7, o p95 de
   55,9 para 34,2 ms e o p99 de 66,0 para 42,0 ms.
-- **Céu, névoa e água verdes:** corrigidos (PR #351 do Lichii, que substituiu o port da #292).
+- **Céu, névoa e água verdes:** corrigidos (PR #351 do Hortensia, que substituiu o port da #292).
 - **Água e plantas pretas, depois a imagem toda amarela:** corrigidos. Depois de entrar numa casa e
   voltar, a água e a folhagem da floresta Kokiri ficavam pretas e, com o tempo, a tela inteira ficava
   amarelo-esbranquiçada até reiniciar. Os shaders gráficos agora leem as probes de luz tão longe

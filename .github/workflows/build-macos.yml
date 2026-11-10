@@ -114,15 +114,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app=build/release/bin/eglantine.app
-          test -x "$app/Contents/MacOS/eglantine"
-          test -x build/release/bin/eden-cli
-          for binary in "$app/Contents/MacOS/eglantine" build/release/bin/eden-cli; do
+          app=build/release/bin/hortensia.app
+          test -x "$app/Contents/MacOS/hortensia"
+          test -x build/release/bin/hortensia-cli
+          for binary in "$app/Contents/MacOS/hortensia" build/release/bin/hortensia-cli; do
             test "$(lipo -archs "$binary")" = arm64
           done
-          cp build/release/bin/eden-cli "$app/Contents/MacOS/eden-cli"
+          cp build/release/bin/hortensia-cli "$app/Contents/MacOS/hortensia-cli"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$app" \
-            -executable="$app/Contents/MacOS/eden-cli" -libpath="$(brew --prefix)/lib" \
+            -executable="$app/Contents/MacOS/hortensia-cli" -libpath="$(brew --prefix)/lib" \
             -always-overwrite -verbose=1
           # Qt's virtual keyboard input plugin pulls in the QML stack, which the emulator doesn't use.
           rm -f "$app/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin.dylib"
@@ -135,7 +135,7 @@ jobs:
               done
           done
           # Libraries that load their dependencies through @rpath find them in the bundle.
-          for program in eglantine eden-cli; do
+          for program in hortensia hortensia-cli; do
             install_name_tool -add_rpath @executable_path/../Frameworks \
               "$app/Contents/MacOS/$program" 2> /dev/null
           done
@@ -154,28 +154,28 @@ jobs:
           codesign --force --deep --sign - "$app"
           if [ -f dist/eglantine.entitlements ]; then
             codesign --force --sign - --entitlements dist/eglantine.entitlements \
-              "$app/Contents/MacOS/eden-cli"
+              "$app/Contents/MacOS/hortensia-cli"
             codesign --force --sign - --entitlements dist/eglantine.entitlements "$app"
           fi
           codesign --verify --deep --strict "$app"
-          ditto -c -k --keepParent "$app" "eglantine-${SHA}-${PLATFORM}.zip"
-          ls -la "eglantine-${SHA}-${PLATFORM}.zip"
-          # Also ship a .dmg (drag eglantine.app onto Applications).
+          ditto -c -k --keepParent "$app" "hortensia-${SHA}-${PLATFORM}.zip"
+          ls -la "hortensia-${SHA}-${PLATFORM}.zip"
+          # Also ship a .dmg (drag hortensia.app onto Applications).
           dmgdir=$(mktemp -d)
-          ditto "$app" "$dmgdir/eglantine.app"
+          ditto "$app" "$dmgdir/hortensia.app"
           ln -s /Applications "$dmgdir/Applications"
           hdiutil create -volname "Eglantine" -srcfolder "$dmgdir" -ov -format UDZO \
-            "eglantine-${SHA}-${PLATFORM}.dmg"
-          ls -la "eglantine-${SHA}-${PLATFORM}.dmg"
+            "hortensia-${SHA}-${PLATFORM}.dmg"
+          ls -la "hortensia-${SHA}-${PLATFORM}.dmg"
 
       # Zipped with ditto beforehand: the bundle's framework symlinks don't survive artifact zipping.
       - name: Upload macOS app
         uses: actions/upload-artifact@v7
         with:
-          name: eglantine-${{ env.PLATFORM }}-${{ inputs.sha }}
+          name: hortensia-${{ env.PLATFORM }}-${{ inputs.sha }}
           path: |
-            eglantine-${{ inputs.sha }}-${{ env.PLATFORM }}.zip
-            eglantine-${{ inputs.sha }}-${{ env.PLATFORM }}.dmg
+            hortensia-${{ inputs.sha }}-${{ env.PLATFORM }}.zip
+            hortensia-${{ inputs.sha }}-${{ env.PLATFORM }}.dmg
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

@@ -212,12 +212,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x build/release/bin/eglantine
-          test -x build/release/bin/eden-cli
-          strip build/release/bin/eglantine build/release/bin/eden-cli
-          tar -czf "eglantine-${SHA}-${PLATFORM}.tar.gz" \
-            -C build/release/bin eglantine eden-cli
-          ls -la "eglantine-${SHA}-${PLATFORM}.tar.gz"
+          test -x build/release/bin/hortensia
+          test -x build/release/bin/hortensia-cli
+          strip build/release/bin/hortensia build/release/bin/hortensia-cli
+          tar -czf "hortensia-${SHA}-${PLATFORM}.tar.gz" \
+            -C build/release/bin hortensia hortensia-cli
+          ls -la "hortensia-${SHA}-${PLATFORM}.tar.gz"
 
       # A self-contained AppImage: linuxdeploy bundles every library the two programs need except
       # the base system ones (glibc, X11/Wayland client libraries, the GPU driver and Vulkan loader),
@@ -228,8 +228,8 @@ jobs:
           VERSION_LABEL: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          test -x build/release/bin/eglantine
-          test -x build/release/bin/eden-cli
+          test -x build/release/bin/hortensia
+          test -x build/release/bin/hortensia-cli
           tools="$RUNNER_TEMP/linuxdeploy"
           mkdir -p "$tools"
           arch=$(uname -m)   # aarch64 or x86_64
@@ -238,8 +238,8 @@ jobs:
           curl -fsSL -o "$tools/linuxdeploy-plugin-qt-$arch.AppImage" \
             "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$arch.AppImage"
           chmod +x "$tools"/*.AppImage
-          # The desktop file names its icon dev.eglantine.eglantine.
-          icon="$RUNNER_TEMP/dev.eglantine.eglantine.png"
+          # The desktop file names its icon dev.hortensia.hortensia.
+          icon="$RUNNER_TEMP/dev.hortensia.hortensia.png"
           cp dist/Eglantine.png "$icon"
           export APPIMAGE_EXTRACT_AND_RUN=1
           export QMAKE="$QT_ROOT_DIR/bin/qmake"
@@ -248,13 +248,13 @@ jobs:
           export EXTRA_PLATFORM_PLUGINS='libqwayland-egl.so;libqwayland-generic.so'
           # Embedded in the AppImage metadata: the version label of this build.
           export LDAI_VERSION="$VERSION_LABEL"
-          export LDAI_OUTPUT="eglantine-${SHA}-${PLATFORM}.AppImage"
+          export LDAI_OUTPUT="hortensia-${SHA}-${PLATFORM}.AppImage"
           export OUTPUT="$LDAI_OUTPUT"
           export ARCH="$arch"
           "$tools/linuxdeploy-$arch.AppImage" --appdir AppDir \
-            --executable build/release/bin/eglantine \
-            --executable build/release/bin/eden-cli \
-            --desktop-file dist/dev.eglantine.eglantine.desktop \
+            --executable build/release/bin/hortensia \
+            --executable build/release/bin/hortensia-cli \
+            --desktop-file dist/dev.hortensia.hortensia.desktop \
             --icon-file "$icon" \
             --plugin qt \
             --output appimage
@@ -265,10 +265,10 @@ jobs:
       - name: Upload Linux binary
         uses: actions/upload-artifact@v7
         with:
-          name: eglantine-${{ env.PLATFORM }}-${{ inputs.sha }}
+          name: hortensia-${{ env.PLATFORM }}-${{ inputs.sha }}
           path: |
-            eglantine-${{ inputs.sha }}-${{ env.PLATFORM }}.tar.gz
-            eglantine-${{ inputs.sha }}-${{ env.PLATFORM }}.AppImage
+            hortensia-${{ inputs.sha }}-${{ env.PLATFORM }}.tar.gz
+            hortensia-${{ inputs.sha }}-${{ env.PLATFORM }}.AppImage
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

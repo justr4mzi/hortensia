@@ -53,7 +53,7 @@ On a big card, reproduce an 8 GB one:
 
 ```
 set EDEN_NX2_VRAM_LIMIT_MIB=7168
-eglantine.exe
+hortensia.exe
 ```
 
 Expected in the log: `EDEN_NX2_VRAM_LIMIT_MIB: device-local heaps limited to 7168 MiB`, the BC3
