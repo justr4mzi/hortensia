@@ -81,7 +81,7 @@ std::vector<Asset> Release::GetPlatformAssets(std::string_view platform,
 }
 
 std::optional<Asset> Release::GetPlatformAsset() const {
-    // Release files are named hortensia-<platform> plus the package's extension; each build
+    // Release files are named eglantine-<platform> plus the package's extension; each build
     // updates to the package it came in.
 #if defined(_WIN32)
     static constexpr std::array<std::string_view, 1> extensions{".zip"};

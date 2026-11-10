@@ -20,22 +20,6 @@
 #include "common/logging.h"
 #include "common/assert.h"
 #include "common/thread.h"
-
-#ifndef _WIN32
-namespace {
-std::chrono::steady_clock::time_point EventDeadline(std::chrono::nanoseconds timeout) {
-    using namespace std::chrono;
-    const auto now = steady_clock::now();
-    if (timeout <= nanoseconds::zero()) {
-        return now;
-    }
-    const auto now_ns = duration_cast<nanoseconds>(now.time_since_epoch());
-    const auto deadline =
-        now_ns > nanoseconds::max() - timeout ? nanoseconds::max() : now_ns + timeout;
-    return steady_clock::time_point{duration_cast<steady_clock::duration>(deadline)};
-}
-} // namespace
-#endif
 #ifdef __APPLE__
 #include <mach/mach.h>
 #elif defined(__HAIKU__)
@@ -1009,9 +993,8 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
                 } else
                     return false; //timeout
             }
-            // Interrupts and unrelated writes to the monitored cache line can wake
-            // MWAITX. Only the event predicate or the actual deadline ends the wait.
-            if (consume_signal())
+            bool expected = true;
+            if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
                 return true;
             }
             // RDTSC may be fenced here due to atomic load
@@ -1075,16 +1058,6 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #else
 bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #ifdef _WIN32
-    const auto consume_signal = [this] {
-        bool expected = true;
-        return is_set.compare_exchange_strong(expected, false, std::memory_order_acq_rel);
-    };
-    if (consume_signal()) {
-        return true;
-    }
-    if (time <= std::chrono::nanoseconds::zero()) {
-        return false;
-    }
     auto const end = Common::g_wall_clock.GetTimeNS() + time;
     while (!is_set.load() && end > Common::g_wall_clock.GetTimeNS())
         Common::Windows::SleepForOneTick();
