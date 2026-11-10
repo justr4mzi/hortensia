@@ -37,6 +37,19 @@ struct ProgramRecord;
 
 namespace VideoCommon {
 
+/// A native (Switch 2) program after capture and lowering to Maxwell code. The shader cache keeps
+/// it so the environments built for the program's pipelines don't capture and lower it again.
+struct LoweredNativeCode {
+    /// Shader header, lowered instructions with Maxwell scheduling words, then the native
+    /// address map (what the environment's `code` used to be filled with).
+    std::vector<u64> code;
+    /// Bytes of the native program that were read, header included.
+    size_t source_size{};
+    /// Constant buffer holding the texture handles if the program requires one, otherwise ~0U
+    /// (the engine's register value is used).
+    u32 texture_bound = ~0U;
+};
+
 class GenericEnvironment : public Shader::Environment {
 public:
     explicit GenericEnvironment() = default;

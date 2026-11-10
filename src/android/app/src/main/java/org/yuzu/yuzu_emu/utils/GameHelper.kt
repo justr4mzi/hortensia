@@ -23,6 +23,7 @@ import java.io.File
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
+import org.yuzu.yuzu_emu.getPublicFilesDir
 import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GameDir
 import org.yuzu.yuzu_emu.model.MinimalDocumentFile
@@ -91,6 +92,8 @@ object GameHelper {
             }
         }
         NativeConfig.setGameDirs(gameDirs.toTypedArray())
+
+        addLocalExtractedGames(games, gamesByProgramId, gameDirs)
 
         // Cache list of games found on disk
         val serializedGames = mutableSetOf<String>()

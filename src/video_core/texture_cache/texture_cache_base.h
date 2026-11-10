@@ -612,6 +612,11 @@ private:
     /// bound to its layers for a SparseLayers one.
     u64 ImageMemoryBytes(const Image& image) const;
 
+    /// The device memory an image counts for in total_used_memory between two driver readings:
+    /// none for an unbacked image (too large to back, or over unwritten sparse blocks), what is
+    /// bound to its layers for a SparseLayers one.
+    u64 ImageMemoryBytes(const Image& image) const;
+
     void QueueAsyncDecode(Image& image, ImageId image_id);
     void TickAsyncDecode();
 
