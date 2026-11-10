@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <set>
 #include <vector>
 #include <QByteArray>
 #include <QMetaType>
@@ -112,6 +113,7 @@ struct Values {
                                                            true};
 
     Setting<bool> first_start{linkage, true, "firstStart", Category::Ui};
+    std::set<u64> skipped_recommended_settings;
     Setting<bool> pause_when_in_background{linkage,
                                            false,
                                            "pauseWhenInBackground",

@@ -84,6 +84,7 @@ add_library(
     game_fps.h
     hitch_diagnostic.h
     literals.h
+    log_ring.h
     logging.cpp
     logging.h
     lz4_compression.cpp
@@ -93,6 +94,8 @@ add_library(
     memory_detect.h
     multi_level_page_table.cpp
     multi_level_page_table.h
+    nx2_sampler.cpp
+    nx2_sampler.h
     overflow.h
     page_table.cpp
     page_table.h

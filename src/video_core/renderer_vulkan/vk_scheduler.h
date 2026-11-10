@@ -141,6 +141,11 @@ public:
         compute_writes_pending = true;
     }
 
+    /// A dispatch was recorded: the next render pass must see what it wrote.
+    void NoteComputeWrites() {
+        compute_writes_pending = true;
+    }
+
     /// Returns true when a render pass is currently active in the scheduler state.
     bool IsRenderPassActive() const {
         return state.renderpass != VK_NULL_HANDLE;

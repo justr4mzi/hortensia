@@ -152,6 +152,15 @@ public:
     [[nodiscard]] static bool OwnsScheduler() {
         return Get().BackRunning() ? on_back_thread : on_gpu_thread;
     }
+    /// Marks the calling thread as the GPU thread (the front, or the only one without the split).
+    static void MarkGpuThread() {
+        on_gpu_thread = true;
+    }
+    /// Whether the calling thread owns the Vulkan scheduler: the back while it runs, else the
+    /// GPU thread. Other threads (CPU cores, services) must not record or submit work.
+    [[nodiscard]] static bool OwnsScheduler() {
+        return Get().BackRunning() ? on_back_thread : on_gpu_thread;
+    }
     /// Called on the back before it sleeps waiting for work (the rasterizer submits deferred work).
     void SetIdleHook(void (*hook)(void*), void* argument) {
         idle_hook = hook;
@@ -266,6 +275,19 @@ public:
         }
         Defer(func);
         Drain(site);
+    }
+
+    /// Runs `func` on the back and waits for it: for work on back-owned state, such as a buffer
+    /// cache download that records into the Vulkan scheduler. A drained back still submits from
+    /// its idle hook, so the front never touches that state itself.
+    template <typename Func>
+    void Run(const Func& func) {
+        if (on_back_thread || !active) {
+            func();
+            return;
+        }
+        Defer(func);
+        Drain();
     }
 
     /// EDEN_NX2_SPLIT_CHECK=1 (debug): reports, with its stack, a thread other than the back
@@ -601,6 +623,13 @@ private:
 
     // Back side.
     alignas(64) Tegra::Engines::EngineInterface* back_engine{};
+
+    /// Whether the back is done with the Vulkan scheduler until it gets more work: set after its
+    /// idle hook ran, cleared before it executes entries.
+    [[nodiscard]] bool BackQuiet() const {
+        return back_quiet.load(std::memory_order_acquire) ||
+               !back_running.load(std::memory_order_acquire);
+    }
 
     /// Whether the back is done with the Vulkan scheduler until it gets more work: set after its
     /// idle hook ran, cleared before it executes entries.

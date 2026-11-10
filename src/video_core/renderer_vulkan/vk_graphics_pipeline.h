@@ -345,6 +345,9 @@ public:
     }
 
 private:
+    /// Builds the pipeline once, on whichever thread gets here first.
+    void RunBuild();
+
     template <typename Spec>
     bool ConfigureImpl(bool is_indexed);
 

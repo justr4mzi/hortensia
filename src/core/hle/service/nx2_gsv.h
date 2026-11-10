@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -41,6 +42,7 @@
 #include "core/core.h"
 #include "core/arm/dynarmic/window_trace.h"
 #include "core/device_memory.h"
+#include "video_core/nx2_diag.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/renderer_base.h"
 #include "core/frontend/framebuffer_layout.h"
@@ -93,6 +95,9 @@
 #include "core/hle/service/service.h"
 
 namespace Service {
+
+/// LOCAL TEST (Zelda): steady-clock time of the last decoded video frame (PaceToVblank).
+inline std::atomic<s64> g_nx2_video_last_frame_ns{0};
 
 // Creates a session served by `iface` and returns its client end. Unlike PushIpcInterface this
 // works from a domain too, for callers that want a raw session handle.
@@ -328,7 +333,7 @@ public:
     explicit INx2SyncptSession(Core::System& system_)
         : ServiceFramework{system_, "nx2:syncpt"}, m_context{system_, "nx2:syncpt"} {
         RegisterHandlersTipc({
-            {0, &INx2SyncptSession::Handshake, "Handshake"},
+            {0, &INx2SyncptSession::Handshake, "Ping"},
             {1, &INx2SyncptSession::GetCount, "GetCount (guessed)"},
             {22, &INx2SyncptSession::GetSlotEvent, "GetSlotEvent (guessed)"},
             {103, &INx2SyncptSession::QueryCounter, "QueryCounter"},
@@ -500,19 +505,19 @@ public:
         : ServiceFramework{system_, "nx2:gpu"}, m_context{system_, "nx2:gpu"} {
         RegisterHandlersTipc({
             {0, &INx2GpuSession::Handshake, "Handshake"},
-            {11, &INx2GpuSession::GetIdRange, "GetIdRange (guessed)"},
-            {12, &INx2GpuSession::GetIdEvent, "GetIdEvent (guessed)"},
-            {21, &INx2GpuSession::Start, "Start (guessed)"},
-            {22, &INx2GpuSession::OpenSubSession, "OpenSubSession (guessed)"},
-            {33, &INx2GpuSession::GetCount33, "Unknown33 (u32 count)"},
+            {11, &INx2GpuSession::GetIdRange, "GetEventIdRange"},
+            {12, &INx2GpuSession::GetIdEvent, "CreateEvent"},
+            {21, &INx2GpuSession::Start, "RequestKUserWorkerSession"},
+            {22, &INx2GpuSession::OpenSubSession, "GetKUserWorkerSession"},
+            {33, &INx2GpuSession::GetCount33, "CreateGpuAddressSpace"},
             {41, &INx2GpuSession::CreateGraphicsDevice, "CreateGraphicsDevice"},
             {42, &INx2GpuSession::DestroyGraphicsDevice, "DestroyGraphicsDevice"},
-            {201, &INx2GpuSession::GetUserPartition, "GetUserPartition (newer SDKs)"},
-            {202, &INx2GpuSession::GetGsvPartition, "GetGsvPartition (newer SDKs)"},
+            {201, &INx2GpuSession::GetUserPartition, "GetUserPartitionGpuAddress"},
+            {202, &INx2GpuSession::GetGsvPartition, "GetGsvPartitionGpuAddress"},
             {203, &INx2GpuSession::GetVaRange, "GetVaRange (guessed)"},
-            // Sub-session commands (gpu 22 hands out a second session to this same object).
-            {101, &INx2GpuSession::SubRegisterMemory, "CreateGpuAccessibleMemory"},
-            {102, &INx2GpuSession::SubDestroyMemory, "DestroyGpuAccessibleMemory (guessed)"},
+            // KUserWorkerSession commands (22 hands out that session; this same object answers).
+            {101, &INx2GpuSession::SubRegisterMemory, "CreateGpuMemory"},
+            {102, &INx2GpuSession::SubDestroyMemory, "DestroyGpuMemory"},
             {211, &INx2GpuSession::SubSubmitJob, "NormalMapGpuMemory4K"},
             {212, &INx2GpuSession::SubModifyKind, "NormalModifyMemoryKind4K"},
             {213, &INx2GpuSession::SubUnmapJob, "NormalUnmapGpuMemory4K"},
@@ -2262,6 +2267,11 @@ private:
             m_frame_trace.sleep_actual_ms = 0;
             m_frame_trace.deadline_reset = false;
         }
+        const auto movie_now = std::chrono::steady_clock::now();
+        if (m_objects->mkw_movie_activity.Active(movie_now)) {
+            m_next_vblank = movie_now;
+            return;
+        }
         static const u32 forced_interval = [] {
             const char* value = std::getenv("EDEN_NX2_SWAP_INTERVAL");
             return value ? static_cast<u32>(std::strtoul(value, nullptr, 10)) : 0U;
@@ -2273,7 +2283,16 @@ private:
         if (mkw_dynamic) {
             swap_interval = 1;
         }
-        if (forced_interval != 0) {
+        // LOCAL TEST (Zelda): not while a video plays. Ocarina's cutscene videos are 60 fps AV1;
+        // forced to two vblanks a frame they played at half rate.
+        const s64 video_ns = g_nx2_video_last_frame_ns.load(std::memory_order_relaxed);
+        const bool video_playing =
+            video_ns != 0 &&
+            std::chrono::steady_clock::now().time_since_epoch().count() - video_ns <
+                std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::milliseconds{500})
+                    .count();
+        if (forced_interval != 0 && !video_playing) {
             swap_interval = forced_interval;
         }
         const u32 refresh_rate = (timing & 0xffff) >= 30 && (timing & 0xffff) <= 240 ? timing & 0xffff : 60;
@@ -2580,12 +2599,11 @@ private:
         }
         const auto layout = Layout::DefaultFrameLayout(1280, 720);
         auto pixels = std::make_shared<std::vector<u8>>(layout.width * layout.height * 4);
-        const std::string path =
-            fmt::format("{}/nx2-frame-{:05}.tga", directory, m_presents);
         auto pending = m_capture_pending; // the screenshot callback can outlive the session
         system.GPU().Renderer().RequestScreenshot(
             pixels->data(),
-            [pixels, layout, path, pending](bool invert_y) {
+            [pixels, layout, path, watch_dir, present = m_presents, white_state = m_white_state,
+             last_capture = m_last_capture, pending](bool invert_y) {
                 std::array<u8, 18> header{};
                 header[2] = 2; // uncompressed true colour
                 header[12] = static_cast<u8>(layout.width);
@@ -2595,6 +2613,43 @@ private:
                 header[16] = 32;
                 // Descriptor bit 5: rows top to bottom. invert_y means the data is bottom-up.
                 header[17] = invert_y ? 0x08 : 0x28;
+                // A white flash is a spike of near-white pixels; a normal frame of this game has
+                // none (measured: 0 against 7175 on a flashed frame), so a saved frame is a flash.
+                u32 white = 0;
+                for (size_t i = 0; i + 3 < pixels->size(); i += 4) {
+                    const u8* const p = pixels->data() + i;
+                    white += std::min({p[0], p[1], p[2]}) > 245;
+                }
+                if (!watch_dir.empty()) {
+                    // The scene's own mist is bright, so a flash is a spike against the last
+                    // presents, not a high count on its own.
+                    const u32 median = white_state->Median();
+                    const bool flash = white > 1500 && white > 2 * median + 200;
+                    if (flash) {
+                        LOG_INFO(Service,
+                                 "nx2: flash watch: present {} has {} near-white pixels (median {})",
+                                 present, white, median);
+                        const auto saved = fmt::format("{}/flash-{:05}.tga", watch_dir, present);
+                        if (std::FILE* file = std::fopen(saved.c_str(), "wb")) {
+                            std::fwrite(header.data(), 1, header.size(), file);
+                            std::fwrite(pixels->data(), 1, pixels->size(), file);
+                            std::fclose(file);
+                        }
+                        // The present before it, to diff against.
+                        if (last_capture != nullptr && last_capture->size() == pixels->size()) {
+                            const auto before = fmt::format("{}/before-{:05}.tga", watch_dir, present);
+                            if (std::FILE* file = std::fopen(before.c_str(), "wb")) {
+                                std::fwrite(header.data(), 1, header.size(), file);
+                                std::fwrite(last_capture->data(), 1, last_capture->size(), file);
+                                std::fclose(file);
+                            }
+                        }
+                    }
+                    white_state->Push(white);
+                    last_capture->assign(pixels->begin(), pixels->end());
+                    pending->store(false);
+                    return;
+                }
                 if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
                     std::fwrite(header.data(), 1, header.size(), file);
                     std::fwrite(pixels->data(), 1, pixels->size(), file);
@@ -2815,6 +2870,24 @@ private:
     u64 m_presents{};
     u64 m_shown_layout{}; // image and crop size last logged
     std::shared_ptr<std::atomic<bool>> m_capture_pending = std::make_shared<std::atomic<bool>>(false);
+    u32 m_burst_left{}; // presents still to save for a burst capture
+    // Near-white pixel counts of the last presents, for the flash watcher's spike test.
+    struct WhiteHistory {
+        std::array<u32, 16> counts{};
+        size_t next{};
+        u32 last{};
+        void Push(u32 white) {
+            std::swap(counts[next], last);
+            next = (next + 1) % counts.size();
+        }
+        u32 Median() const {
+            std::array<u32, 16> sorted = counts;
+            std::sort(sorted.begin(), sorted.end());
+            return sorted[sorted.size() / 2];
+        }
+    };
+    std::shared_ptr<WhiteHistory> m_white_state = std::make_shared<WhiteHistory>();
+    std::shared_ptr<std::vector<u8>> m_last_capture; // pixels of the previous present (flash watch)
 };
 
 // True the first time a Switch 2 video command is seen, so each one is logged once in full and new
@@ -2882,6 +2955,9 @@ public:
             }
             m_cv.notify_all();
             m_worker.join();
+        }
+        if (m_movie_program_id == 0x0400C3F00006E000ULL && m_width >= 1920) {
+            m_objects->mkw_movie_activity.Reset();
         }
         // The ready timer runs on the HostTiming thread: clear its event under its lock first.
         {
@@ -3757,16 +3833,16 @@ public:
     explicit INx2GraphicsSystemSession(Core::System& system_)
         : ServiceFramework{system_, "nx2:gsv"}, m_context{system_, "nx2:gsv"} {
         RegisterHandlersTipc({
-            {4, &INx2GraphicsSystemSession::Stub, "Boot (Switch 2, guessed)"},
+            {4, &INx2GraphicsSystemSession::Stub, "BootWithRemoteMemory"},
             {5, &INx2GraphicsSystemSession::Stub, "Unknown5"},
-            {101, &INx2GraphicsSystemSession::Stub, "Unknown101"},
-            {202, &INx2GraphicsSystemSession::OpenSyncptSession, "OpenSyncptSession (guessed)"},
+            {101, &INx2GraphicsSystemSession::Stub, "CreateContext"},
+            {202, &INx2GraphicsSystemSession::OpenSyncptSession, "InitializeSyncptContext"},
             {204, &INx2GraphicsSystemSession::AttachSyncptMemory, "AttachSyncptMemory (guessed)"},
-            {305, &INx2GraphicsSystemSession::OpenViSession, "OpenViSession (guessed)"},
-            {497, &INx2GraphicsSystemSession::OpenGpuSession, "OpenGpuSession (guessed)"},
+            {305, &INx2GraphicsSystemSession::OpenViSession, "InitializeDisplayContext"},
+            {497, &INx2GraphicsSystemSession::OpenGpuSession, "CreateGpuSessionWithRemoteMemory"},
             {111, &INx2GraphicsSystemSession::CreateNativeMemory, "CreateNativeMemory"},
             {112, &INx2GraphicsSystemSession::DestroyNativeMemory, "DestroyNativeMemory"},
-            {114, &INx2GraphicsSystemSession::BindNativeMemory, "BindNativeMemory"},
+            {114, &INx2GraphicsSystemSession::BindNativeMemory, "CreateNativeMemoryBlock"},
             {314, &INx2GraphicsSystemSession::ConfigureWindowImagePool, "DestroyNativeWindowAliasImagePool"},
             {315, &INx2GraphicsSystemSession::ConfigureWindowImagePool, "CreateNativeWindowAliasImagePool"},
             {423, &INx2GraphicsSystemSession::BindNativeGpuMemory, "BindNativeGpuMemory"},
@@ -3776,7 +3852,7 @@ public:
             {427, &INx2GraphicsSystemSession::UnmapNativeImage, "UnmapNativeImage"},
             {428, &INx2GraphicsSystemSession::QueryNativeImage, "QueryNativeImage"},
             {435, &INx2GraphicsSystemSession::CalculateNativeImageSize, "CalculateNativeImageSize"},
-            {1402, &INx2GraphicsSystemSession::OpenNvsrvSession, "OpenNvsrvSession (guessed)"},
+            {1402, &INx2GraphicsSystemSession::OpenNvsrvSession, "CreateNvDrv2UserSessionWithRemoteMemory"},
             {1510, &INx2GraphicsSystemSession::CalculateRequirements, "CalculateRequirements"},
             {991, &INx2GraphicsSystemSession::CalculateDecoderImagePoolBuffer,
              "CalculateDecoderImagePoolBuffer"},
@@ -3786,14 +3862,14 @@ public:
             {903, &INx2GraphicsSystemSession::Stub, "VideoFinalize"},
             {902, &INx2GraphicsSystemSession::OpenVideoSession, "OpenVideoDecoderSession (guessed)"},
             {906, &INx2GraphicsSystemSession::OpenVideoSession, "OpenVideoDecoderSessionWithVersion"},
-            {1001, &INx2GraphicsSystemSession::Stub, "VideoInitialize2 (guessed)"},
-            {1002, &INx2GraphicsSystemSession::OpenVideoSession, "OpenVideoDecoderSession2 (guessed)"},
-            {601, &INx2GraphicsSystemSession::Stub, "CameraInitialize (guessed)"},
-            {602, &INx2GraphicsSystemSession::OpenCameraSession, "OpenCameraContext (guessed)"},
-            {1201, &INx2GraphicsSystemSession::Stub, "ChatInitialize (guessed)"},
-            {1202, &INx2GraphicsSystemSession::OpenChatSession, "OpenChatSession (guessed)"},
+            {1001, &INx2GraphicsSystemSession::Stub, "CreateVideoEncoderContext"},
+            {1002, &INx2GraphicsSystemSession::OpenVideoSession, "InitializeVideoEncoderContext"},
+            {601, &INx2GraphicsSystemSession::Stub, "CreateCameraContext"},
+            {602, &INx2GraphicsSystemSession::OpenCameraSession, "InitializeCameraContext"},
+            {1201, &INx2GraphicsSystemSession::Stub, "CreateChatContext"},
+            {1202, &INx2GraphicsSystemSession::OpenChatSession, "InitializeChatContext"},
             // Same request as 429: nn::chat::gsv::CreateImagePool (GameChat camera images).
-            {1211, &INx2GraphicsSystemSession::CreateNativeImage, "CreateChatImagePool (guessed)"},
+            {1211, &INx2GraphicsSystemSession::CreateNativeImage, "CreateImagePool"},
             {1291, &INx2GraphicsSystemSession::CalculateChatImagePoolSize,
              "CalculateChatImagePoolSize (guessed)"},
             {911, &INx2GraphicsSystemSession::CreateDecoderImage, "CreateDecoderImage"},
@@ -3810,23 +3886,23 @@ public:
             {126, &INx2GraphicsSystemSession::GetSessionFlag, "GetSessionFlag"},
             {131, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown131"},
             {133, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown133"},
-            {187, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown187"},
-            {201, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission201"},
-            {211, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown211"},
-            {212, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown212"},
-            {213, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown213"},
-            {214, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown214"},
-            {215, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown215"},
-            {301, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission301"},
-            {303, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown303"},
+            {187, &INx2GraphicsSystemSession::StubReplyZeroed, "QueryNativeMemoryNvsNvRmMemIdForDebug"},
+            {201, &INx2GraphicsSystemSession::CheckPermission, "CreateSyncptContext"},
+            {211, &INx2GraphicsSystemSession::StubReplyZeroed, "CreateDebugSyncDevice"},
+            {212, &INx2GraphicsSystemSession::StubReplyZeroed, "DestroyDebugSyncDevice"},
+            {213, &INx2GraphicsSystemSession::StubReplyZeroed, "CreateDebugSyncCounter"},
+            {214, &INx2GraphicsSystemSession::StubReplyZeroed, "DestroyDebugSyncCounter"},
+            {215, &INx2GraphicsSystemSession::StubReplyZeroed, "ReportDebugSyncCounterValue"},
+            {301, &INx2GraphicsSystemSession::CheckPermission, "CreateDisplayContext"},
+            {303, &INx2GraphicsSystemSession::StubReplyZeroed, "DestroyDisplayContext"},
             {311, &INx2GraphicsSystemSession::CreateNativeImage, "CreateFeatureImagePool311"},
             {312, &INx2GraphicsSystemSession::DestroyNativeImage, "DestroyFeatureImagePool312"},
             {321, &INx2GraphicsSystemSession::CreateNativeImage, "CreateFeatureImagePool321"},
             {361, &INx2GraphicsSystemSession::GetCpuImageDescriptor, "GetFeatureCpuImageDescriptor361"},
-            {391, &INx2GraphicsSystemSession::CalculateChatImagePoolSize, "CalculateFeatureImagePoolSize391"},
-            {401, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission401"},
-            {402, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission402"},
-            {403, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission403"},
+            {391, &INx2GraphicsSystemSession::CalculateChatImagePoolSize, "CalculateRequiredBufferMemory"},
+            {401, &INx2GraphicsSystemSession::CheckPermission, "CreateGpuContext"},
+            {402, &INx2GraphicsSystemSession::CheckPermission, "InitializeGpuContext"},
+            {403, &INx2GraphicsSystemSession::CheckPermission, "DestroyGpuContext"},
             {424, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown424"},
             {425, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown425"},
             {434, &INx2GraphicsSystemSession::AttachGpuAddressSpace, "AttachGpuAddressSpace"},
@@ -3839,14 +3915,14 @@ public:
             {466, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown466"},
             {467, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown467"},
             {468, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown468"},
-            {493, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown493"},
+            {493, &INx2GraphicsSystemSession::StubReplyZeroed, "CreateUserlandDebuggerSession"},
             {494, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission494"},
-            {603, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown603"},
-            {612, &INx2GraphicsSystemSession::DestroyNativeImage, "DestroyFeatureImagePool612"},
-            {613, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown613"},
-            {614, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown614"},
-            {615, &INx2GraphicsSystemSession::CreateNativeImage, "CreateFeatureImagePool615"},
-            {691, &INx2GraphicsSystemSession::CalculateChatImagePoolSize, "CalculateFeatureImagePoolSize691"},
+            {603, &INx2GraphicsSystemSession::StubReplyZeroed, "DestroyCameraContext"},
+            {612, &INx2GraphicsSystemSession::DestroyNativeImage, "DestroyOutputBufferPool"},
+            {613, &INx2GraphicsSystemSession::StubReplyZeroed, "CreateAliasOutputBufferPool"},
+            {614, &INx2GraphicsSystemSession::StubReplyZeroed, "DestroyAliasOutputBufferPool"},
+            {615, &INx2GraphicsSystemSession::CreateNativeImage, "CreateOutputBufferPool"},
+            {691, &INx2GraphicsSystemSession::CalculateChatImagePoolSize, "CalculateImageArraySize"},
             {801, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission801"},
             {802, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown802"},
             {803, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown803"},
@@ -3856,9 +3932,9 @@ public:
             {814, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown814"},
             {861, &INx2GraphicsSystemSession::GetCpuImageDescriptor, "GetFeatureCpuImageDescriptor861"},
             {891, &INx2GraphicsSystemSession::CalculateChatImagePoolSize, "CalculateFeatureImagePoolSize891"},
-            {1003, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown1003"},
-            {1011, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown1011"},
-            {1012, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown1012"},
+            {1003, &INx2GraphicsSystemSession::StubReplyZeroed, "DestroyVideoEncoderContext"},
+            {1011, &INx2GraphicsSystemSession::StubReplyZeroed, "InitializeEncoderImagePool"},
+            {1012, &INx2GraphicsSystemSession::StubReplyZeroed, "FinalizeEncoderImagePool"},
             {1091, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown1091"},
             {1101, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission1101"},
             {1102, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission1102"},

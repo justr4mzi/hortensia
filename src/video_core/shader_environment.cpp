@@ -848,6 +848,10 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(
         reject_list.find(fmt::format(",{:x},", program_base)) != std::string::npos) {
         throw Shader::RuntimeError("Native shader at {:#x} rejected by EDEN_NX2_REJECT", program_base);
     }
+    if (VideoCommon::Nx2Diag::Active()) {
+        VideoCommon::Nx2Diag::Diagnostics::Get().RegisterProgram(
+            program_base, Shader::Ampere::NativeProgramKey(native));
+    }
     // EDEN_NX2_SHADER_DUMP=<dir>: keep every captured native program (named by its key) so the
     // lowering can be tested offline against all of a game's shaders.
     if (static const char* const dump_directory = std::getenv("EDEN_NX2_SHADER_DUMP");
@@ -1753,7 +1757,13 @@ static void ReadPipelines(
     u32 cache_version;
     file.read(magic_number.data(), magic_number.size())
         .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version));
-    if (magic_number != MAGIC_NUMBER || cache_version != expected_cache_version) {
+    const bool upgrading = upgrade != nullptr && magic_number == MAGIC_NUMBER &&
+                           cache_version >= min_compatible_version &&
+                           cache_version < expected_cache_version;
+    if (upgrading) {
+        upgrade->from_version = cache_version;
+    }
+    if (!upgrading && (magic_number != MAGIC_NUMBER || cache_version != expected_cache_version)) {
         file.close();
         if (Common::FS::RemoveFile(filename)) {
             if (magic_number != MAGIC_NUMBER) {

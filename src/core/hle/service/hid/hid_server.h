@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <unordered_map>
+
 #include "core/hle/service/cmif_types.h"
 #include "core/hle/service/service.h"
 #include "hid_core/hid_types.h"
@@ -191,7 +193,7 @@ private:
                                     ClientAppletResourceUserId aruid);
     // Switch 2 sends vibration every frame with 214: pointer buffers of device handles and values
     // like 206, but the aruid is raw data after an unknown u64 instead of a sent process id.
-    Result SendNx2VibrationValues(
+    Result SendVibrationValuesInMode(
         u64 unknown, AppletResourceUserId aruid,
         InArray<Core::HID::VibrationDeviceHandle, BufferAttr_HipcPointer> vibration_handles,
         InArray<Core::HID::VibrationValue, BufferAttr_HipcPointer> vibration_values);
@@ -322,6 +324,13 @@ private:
     std::vector<NativeInputMemory> native_input_memories;
     std::shared_ptr<ResourceManager> resource_manager;
     std::shared_ptr<HidFirmwareSettings> firmware_settings;
+    struct NmousePointerRanges {
+        s32 width;
+        s32 height;
+    };
+    // Keyed by applet resource user id, as the console keeps them per application.
+    std::unordered_map<u64, u64> scene_ids_for_private_app;
+    std::unordered_map<u64, NmousePointerRanges> nmouse_pointer_ranges;
 };
 
 } // namespace Service::HID

@@ -658,6 +658,16 @@ GraphicsPipeline::GraphicsPipeline(
     build.emplace(build_queue, std::move(func), std::move(emit));
 }
 
+void GraphicsPipeline::RunBuild() {
+    // A draw or dispatch that needs the pipeline builds it on the scheduler thread instead of
+    // waiting for the worker queue, which can hold hundreds of builds, to reach it.
+    if (build_claimed.exchange(true)) {
+        return;
+    }
+    build_task();
+    build_task = nullptr;
+}
+
 void GraphicsPipeline::AddTransition(GraphicsPipeline* transition) {
     transition_keys.push_back(transition->key);
     transitions.push_back(transition);
@@ -996,6 +1006,31 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             for (u32 texture = 0; texture < textures; ++texture, ++view_index) {
                 sampled_images.push_back(
                     {static_cast<u32>(stage), views[view_index].index, views[view_index].id});
+            }
+            if constexpr (Spec::has_images) {
+                view_index += Shader::NumDescriptors(info.image_descriptors);
+            }
+        }
+    }
+    if (RecordingSampledTextures()) {
+        sampled_images.clear();
+        size_t view_index{};
+        size_t sampler_index{};
+        for (size_t stage = 0; stage < Spec::enabled_stages.size(); ++stage) {
+            if (!Spec::enabled_stages[stage]) {
+                continue;
+            }
+            const Shader::Info& info{stage_infos[stage]};
+            if constexpr (Spec::has_texture_buffers) {
+                view_index += Shader::NumDescriptors(info.texture_buffer_descriptors);
+            }
+            if constexpr (Spec::has_image_buffers) {
+                view_index += Shader::NumDescriptors(info.image_buffer_descriptors);
+            }
+            const u32 textures = Shader::NumDescriptors(info.texture_descriptors);
+            for (u32 texture = 0; texture < textures; ++texture, ++view_index, ++sampler_index) {
+                sampled_images.push_back({static_cast<u32>(stage), views[view_index].index,
+                                          views[view_index].id, samplers[sampler_index]});
             }
             if constexpr (Spec::has_images) {
                 view_index += Shader::NumDescriptors(info.image_descriptors);

@@ -60,6 +60,10 @@ struct ChannelState;
 
 namespace VideoCommon {
 
+/// Set around a 2D blit to read its source as this format instead of the surface's (for formats the
+/// 2D engine has no surface format for, e.g. E5B9G9R9 by the NX2 upscale stand-in). GPU thread only.
+inline thread_local std::optional<VideoCore::Surface::PixelFormat> g_blit_source_format;
+
 using Tegra::Texture::TICEntry;
 using Tegra::Texture::TSCEntry;
 using VideoCore::Surface::PixelFormat;
@@ -651,7 +655,11 @@ private:
 
     DAddr virtual_invalid_space{};
 
-    /// Applies EDEN_NX2_TC_EXPECTED_MIB / EDEN_NX2_TC_CRITICAL_MIB and logs the thresholds.
+    /// The device's memory budget, or its device-local memory when the API reports no budget.
+    [[nodiscard]] u64 QueryDeviceMemory();
+
+    /// Applies the memory limit setting and EDEN_NX2_TC_EXPECTED_MIB / EDEN_NX2_TC_CRITICAL_MIB,
+    /// and logs the thresholds.
     void ApplyThresholdOverrides(bool log = true);
     void LogThresholds() const;
 

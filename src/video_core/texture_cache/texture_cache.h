@@ -41,6 +41,7 @@
 #include "video_core/texture_cache/conversion.h"
 #include "video_core/texture_cache/host_mip_limits.h"
 #include "video_core/texture_cache/image_view_base.h"
+#include "video_core/texture_cache/memory_limits.h"
 #include "video_core/texture_cache/samples_helper.h"
 #include "video_core/texture_cache/texture_cache_base.h"
 #include "video_core/texture_cache/util.h"
@@ -87,7 +88,8 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
     void(slot_samplers.insert(runtime, sampler_descriptor));
 
     if constexpr (HAS_DEVICE_MEMORY_INFO) {
-        const s64 device_local_memory = static_cast<s64>(runtime.GetDeviceLocalMemory());
+        device_memory_total = QueryDeviceMemory();
+        const s64 device_local_memory = static_cast<s64>(device_memory_total);
         const s64 min_spacing_expected = device_local_memory - 1_GiB;
         const s64 min_spacing_critical = device_local_memory - 512_MiB;
         const s64 mem_threshold = (std::min)(device_local_memory, TARGET_THRESHOLD);
@@ -353,6 +355,17 @@ void TextureCache<P>::ClearStaleGpu(GPUVAddr gpu_addr, size_t size) {
 }
 
 template <class P>
+u64 TextureCache<P>::QueryDeviceMemory() {
+    if constexpr (requires { runtime.GetDeviceMemoryBudget(); }) {
+        const u64 budget = runtime.GetDeviceMemoryBudget();
+        if (budget > 2_GiB) {
+            return budget;
+        }
+    }
+    return runtime.GetDeviceLocalMemory();
+}
+
+template <class P>
 void TextureCache<P>::ApplyThresholdOverrides(bool log) {
     // Past what a frame needs, more device memory only keeps the textures of earlier scenes
     // (title 1 filled 6.7 GB of an 8 GB card and draws its races in ~5 GB), so collect from
@@ -410,7 +423,7 @@ void TextureCache<P>::TickFrame() {
         // measured from the driver, so collect only near the device budget instead.
         if (!native_thresholds_applied && gpu_memory != nullptr && gpu_memory->UsesNativeTiling()) {
             native_thresholds_applied = true;
-            const u64 device_local = runtime.GetDeviceLocalMemory();
+            const u64 device_local = device_memory_total;
             critical_memory = (std::max)(critical_memory, device_local - 256_MiB);
             expected_memory = (std::max)(expected_memory, device_local - 1280_MiB);
             ApplyThresholdOverrides();
@@ -448,6 +461,7 @@ void TextureCache<P>::TickFrame() {
             if (native_thresholds_applied && budget_check_frames++ % 30 == 0) {
                 const u64 budget = runtime.GetDeviceMemoryBudget();
                 if (budget > 2_GiB) {
+                    device_memory_total = budget;
                     const u64 old_critical = critical_memory;
                     const u64 margin = (std::min)(budget / 8, 1_GiB);
                     if constexpr (requires { runtime.GetDeviceMemorySlack(); }) {
@@ -1579,7 +1593,15 @@ bool TextureCache<P>::BlitImage(const Tegra::Engines::Fermi2D::Surface& dst,
     const std::optional src_base = src_image.TryFindBase(src.Address());
     const SubresourceRange src_range{.base = src_base.value(), .extent = {1, 1}};
     const ImageViewInfo src_view_info(ImageViewType::e2D, images.src_format, src_range);
-    const auto [src_framebuffer_id, src_view_id] = RenderTargetFromImage(src_id, src_view_info);
+    // Vulkan samples the source in a shader: a view is enough, and the source format need not be
+    // renderable (E5B9G9R9).
+    [[maybe_unused]] FramebufferId src_framebuffer_id;
+    ImageViewId src_view_id;
+    if constexpr (FRAMEBUFFER_BLITS) {
+        std::tie(src_framebuffer_id, src_view_id) = RenderTargetFromImage(src_id, src_view_info);
+    } else {
+        src_view_id = FindOrEmplaceImageView(src_id, src_view_info);
+    }
     const auto [src_samples_x, src_samples_y] = SamplesLog2(src_image.info.num_samples);
     Region2D src_region{
         Offset2D{.x = copy.src_x0 >> src_samples_x, .y = copy.src_y0 >> src_samples_y},
@@ -3527,6 +3549,9 @@ std::optional<typename TextureCache<P>::BlitImages> TextureCache<P>::GetBlitImag
     const GPUVAddr src_addr = src.Address();
     ImageInfo dst_info(dst);
     ImageInfo src_info(src);
+    if (g_blit_source_format) {
+        src_info.format = *g_blit_source_format;
+    }
     const bool can_be_depth_blit =
         dst_info.format == src_info.format && copy.filter == Tegra::Engines::Fermi2D::Filter::Point;
     ImageId dst_id;

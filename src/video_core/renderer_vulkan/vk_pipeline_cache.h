@@ -136,6 +136,11 @@ public:
 
     [[nodiscard]] GraphicsPipeline* CurrentGraphicsPipeline();
 
+    /// Why the last CurrentGraphicsPipeline() returned null (diagnostics).
+    [[nodiscard]] const char* GraphicsMissReason() const noexcept {
+        return graphics_miss;
+    }
+
     void TickFrame();
 
     [[nodiscard]] ComputePipeline* CurrentComputePipeline(u64& native_key);
@@ -278,6 +283,7 @@ private:
 
     GraphicsPipelineCacheKey graphics_key{};
     GraphicsPipeline* current_pipeline{};
+    mutable const char* graphics_miss{"no-pipeline"};
 
     /// What the last full lookup saw: while the engine's pipeline state stays clean
     /// (Maxwell3D::pipeline_state_dirty) and these match, graphics_key is what it was and
@@ -359,6 +365,8 @@ private:
                                                           size_t index) const;
 
     std::filesystem::path pipeline_cache_filename;
+    /// Task and mesh pipelines, with the mesh state they are translated with.
+    std::filesystem::path mesh_pipeline_cache_filename;
 
     /// Key hashes of the graphics pipelines in the disk cache, less those whose build at boot
     /// failed. Only those a recent session used (used_pipelines) are built at boot; the rest are
@@ -389,6 +397,24 @@ private:
     std::stop_source serialization_stop;
     Common::ThreadWorker serialization_thread;
     DynamicFeatures dynamic_features;
+
+    /// Cached graphics pipelines boot skipped (not in used_pipelines) are built on background
+    /// threads once the game runs, so a draw that needs one finds it built instead of translating
+    /// it on the GPU thread. EDEN_NX2_BACKGROUND_PIPELINES=0 turns it off.
+    std::unique_ptr<GraphicsPipeline> TakeBackgroundPipeline(const GraphicsPipelineCacheKey& key);
+    void StopBackgroundPipelines();
+    std::mutex background_mutex;
+    /// Built and not yet asked for by a draw.
+    std::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> background_ready;
+    /// Keys the GPU thread built itself meanwhile: their background build is skipped or dropped.
+    std::unordered_set<GraphicsPipelineCacheKey> background_claimed;
+    std::atomic_bool background_active{};
+    std::atomic_bool background_stop{};
+    std::atomic<size_t> background_left{};
+    size_t background_taken{}; ///< Under background_mutex
+    std::chrono::steady_clock::time_point background_start{};
+    /// Last: destroyed (its threads joined) before the state above.
+    std::unique_ptr<Common::ThreadWorker> background_workers;
 };
 
 } // namespace Vulkan

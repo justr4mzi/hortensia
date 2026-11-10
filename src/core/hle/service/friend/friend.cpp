@@ -16,6 +16,7 @@
 #include "core/hle/service/friend/friend_interface.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/kernel_helpers.h"
+#include "core/hle/service/nx2_stub_interface.h"
 #include "core/hle/service/server_manager.h"
 
 namespace Service::Friend {
@@ -654,6 +655,36 @@ private:
         LOG_WARNING(Service_Friend, "(STUBBED) chat:u 23 mode={}", rp.Pop<u32>());
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
+    }
+
+    void OpenUserLayoutCustomizationShimScopedObject(HLERequestContext& ctx) {
+        LOG_DEBUG(Service_Friend, "called");
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<IUserLayoutCustomizationShimScopedObject>(ctx, system);
+    }
+
+    // 11: the nn::chat::RoomInfo (0xF0 bytes) of the room the user chats in. Nobody is ever in a
+    // room here, so it is all zeroes, ChattingUid (0x18) included. The auto stub left the title's
+    // buffer as it was.
+    void GetRoomInfo(HLERequestContext& ctx) {
+        LOG_DEBUG(Service_Friend, "called");
+        constexpr std::array<u8, 0xF0> room_info{};
+        ctx.WriteBuffer(room_info);
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSuccess);
+    }
+
+    void OpenStubObject(HLERequestContext& ctx) {
+        static constexpr std::array<const char*, 2> names{
+            "nx2:chat:IVirtualCameraShimScopedObject",
+            "nx2:chat:IUserSelectiveTalkShimScopedObject",
+        };
+        const char* name = names[ctx.GetCommand() - 3];
+        LOG_WARNING(Service_Friend, "(STUBBED) chat:u {}, returning {}", ctx.GetCommand(), name);
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<INx2StubInterface>(ctx, system, name);
     }
 };
 

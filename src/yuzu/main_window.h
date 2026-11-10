@@ -13,10 +13,10 @@
 
 #include <filesystem>
 #include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QMainWindow>
 #include <QPointer>
 #include <QMessageBox>
-#include <QFutureWatcher>
 #include <QPushButton>
 #include <QTimer>
 #include <QTranslator>
@@ -283,7 +283,8 @@ private:
 
     bool LoadROM(const QString& filename, Service::AM::FrontendAppletParameters params);
     void BootGame(const QString& filename, Service::AM::FrontendAppletParameters params,
-                  StartGameType with_config = StartGameType::Normal);
+                  StartGameType with_config = StartGameType::Normal,
+                  bool allow_recommended_settings_prompt = true);
     void BootGameFromList(const QString& filename, StartGameType with_config);
     void ShutdownGame();
     void AbandonStuckEmulationThread();

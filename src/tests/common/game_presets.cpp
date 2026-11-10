@@ -3,6 +3,7 @@
 #include <array>
 #include <memory>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "common/game_presets.h"
 
 namespace {
@@ -21,21 +22,24 @@ void SetConflictingPreferences(Settings::Values& settings, bool per_game) {
     set(settings.vsync_mode, Settings::VSyncMode::Immediate);
     set(settings.scaling_filter, Settings::ScalingFilter::NearestNeighbor);
     set(settings.anti_aliasing, Settings::AntiAliasing::Smaa);
+    set(settings.mkw_dynamic_fps, false);
 }
 
-void CheckPreset(const Settings::Values& settings) {
+void CheckPreset(const Settings::Values& settings, u64 program_id) {
     CHECK(settings.renderer_backend.GetValue() == Settings::RendererBackend::Vulkan);
     CHECK(settings.resolution_setup.GetValue() == Settings::ResolutionSetup::Res1X);
     CHECK(settings.gpu_accuracy.GetValue() == Settings::GpuAccuracy::Low);
     CHECK(settings.use_asynchronous_shaders.GetValue());
     CHECK(settings.astc_recompression.GetValue() == Settings::AstcRecompression::Bc3);
     CHECK(settings.vram_usage_mode.GetValue() == Settings::VramUsageMode::Conservative);
-    CHECK_FALSE(settings.use_reactive_flushing.GetValue());
+    CHECK(settings.use_reactive_flushing.GetValue() ==
+          (program_id == Settings::OcarinaOfTimeProgramId));
     CHECK(settings.vsync_mode.GetValue() == Settings::VSyncMode::FifoRelaxed);
     CHECK(settings.gpu_fence_behavior.GetValue() == Settings::GpuFenceBehavior::Balanced);
     CHECK(settings.async_presentation.GetValue());
     CHECK(settings.scaling_filter.GetValue() == Settings::ScalingFilter::ScaleForce);
     CHECK(settings.anti_aliasing.GetValue() == Settings::AntiAliasing::Fxaa);
+    CHECK(settings.mkw_dynamic_fps.GetValue());
 }
 
 void CheckPreferences(const Settings::Values& settings, bool global = false) {

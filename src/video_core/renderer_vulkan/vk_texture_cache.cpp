@@ -4697,7 +4697,8 @@ void CustomBorderColorBudget::Release() noexcept {
     held = 0;
 }
 
-Sampler::Sampler(TextureCacheRuntime& runtime, const Tegra::Texture::TSCEntry& tsc) {
+Sampler::Sampler(TextureCacheRuntime& runtime, const Tegra::Texture::TSCEntry& tsc)
+    : descriptor{tsc} {
     const auto& device = runtime.device;
     device_ptr = &device;
     descriptor = tsc;
@@ -5159,11 +5160,35 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     // A decode image of the same shape the GPU is done with: title 1's title screen decodes
     // dozens of textures a frame, mostly of a few shapes. Making one took 263 us; from VMA's
     // shared blocks 90 us, but freeing them there left ~1 GB of those blocks unused.
-    const auto reusable = std::ranges::find_if(free_transcodes, [&](const PendingTranscode& t) {
-        return t.width == width && t.height == height && t.levels == levels && t.layers == layers;
-    });
+    // EDEN_NX2_ASTC_POOL_V2=0 only recycles finished images once a frame; EDEN_NX2_ASTC_POOL_FIT=0
+    // only reuses images of exactly the size asked for. A larger image works because the decode
+    // writes by texel position and the encode clamps to the texture's own size.
+    static const bool recycle_on_lookup = EnvNotZero("EDEN_NX2_ASTC_POOL_V2");
+    static const bool allow_larger = EnvNotZero("EDEN_NX2_ASTC_POOL_FIT");
+    if (recycle_on_lookup) {
+        RecycleFinishedTranscodes();
+    }
+    const auto fits = [&](const PendingTranscode& t) {
+        if (t.levels != levels || t.layers != layers) {
+            return false;
+        }
+        if (t.width == scratch_width && t.height == scratch_height) {
+            return true;
+        }
+        return allow_larger && t.width >= scratch_width && t.height >= scratch_height &&
+               t.width <= scratch_width * 2 && t.height <= scratch_height * 2;
+    };
+    // The smallest image that fits wastes the least.
+    const auto reusable = std::ranges::min_element(
+        free_transcodes, [&](const PendingTranscode& a, const PendingTranscode& b) {
+            const bool fits_a = fits(a), fits_b = fits(b);
+            if (fits_a != fits_b) {
+                return fits_a;
+            }
+            return u64{a.width} * a.height < u64{b.width} * b.height;
+        });
     PendingTranscode pending;
-    if (reusable != free_transcodes.end()) {
+    if (reusable != free_transcodes.end() && fits(*reusable)) {
         pending = std::move(*reusable);
         free_transcodes.erase(reusable);
     } else {

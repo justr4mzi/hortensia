@@ -173,6 +173,7 @@ add_executable(tests
     core/internal_network/socket_proxy.cpp
     core/priority_queue.cpp
     core/internal_network/network.cpp
+    video_core/frame_dump_schedule.cpp
     video_core/memory_tracker.cpp
     video_core/invalidation_accumulator.cpp
     video_core/memory_manager_runs.cpp
@@ -182,8 +183,10 @@ add_executable(tests
     video_core/nx2_gpu_mapping.cpp
     video_core/vertex_repack.cpp
     video_core/ampere_lowering.cpp
+    video_core/spirv_software_matrix.cpp
     video_core/ampere_geometry.cpp
     video_core/ampere_i2f.cpp
+    video_core/ampere_gradient.cpp
     video_core/ampere_returns.cpp
     video_core/guardband.cpp
     video_core/ampere_gather.cpp

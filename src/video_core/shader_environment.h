@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <type_traits>
 #include "common/container/unordered_map.h"
 #include <vector>
@@ -408,7 +409,13 @@ void SerializePipeline(const Key& key, const Envs& envs, const std::filesystem::
 /// damaged one.
 void LoadPipelines(std::stop_token stop_loading, const std::filesystem::path& filename, u32 expected_cache_version,
     Common::UniqueFunction<void, std::ifstream&, FileEnvironment> load_compute,
-    Common::UniqueFunction<void, std::ifstream&, std::vector<FileEnvironment>> load_graphics);
+    Common::UniqueFunction<void, std::ifstream&, std::vector<FileEnvironment>> load_graphics,
+    bool with_mesh_state = false, u32 min_compatible_version = 0, CacheUpgrade* upgrade = nullptr);
+
+/// Writes a cache file again from upgraded records under `cache_version`, through a temporary file
+/// (the old one is kept as <name>.v<old>.bak until the new one is in place).
+void RewritePipelines(const std::filesystem::path& filename, u32 cache_version, u32 old_version,
+                      std::span<const std::string* const> records);
 
 /// The record a LoadPipelines callback has read: from `begin`, where its environment count is, to
 /// where `file` is now, after its key.

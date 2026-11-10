@@ -107,6 +107,14 @@ Id StorageAtomicU32x2(EmitContext& ctx, const IR::Value& binding, const IR::Valu
     ctx.OpStore(pointer, result);
     return original_value;
 }
+
+Id GlobalAtomic(EmitContext& ctx, EmitContext::GlobalAtomic kind, Id type, Id address, Id value) {
+    const Id func{ctx.global_atomic_funcs[static_cast<size_t>(kind)]};
+    if (!Sirit::ValidId(func)) {
+        throw NotImplementedException("SPIR-V Instruction");
+    }
+    return ctx.OpFunctionCall(type, func, address, value);
+}
 } // Anonymous namespace
 
 Id EmitSharedAtomicIAdd32(EmitContext& ctx, Id offset, Id value) {

@@ -74,6 +74,8 @@ Id EmitIsbeRead(EmitContext& ctx, Id address);
 void EmitIsbeWriteAttribute(EmitContext& ctx, Id address, Id value);
 void EmitIsbeWriteMapU8(EmitContext& ctx, Id address, Id value);
 void EmitIsbeWriteMapU32(EmitContext& ctx, const IR::Value& address, Id value);
+Id EmitTensorMulAdd(EmitContext& ctx, IR::Inst* inst, Id a, Id b, Id c);
+void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program);
 void EmitMeshPrologue(EmitContext& ctx);
 void EmitMeshEpilogue(EmitContext& ctx);
 void EmitSetFragColor(EmitContext& ctx, u32 index, u32 component, Id value);
