@@ -32,7 +32,6 @@
 #include "common/fs/fs_paths.h"
 #include "common/fs/path_util.h"
 #include "common/literals.h"
-#include "common/log_ring.h"
 #include "common/polyfill_thread.h"
 #include "common/thread.h"
 
@@ -513,10 +512,6 @@ void Stop() {
 void Flush() {
     if (logging_instance)
         logging_instance->ForEachBackend([](Backend& backend) { backend.Flush(); });
-}
-
-void Stop() {
-    Flush();
 }
 
 void SetGlobalFilter(const Filter& filter) {

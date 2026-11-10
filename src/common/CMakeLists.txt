@@ -84,7 +84,6 @@ add_library(
     game_fps.h
     hitch_diagnostic.h
     literals.h
-    log_ring.h
     logging.cpp
     logging.h
     lz4_compression.cpp

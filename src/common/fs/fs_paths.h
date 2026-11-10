@@ -9,6 +9,7 @@
 // yuzu data directories
 
 #define EDEN_DIR "hortensia"
+#define EDEN_LEGACY_DIR "eden"
 #define PORTABLE_DIR "user"
 
 // Sub-directories contained within a yuzu data directory
