@@ -188,7 +188,7 @@ void LaunchRoom(int argc, char** argv, bool called_by_option) {
     std::string token;
     std::string web_api_url;
     std::string ban_list_file;
-    std::string log_file = "eden-room.log";
+    std::string log_file = "hortensia-room.log";
     std::string bind_address;
     u64 preferred_game_id = 0;
     u32 port = Network::DefaultRoomPort;

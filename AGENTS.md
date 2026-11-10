@@ -6,7 +6,7 @@ Keep comments to a reasonable level. Do not overexplain or add/remove comments f
 
 ## Game bug reports
 
-Users report game bugs with Lichii logs (`eden_log.txt`, `eden_log.txt.old`). Each `Booting game: <program id>` line starts a session; the build is on the first line (`Lichii Version: ... | nx2-<sha>`). Known program ids:
+Users report game bugs with Hortensia logs (`hortensia_log.txt`, `hortensia_log.txt.old`). Each `Booting game: <program id>` line starts a session; the build is on the first line (`Hortensia Version: ... | nx2-<sha>`). Known program ids:
 
 | Program id | Game |
 |---|---|
@@ -33,7 +33,7 @@ Add ids here when a report identifies a new game.
 
 ## Before writing a fix
 
-Lichii is a fork of [Eglantine](https://github.com/Djihads80/Eglantine). Do not guess, and do not rewrite a fix upstream already has.
+Hortensia is a fork of [Eglantine](https://github.com/Djihads80/Eglantine). Do not guess, and do not rewrite a fix upstream already has.
 
 1. `git remote add upstream https://github.com/Djihads80/Eglantine.git && git fetch upstream`.
 2. Check `upstream/nx2`, open and closed PRs, unmerged branches, and issues for the game and symptom (`gh pr list -R Djihads80/Eglantine --state all`, `gh issue list -R Djihads80/Eglantine --state all`, `gh pr diff <n>`). Read the diffs, not only the titles.
@@ -94,7 +94,7 @@ Use these before guessing. All are off unless the variable is set; pass them as 
 | Unmapped device reads (`Unmapped Device ReadBlock`) | `EDEN_NX2_READBLOCK_TRACE=1` | Every read of unmapped device memory, one line per read with its first unmapped address, unmapped byte count and caller (`file:line`). Without it only the first 16 are logged. |
 | Device loss (`Device loss occurred!`) | Always on | The `Device fault` lines after it: what VK_EXT_device_fault reports (fault addresses and their type, vendor fault codes). `not supported by the driver` means the driver has no such data. |
 | Driver crash, stall or slow pipeline builds | `EDEN_NX2_PIPELINE_BUILD_TRACE=<file>` | A flushed `BEGIN`/`END` line per driver pipeline build with the pipeline and stage hashes; `END` adds the wall time (`ms=`). The last `BEGIN` without an `END` names the shaders the driver crashed or is stuck on. Times include waiting on other builds, so compare runs from the same cleared driver cache rather than single builds. |
-| Host crash (log just stops) | Windows minidump in `%LOCALAPPDATA%\CrashDumps\lichii.exe.<pid>.dmp` | Read the exception and stack with the `minidump` Python package, then symbolize with `llvm-symbolizer --obj=lichii.exe --inlines --relative-address <offset>` next to the build's `lichii.pdb`. |
+| Host crash (log just stops) | Windows minidump in `%LOCALAPPDATA%\CrashDumps\hortensia.exe.<pid>.dmp` | Read the exception and stack with the `minidump` Python package, then symbolize with `llvm-symbolizer --obj=hortensia.exe --inlines --relative-address <offset>` next to the build's `hortensia.pdb`. |
 
 ## How work is split
 
@@ -109,7 +109,7 @@ Use these before guessing. All are off unless the variable is set; pass them as 
 - Cloud machines build with clang and Ninja for compile and unit-test checks.
 - The build the owner tests runs on the owner's Windows PC (DESKTOP-4UD89UT, Ryzen 9 5900X), built with clang using 12 jobs (`cmake --build <dir> --parallel 12`).
 - On the PC the toolchain is clang-cl (LLVM 22) with the VS 2022 SDK, Qt 6.8.3 in `C:/lx/qt`, Ninja and sccache. Source is `C:/lx/src`, the persistent build dir is `C:/lx/build`, and `C:/lx/configure.sh` holds the configure flags. Build and package a fix with one command: `bash C:/lx/build-fix.sh <branch> <build-name> "<Game> - <fix>" ["ENV=VAL ..."] ["log filter"]`.
-- Every fix gets its own debug build on that PC in `C:\Users\Zortos\.capy\work\lichii-debug\<build>\` and a desktop shortcut `Lichii Debug - <Game> - <fix>` that launches it with the owner's existing user data and keeps the log next to the build, so the owner can run it and send the log back.
+- Every fix gets its own debug build on that PC in `C:\Users\Zortos\.capy\work\lichii-debug\<build>\` and a desktop shortcut `Hortensia Debug - <Game> - <fix>` that launches it with the owner's existing user data and keeps the log next to the build, so the owner can run it and send the log back.
 - Bundle a round's candidate fixes into one build behind env switches, so the owner tests one package and A/Bs it live through the debug server instead of one build per idea.
 
 ## Toggles and merging

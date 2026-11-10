@@ -1,6 +1,6 @@
 # Star Fox community crash investigation
 
-The reports use Lichii `2b139e9889`. The service fix is based on `nx2`
+The reports use Hortensia `2b139e9889`. The service fix is based on `nx2`
 `546cb67825b886898c974f2773e9426b62e6fdcc`. It fixes an incorrect IPC
 reply demonstrated in the RTX 4060 Ti panic. It is not a verified fix for
 the separate RTX 5090 Vulkan device loss.

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2026 Lichii Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Installs a staged update for Windows. Lichii copies this program to a temporary folder and starts
-// it before closing, because the running lichii.exe and its DLLs cannot be replaced.
+// Installs a staged update for Windows. Hortensia copies this program to a temporary folder and starts
+// it before closing, because the running hortensia.exe and its DLLs cannot be replaced.
 //
-// lichii-updater.exe <process id> <staging folder> <install folder> <program to start>
+// hortensia-updater.exe <process id> <staging folder> <install folder> <program to start>
 
 #include <cstdlib>
 #include <cwchar>
@@ -45,15 +45,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         const DWORD wait = WaitForSingleObject(process, 120000);
         CloseHandle(process);
         if (wait != WAIT_OBJECT_0) {
-            Log(install_dir, "Lichii did not close in time, the update was not installed");
+            Log(install_dir, "Hortensia did not close in time, the update was not installed");
             if (staging.filename() == ".update-staging") {
                 std::error_code ignored;
                 fs::remove_all(staging, ignored);
             }
             MessageBoxW(nullptr,
-                        L"Lichii did not close in time, so the update was not installed. Your "
+                        L"Hortensia did not close in time, so the update was not installed. Your "
                         L"installation was not changed. Try the update again.",
-                        L"Lichii update", MB_OK | MB_ICONINFORMATION);
+                        L"Hortensia update", MB_OK | MB_ICONINFORMATION);
             return 1;
         }
     }
@@ -65,9 +65,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     } else {
         Log(install_dir, "Install failed, the previous files were put back: " + ec.message());
         MessageBoxW(nullptr,
-                    L"Lichii could not install the update. Your previous version was put back and "
-                    L"will start now. See .update-helper.log in the Lichii folder for details.",
-                    L"Lichii update", MB_OK | MB_ICONERROR);
+                    L"Hortensia could not install the update. Your previous version was put back and "
+                    L"will start now. See .update-helper.log in the Hortensia folder for details.",
+                    L"Hortensia update", MB_OK | MB_ICONERROR);
     }
 
     std::wstring command = L"\"" + program.wstring() + L"\"";

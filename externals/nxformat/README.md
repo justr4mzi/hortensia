@@ -44,4 +44,4 @@ Provenance, checked 2026-11-08:
   the library's `.comment`, `cargo build --release --locked --target x86_64-unknown-linux-gnu
   --manifest-path ffi/Cargo.toml` under `/home/runner/work/nxformat/nxformat`):
   `libnxformat.so` and `libnxformat_static.a` are byte-identical to the linux-x64 archive's.
-  Lichii uses only `libnxformat.so`; the archive's `nxconvert` app was not reproduced.
+  Hortensia uses only `libnxformat.so`; the archive's `nxconvert` app was not reproduced.

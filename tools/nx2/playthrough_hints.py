@@ -14,7 +14,7 @@ import tempfile
 from shader_sweep import GRAPHICS_KEY_SIZE, STAGES, digest, invoke, parse_cache
 from sweep_static_shaders import artifact_path, compute_format, output_path
 
-SCHEMA = "lichii-playthrough-hints-1"
+SCHEMA = "hortensia-playthrough-hints-1"
 MAGIC = b"yuzucach"
 SUPPORTED_STAGES = {"vertex", "fragment", "geometry", "tess-control", "tess-eval", "compute", "task", "mesh"}
 

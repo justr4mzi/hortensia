@@ -51,7 +51,7 @@ std::filesystem::path GetCachePath() {
 
 std::filesystem::path GetDefaultLogoPath(bool large) {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "news" /
-           (large ? "eden_logo_large.jpg" : "eden_logo_small.jpg");
+           (large ? "hortensia_logo_large.jpg" : "hortensia_logo_small.jpg");
 }
 
 std::filesystem::path GetNewsImagePath(std::string_view news_id, bool large) {
@@ -110,7 +110,7 @@ std::vector<u8> DownloadImage(const std::string& url_path, const std::filesystem
 
 std::vector<u8> LoadDefaultLogo(bool large) {
     const auto path = GetDefaultLogoPath(large);
-    const std::string url = large ? "/news/eden_logo_large.jpg" : "/news/eden_logo_small.jpg";
+    const std::string url = large ? "/news/hortensia_logo_large.jpg" : "/news/hortensia_logo_small.jpg";
 
     auto data = TryLoadFromDisk(path);
     if (!data.empty()) return data;

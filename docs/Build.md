@@ -186,9 +186,9 @@ cmake --build build
 
 Your compiled executable will be in:
 
-- `build/bin/eglantine.exe` for Windows,
-- `build/bin/Eglantine.app/Contents/MacOS/eglantine` for macOS,
-- and `build/bin/eglantine` for others.
+- `build/bin/hortensia.exe` for Windows,
+- `build/bin/hortensia.app/Contents/MacOS/hortensia` for macOS,
+- and `build/bin/hortensia` for others.
 
 ## Scripts
 

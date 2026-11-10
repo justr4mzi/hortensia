@@ -6,7 +6,7 @@
                      [--cache cold,warm,second] [--mesh mesh,no_mesh] [--paths A,B] [--repeats N]
   cache_bench.py restore --config bench.json --session DIR
 
-Every run boots one game through lichii.exe -g with EDEN_NX2_DEBUG_SERVER and
+Every run boots one game through hortensia.exe -g with EDEN_NX2_DEBUG_SERVER and
 EDEN_NX2_STUTTER_TRACE=1, drives it to a fixed spot through the debug server's input methods,
 takes screenshots, measures, kills it, copies its log and parses it with cache_metrics.py.
 
@@ -201,7 +201,7 @@ def load_config(path):
         if not re.fullmatch(r"[0-9A-Fa-f]{16}", game.get("title_id", "")):
             raise BenchError(f"config: game {name} needs a 16-digit title_id")
         if "game" not in game:
-            raise BenchError(f"config: game {name} needs the 'game' path for lichii.exe -g")
+            raise BenchError(f"config: game {name} needs the 'game' path for hortensia.exe -g")
     for name, path in config["paths"].items():
         if "package" not in path and "package" not in config:
             raise BenchError(f"config: path {name} needs a 'package' directory")
@@ -247,7 +247,7 @@ def run_env(config, run, base=None):
 
 def command(config, run):
     package = Path(config["paths"][run["path"]].get("package", config.get("package", "")))
-    exe = package / config.get("exe", "lichii.exe")
+    exe = package / config.get("exe", "hortensia.exe")
     return [str(exe), "-g", config["games"][run["game"]]["game"]], package
 
 
@@ -363,7 +363,7 @@ def wait_closed(address, seconds=30):
     deadline = time.monotonic() + seconds
     while port_open(address):
         if time.monotonic() > deadline:
-            raise BenchError(f"{address} still answers: another Lichii is running")
+            raise BenchError(f"{address} still answers: another Hortensia is running")
         time.sleep(1.0)
 
 
@@ -394,7 +394,7 @@ def boot_and_measure(config, run, run_dir):
     game = config["games"][run["game"]]
     cmd, package = command(config, run)
     address = config.get("debug_server", "127.0.0.1:6545")
-    log_file = Path(config.get("log_file", Path(config["user_dir"]) / "log" / "eden_log.txt"))
+    log_file = Path(config.get("log_file", Path(config["user_dir"]) / "log" / "hortensia_log.txt"))
     launched = time.time()
     process = subprocess.Popen(cmd, cwd=package, env=run_env(config, run),
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -404,7 +404,7 @@ def boot_and_measure(config, run, run_dir):
         deadline = time.monotonic() + float(game.get("boot_timeout_s", 900))
         while True:
             if process.poll() is not None:
-                raise BenchError(f"lichii exited with {process.returncode} while booting")
+                raise BenchError(f"hortensia exited with {process.returncode} while booting")
             try:
                 if emulator.call("status", {"fps_window_ms": 0}, 10)["presents"] > 0:
                     break
@@ -425,7 +425,7 @@ def boot_and_measure(config, run, run_dir):
             record["kill"] = "did not exit within 60 s"
         time.sleep(1.0)
         if log_file.exists() and log_file.stat().st_mtime >= launched:
-            shutil.copy2(log_file, Path(run_dir) / "eden_log.txt")
+            shutil.copy2(log_file, Path(run_dir) / "hortensia_log.txt")
         else:
             record["log"] = f"no log written at {log_file}"
     return record
@@ -500,7 +500,7 @@ def summarize(session, plan):
 
 def ensure_closed(config):
     """Nothing may write the caches while the bench moves them: no emulator, no debug server."""
-    exe_name = config.get("exe", "lichii.exe")
+    exe_name = config.get("exe", "hortensia.exe")
     address = config.get("debug_server", "127.0.0.1:6545")
     if lichii_running(exe_name) or port_open(address):
         raise BenchError(f"{exe_name} is running or {address} answers: close it first")
@@ -549,7 +549,7 @@ def run_bench(config, plan, session):
             result["error"] = str(error)
         finally:
             result["cache_left"] = {d.key: d.restore(run_dir / "after") for d in prepared}
-        log = run_dir / "eden_log.txt"
+        log = run_dir / "hortensia_log.txt"
         if log.exists():
             window = result.get("window") or {}
             result["metrics"] = cache_metrics.parse_log(log, start_s=window.get("start_s"),

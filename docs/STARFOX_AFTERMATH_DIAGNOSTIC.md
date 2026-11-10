@@ -46,7 +46,7 @@ required.
 
 ## Assemble the private portable launch
 
-Place the unmodified `GFSDK_Aftermath_Lib.x64.dll` beside `lichii.exe` in
+Place the unmodified `GFSDK_Aftermath_Lib.x64.dll` beside `hortensia.exe` in
 the diagnostic payload. The DLL is loaded dynamically, so the ordinary PE
 import-closure packager will not discover it automatically.
 Its PE import table lists only Windows system DLLs; no additional runtime
@@ -99,7 +99,7 @@ environment-variable override in the current frontend.
 From the fresh run directory, launch the GUI with the explicit game path:
 
 ```powershell
-.\lichii.exe -g "D:\path\to\Star Fox\exefs\main"
+.\hortensia.exe -g "D:\path\to\Star Fox\exefs\main"
 ```
 
 On Windows, portable data is resolved beside the executable, not merely
@@ -128,7 +128,7 @@ not a successful capture setup. Check the explicit DLL/export/API errors
 and, without modifying it, the user's NVIDIA Aftermath `ForceOff` setting.
 
 Wait at least 15 seconds after device loss before closing the process.
-Archive the entire private `user/log` directory, not just `eden_log.txt`,
+Archive the entire private `user/log` directory, not just `hortensia_log.txt`,
 plus the exact executable commit and DLL hash. Do not archive `user/keys`,
 NAND, saves, or personal configuration for sharing.
 

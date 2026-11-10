@@ -44,7 +44,7 @@ def summary(t, hist, builds=(2, 1), lookups=(90, 5, 3, 2, 10, 1), gfx_ms=40.0, c
 
 
 TRACE_LOG = "".join([
-    line(0.01, "Lichii Version: Lichii 1.0 | nx2-abcdef1", "Frontend <Info> qt_common.cpp:245:x: "),
+    line(0.01, "Hortensia Version: Hortensia 1.0 | nx2-abcdef1", "Frontend <Info> qt_common.cpp:245:x: "),
     line(1.00, "Booting game: 0400486024DEC000 | Ocarina | 1.0", "Frontend <Info> main_window.cpp:1:x: "),
     line(1.10, "Nx2Boot event=boot_start mono_s=100.000 commit_mib=500.0 peak_commit_mib=510.0"),
     line(3.00, "Nx2Boot event=shader_load_begin mono_s=101.900 commit_mib=900.0 peak_commit_mib=900.0"),
@@ -69,7 +69,7 @@ TRACE_LOG = "".join([
 ])
 
 OLD_LOG = "".join([
-    line(0.01, "Lichii Version: Lichii 0.9 | nx2-0000001", "Frontend <Info> qt_common.cpp:245:x: "),
+    line(0.01, "Hortensia Version: Hortensia 0.9 | nx2-0000001", "Frontend <Info> qt_common.cpp:245:x: "),
     line(1.00, "Booting game: 0400C3F00006E000 | Mario Kart World | 1.0", "Frontend <Info> m.cpp:1:x: "),
     line(2.00, "Loaded Vulkan driver pipeline cache: C:/x/vulkan_pipelines.fork-v54.bin",
          "Render.Vulkan <Info> vk_pipeline_cache.cpp:1:x: "),
@@ -105,7 +105,7 @@ class CacheMetricsTest(unittest.TestCase):
         result = cache_metrics.parse_log(self.write("trace.txt", TRACE_LOG))
         self.assertTrue(result["trace"])
         self.assertEqual(result["program_id"], "0400486024DEC000")
-        self.assertEqual(result["build"], "Lichii 1.0 | nx2-abcdef1")
+        self.assertEqual(result["build"], "Hortensia 1.0 | nx2-abcdef1")
         self.assertAlmostEqual(result["boot_to_first_frame_s"], 203.9)
         self.assertEqual(result["loading_shaders_s"], 6.0)
         self.assertEqual(result["precache_s"], 190.0)

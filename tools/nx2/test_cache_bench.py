@@ -270,7 +270,7 @@ class BenchTest(unittest.TestCase):
         def fake_boot(config, run, run_dir):
             seen.append((run["cache"], tree(self.shader)))
             write(self.shader / "vulkan.fork-v54.bin", b"written by " + run["id"].encode())
-            (Path(run_dir) / "eden_log.txt").write_text(
+            (Path(run_dir) / "hortensia_log.txt").write_text(
                 f"[   1.000000] Frontend <Info> m.cpp:1:x: Booting game: {TITLE} | Ocarina | 1\n"
                 f"[   2.000000] Render.Vulkan <Info> x:1:y: Vulkan driver pipelines cached at: "
                 f"{self.shader / 'vulkan_pipelines.fork-v54.bin'}\n"

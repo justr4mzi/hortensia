@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""MCP server (stdio) for Lichii's in-process debug server (docs/nx2/debug-mcp.md).
+"""MCP server (stdio) for Hortensia's in-process debug server (docs/nx2/debug-mcp.md).
 
-Run Lichii with EDEN_NX2_DEBUG_SERVER=127.0.0.1:6545, then register this script as a stdio MCP
+Run Hortensia with EDEN_NX2_DEBUG_SERVER=127.0.0.1:6545, then register this script as a stdio MCP
 server for the agent:  python3 -I tools/nx2/debug_mcp.py [--server 127.0.0.1:6545]
 or run one request from a shell:
   python3 -I tools/nx2/debug_mcp.py --call '{"method":"screenshot","params":{}}' --out shot.png
@@ -301,7 +301,7 @@ class Emulator:
                 if isinstance(error, socket.timeout):
                     raise EmulatorError(f"no answer within {timeout} s") from error
                 raise EmulatorError(
-                    f"nothing listens on {self.host}:{self.port}: start Lichii with "
+                    f"nothing listens on {self.host}:{self.port}: start Hortensia with "
                     f"EDEN_NX2_DEBUG_SERVER={self.host}:{self.port} and boot a game") from error
             except OSError as error:
                 # A stale connection from an earlier boot: reconnect once.

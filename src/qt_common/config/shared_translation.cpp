@@ -155,7 +155,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Runs a Switch 2 game's own DLSS (its upscaling network, translated for this GPU) "
               "instead of AMD FSR 3.1 in its place.\nAMD FSR 3.1 still draws while the network is "
               "checked, when it can't run on this GPU, with resolution scaling, and for the rest "
-              "of the session if its output fails Lichii's checks.\nTakes effect when a game "
+              "of the session if its output fails Hortensia's checks.\nTakes effect when a game "
               "starts."));
     INSERT(Settings, frame_rate_limit, tr("Frame rate limit (Switch 2):"),
            tr("Rate of the Switch 2 VSync event that games start their frames on (default 60 Hz)."
@@ -169,7 +169,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, nvidia_dlss, tr("Use NVIDIA DLSS in place of a game's DLSS (experimental)"),
            tr("Uses NVIDIA DLSS on GeForce RTX cards in place of a Switch 2 game's own DLSS, "
               "instead of AMD FSR 3.1.\nNeeds NVIDIA's Streamline loader, and NVIDIA DLSS unless "
-              "the NVIDIA app has downloaded it; Lichii does not ship NVIDIA's files. Use the "
+              "the NVIDIA app has downloaded it; Hortensia does not ship NVIDIA's files. Use the "
               "download button below.\nFire Emblem: Fortune's Weave also needs "
               "EDEN_NX2_DLSS_REPLACEMENT=dlss. Without that override, its spatial workaround "
               "remains active.\nIn The Legend of Zelda: Ocarina of Time it replaces the game's "
