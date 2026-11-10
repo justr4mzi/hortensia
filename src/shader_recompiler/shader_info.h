@@ -259,9 +259,6 @@ struct TextureBufferDescriptor {
     u32 secondary_shift_left;
     u32 count;
     u32 size_shift;
-    /// Index in Info::handle_programs when the handle is computed at draw time (read from a
-    /// storage buffer), ~0 when it is the constant buffer word.
-    u32 handle_program{~0U};
 
     auto operator<=>(const TextureBufferDescriptor&) const = default;
 };
@@ -276,9 +273,6 @@ struct ImageBufferDescriptor {
     u32 cbuf_offset;
     u32 count;
     u32 size_shift;
-    /// Index in Info::handle_programs when the handle is computed at draw time (read from a
-    /// storage buffer), ~0 when it is the constant buffer word.
-    u32 handle_program{~0U};
 
     auto operator<=>(const ImageBufferDescriptor&) const = default;
 };

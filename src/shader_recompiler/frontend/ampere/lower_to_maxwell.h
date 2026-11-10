@@ -1989,8 +1989,9 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             if (opcode == 0x887 && native_predicate == 7 && compare < index && !target_between &&
                 condition == 0 && insn.words[1] <= 0x7ffff &&
                 code[compare].Bits(12, 4) == 7 && code[compare].Bits(24, 8) == insn.Bits(24, 8) &&
-                code[compare].words[1] == insn.words[1] && code[compare].words[2] == 0x0bf01070 &&
-                insn.words[2] == 0x08000000) {
+                code[compare].Bits(81, 3) == condition && code[compare].words[1] == insn.words[1] &&
+                (code[compare].words[2] & ~(7U << 17)) == 0x0bf01070 &&
+                (insn.words[2] & ~(7U << 23)) == 0x08000000) {
                 // Preserve the unsigned clamp idiom for indirect-table analysis.
                 emit(0x3820000000070000ULL | target | (u64{a} << 8) |
                      (u64{insn.words[1]} << 20) | (u64{7} << 39));
@@ -4283,6 +4284,12 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // reads for the task or mesh stage: data/dest 0-7, Ra 8-15, offset 20-43, .32 44,
             // .ATTR 45, .SKEW 46, .O 47, write 48. Addresses are linear bytes in the region.
             const bool write = opcode == 0x927;
+            if (!write && !insn.Bits(32, 32) && !insn.words[2] && insn.Bits(24, 8) != 255) {
+                // ISBERD map read (geometry vertex index to attribute handle): ALD takes the index
+                // itself (Maxwell ISBERD in this mode is a copy), so this is a move.
+                emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{insn.Bits(24, 8)} << 20));
+                break;
+            }
             const u32 region = insn.Bits(76, 2);
             const bool output = insn.Bits(79, 1) != 0;
             if ((insn.words[2] & ~0xf800U) != 0 || (region != 0 && region != 3) || write != output ||

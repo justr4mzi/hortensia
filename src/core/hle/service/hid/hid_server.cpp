@@ -1258,6 +1258,27 @@ Result IHidServer::FinalizeSevenSixAxisSensor(ClientAppletResourceUserId aruid) 
     R_SUCCEED();
 }
 
+Result IHidServer::InitializeNmouse(u8 pointer_type, s32 width, s32 height, u32 unknown,
+                                    ClientAppletResourceUserId aruid, u64 t_mem_size,
+                                    InCopyHandle<Kernel::KTransferMemory> t_mem) {
+    LOG_INFO(Service_HID,
+             "called, pointer_type={}, width={}, height={}, unknown={}, t_mem_size={:#x}, "
+             "applet_resource_user_id={}",
+             pointer_type, width, height, unknown, t_mem_size, aruid.pid);
+
+    GetResourceManager()->GetNmouse()->Initialize(t_mem->GetSourceAddress(),
+                                                  std::min<u64>(t_mem_size, t_mem->GetSize()),
+                                                  t_mem->GetOwner(), width, height);
+    R_SUCCEED();
+}
+
+Result IHidServer::FinalizeNmouse(ClientAppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "called, applet_resource_user_id={}", aruid.pid);
+
+    GetResourceManager()->GetNmouse()->Finalize();
+    R_SUCCEED();
+}
+
 Result IHidServer::ResetSevenSixAxisSensorTimestamp(ClientAppletResourceUserId aruid) {
     LOG_WARNING(Service_HID, "called, applet_resource_user_id={}", aruid.pid);
 

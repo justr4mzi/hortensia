@@ -1834,45 +1834,23 @@ public:
             {270, &INx2Vi2Session::UnbindNativeEvent, "UnbindDisplayBufferMaxResolutionEvent"},
             {271, &INx2Vi2Session::BindChange, "BindDisplayModeCapabilityEvent"},
             {272, &INx2Vi2Session::UnbindNativeEvent, "UnbindDisplayModeCapabilityEvent"},
-            // Title 1 calls these ~75 times a second with the display name "default"; quiet
-            // handlers (the auto stub logged two lines per call: a 50 MB log in an 18 minute
-            // session).
+            // Title 1 calls the 103..105 queries ~75 times a second with the display name
+            // "default"; quiet handlers (the auto stub logged two lines per call).
             {103, &INx2Vi2Session::QueryDisplayRefreshRate, "QueryDisplayRefreshRate"},
             {104, &INx2Vi2Session::QueryDisplayHdrStatus, "QueryDisplayHdrStatus"},
             {105, &INx2Vi2Session::QueryDisplayHdrPaperWhite, "QueryDisplayHdrPaperWhite"},
-            {212, &INx2Vi2Session::GetLayerBufferBits, "GetLayerBufferBits"},
             {106, &INx2Vi2Session::GetBufferMaxResolution, "GetBufferMaxResolution"},
             {228, &INx2Vi2Session::CancelClientBuffer, "CancelClientBuffer"},
             {229, &INx2Vi2Session::PresentClientBuffer, "PresentClientBuffer"},
             // Firmware commands without a known meaning: zeroed replies.
-            {13, &INx2Vi2Session::StubReplyZeroed, "Unknown13"},
-            {51, &INx2Vi2Session::StubReplyZeroed, "Unknown51"},
-            {101, &INx2Vi2Session::StubReplyZeroed, "Unknown101"},
-            {102, &INx2Vi2Session::StubReplyZeroed, "Unknown102"},
             {107, &INx2Vi2Session::StubReplyZeroed, "Unknown107"},
             {108, &INx2Vi2Session::StubReplyZeroed, "Unknown108"},
-            {111, &INx2Vi2Session::StubReplyZeroed, "Unknown111"},
-            {112, &INx2Vi2Session::StubReplyZeroed, "Unknown112"},
             {113, &INx2Vi2Session::StubReplyZeroed, "Unknown113"},
             {201, &INx2Vi2Session::StubReplyZeroed, "Unknown201"},
             {202, &INx2Vi2Session::StubReplyZeroed, "Unknown202"},
             {230, &INx2Vi2Session::StubReplyZeroed, "Unknown230"},
             {231, &INx2Vi2Session::StubReplyZeroed, "Unknown231"},
             {232, &INx2Vi2Session::StubReplyZeroed, "Unknown232"},
-            {251, &INx2Vi2Session::StubReplyZeroed, "Unknown251"},
-            {252, &INx2Vi2Session::StubReplyZeroed, "Unknown252"},
-            {261, &INx2Vi2Session::StubReplyZeroed, "Unknown261"},
-            {262, &INx2Vi2Session::StubReplyZeroed, "Unknown262"},
-            {263, &INx2Vi2Session::StubReplyZeroed, "Unknown263"},
-            {264, &INx2Vi2Session::StubReplyZeroed, "Unknown264"},
-            {265, &INx2Vi2Session::StubReplyZeroed, "Unknown265"},
-            {266, &INx2Vi2Session::StubReplyZeroed, "Unknown266"},
-            {267, &INx2Vi2Session::StubReplyZeroed, "Unknown267"},
-            {268, &INx2Vi2Session::StubReplyZeroed, "Unknown268"},
-            {269, &INx2Vi2Session::StubReplyZeroed, "Unknown269"},
-            {270, &INx2Vi2Session::StubReplyZeroed, "Unknown270"},
-            {271, &INx2Vi2Session::StubReplyZeroed, "Unknown271"},
-            {272, &INx2Vi2Session::StubReplyZeroed, "Unknown272"},
             {301, &INx2Vi2Session::StubReplyZeroed, "Unknown301"},
             {302, &INx2Vi2Session::StubReplyZeroed, "Unknown302"},
             {351, &INx2Vi2Session::StubReplyZeroed, "Unknown351"},
@@ -1987,6 +1965,9 @@ private:
         }
         m_previous_fences[m_presents % 4] = {~w[22], w[24]};
         const auto waited = std::chrono::steady_clock::now();
+        if (two_ahead && waited - entered > std::chrono::milliseconds{100}) {
+            m_smooth_cooldown = 300;
+        }
         Composite(w[5], ~w[22], w[24], w[7]);
         const auto composited = std::chrono::steady_clock::now();
         PaceToVblank(w[12], ctx.GetThread().GetOwnerProcess());

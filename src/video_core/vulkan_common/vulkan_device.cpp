@@ -686,10 +686,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     }
 
     sets_per_pool = 64;
-    // AMD GCN4 and older are told apart by their lack of float16, read before float16 is turned
-    // off for newer AMD drivers below: checked after that, every AMD GPU looked like GCN4 and lost
-    // VK_EXT_sampler_filter_minmax (an RDNA3 Radeon 780M logged it).
-    const bool amd_gcn4_or_older = is_amd && !features.shader_float16_int8.shaderFloat16;
     if (is_amd_driver) {
         // AMD drivers need a higher amount of Sets per Pool in certain circumstances like in XC2.
         sets_per_pool = 96;

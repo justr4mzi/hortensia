@@ -36,6 +36,7 @@
 
 namespace VideoCommon {
 
+using Core::DEVICE_PAGEMASK;
 using Core::DEVICE_PAGESIZE;
 
 template <class P>
