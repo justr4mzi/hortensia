@@ -179,6 +179,12 @@ void BlitConstantsPass(Environment& env, IR::Program& program) {
             if (!inst.Arg(0).IsImmediate() || inst.Arg(0).U32() != 17 || !inst.Arg(1).IsImmediate()) {
                 continue;
             }
+            // ponytail: fragment shaders only get the UV clamp/dither block (0x30+). Other reads of
+            // bank 24 in a fragment shader are HDR output constants (the tonemap PQ scale and gate)
+            // that the blit block would turn into 1/width, which dimmed Fast Fusion's whole frame.
+            if (env.ShaderStage() == Stage::Fragment && inst.Arg(1).U32() < 0x30) {
+                continue;
+            }
             IR::IREmitter ir{*block, IR::Block::InstructionList::s_iterator_to(inst)};
             const IR::F32 width{ir.RenderAreaWidth()};
             const IR::F32 height{ir.RenderAreaHeight()};

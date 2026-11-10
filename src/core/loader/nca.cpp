@@ -235,6 +235,22 @@ ResultStatus AppLoader_NCA::ReadRomFS(FileSys::VirtualFile& dir) {
     return ResultStatus::Success;
 }
 
+ResultStatus AppLoader_NCA::ReadProgramMetadata(FileSys::ProgramMetadata& out) {
+    const auto exefs = nca->GetExeFS();
+    const auto npdm = exefs != nullptr ? exefs->GetFile("main.npdm") : nullptr;
+    if (npdm == nullptr) {
+        return ResultStatus::ErrorMissingNPDM;
+    }
+
+    FileSys::ProgramMetadata metadata;
+    if (const auto result = metadata.Load(npdm); result != ResultStatus::Success) {
+        return result;
+    }
+
+    out = metadata;
+    return ResultStatus::Success;
+}
+
 ResultStatus AppLoader_NCA::ReadProgramId(u64& out_program_id) {
     if (nca == nullptr || nca->GetStatus() != ResultStatus::Success) {
         return ResultStatus::ErrorNotInitialized;

@@ -17,6 +17,7 @@
 #include "common/common_funcs.h"
 #include "common/common_types.h"
 #include "core/file_sys/control_metadata.h"
+#include "core/file_sys/patch_manager.h"
 #include "core/file_sys/vfs/vfs.h"
 
 namespace Core {
@@ -25,6 +26,7 @@ class System;
 
 namespace FileSys {
 class NACP;
+class ProgramMetadata;
 } // namespace FileSys
 
 namespace Kernel {
@@ -287,6 +289,11 @@ public:
         return ResultStatus::ErrorNotImplemented;
     }
 
+    /// Informational content embedded in this container; never mounts payloads.
+    virtual std::vector<FileSys::Patch> ReadEmbeddedPatches() const {
+        return {};
+    }
+
     /**
      * Get the raw update of the application, should it come packed with one
      *
@@ -328,6 +335,17 @@ public:
      * @return ResultStatus result of function
      */
     virtual ResultStatus ReadControlData(FileSys::NACP& control) {
+        return ResultStatus::ErrorNotImplemented;
+    }
+
+    /**
+     * Get the program metadata (main.npdm) of the title
+     *
+     * @param[out] out Reference to store the program metadata into
+     *
+     * @return ResultStatus result of function
+     */
+    virtual ResultStatus ReadProgramMetadata(FileSys::ProgramMetadata& out) {
         return ResultStatus::ErrorNotImplemented;
     }
 

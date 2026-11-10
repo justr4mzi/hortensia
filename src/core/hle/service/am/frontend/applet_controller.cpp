@@ -44,7 +44,7 @@ static Core::Frontend::ControllerParameters ConvertToFrontendParameters(
         .explain_text = std::move(text),
         .allow_pro_controller = npad_style_set.fullkey == 1,
         .allow_handheld = npad_style_set.handheld == 1,
-        .allow_dual_joycons = npad_style_set.joycon_dual == 1,
+        .allow_dual_joycons = npad_style_set.joycon_dual == 1 || npad_style_set.joycon2_dual == 1,
         .allow_left_joycon = npad_style_set.joycon_left == 1,
         .allow_right_joycon = npad_style_set.joycon_right == 1,
     };
@@ -123,6 +123,11 @@ void Controller::Initialize() {
     case ControllerSupportMode::ShowControllerStrapGuide: {
         const std::shared_ptr<IStorage> user_arg_storage = PopInData();
         ASSERT(user_arg_storage != nullptr);
+
+        // ponytail: strap guide args are built by sdknso, size is not ours to check; no UI, nothing to parse.
+        if (controller_private_arg.mode == ControllerSupportMode::ShowControllerStrapGuide) {
+            break;
+        }
 
         const auto& user_arg = user_arg_storage->GetData();
         switch (controller_applet_version) {
@@ -231,6 +236,9 @@ void Controller::Execute() {
         break;
     }
     case ControllerSupportMode::ShowControllerStrapGuide:
+        // ponytail: strap guide needs no UI; report success (sdknso only reads the 0xC result).
+        ConfigurationComplete(true);
+        break;
     case ControllerSupportMode::ShowControllerFirmwareUpdate:
     case ControllerSupportMode::ShowControllerKeyRemappingForSystem:
         UNIMPLEMENTED_MSG("ControllerSupportMode={} is not implemented",

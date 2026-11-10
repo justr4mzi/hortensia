@@ -27,6 +27,7 @@
 #include "common/alignment.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
+#include "common/game_fps.h"
 #include "common/slot_vector.h"
 #include "video_core/control/channel_state.h"
 #include "video_core/dirty_flags.h"
@@ -475,6 +476,11 @@ void TextureCache<P>::TickFrame() {
                     if (log) {
                         LogThresholds();
                         LOG_INFO(HW_GPU,
+                                 "Texture cache thresholds: expected {} MiB, critical {} MiB, "
+                                 "minimum {} MiB",
+                                 expected_memory >> 20, critical_memory >> 20,
+                                 minimum_memory >> 20);
+                        LOG_INFO(HW_GPU,
                                  "Memory margins: base {} MiB, out of memory {} MiB, block slack {} MiB",
                                  margin >> 20, pressure_margin >> 20, slack_margin >> 20);
                     }
@@ -748,6 +754,70 @@ void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compu
             }
         }
     } while (has_deleted_images || (blacklist && has_blacklisted));
+    if (!compute) {
+        ReplaceColorFeedbackViews(views);
+    }
+}
+
+template <class P>
+void TextureCache<P>::ReplaceColorFeedbackViews(std::span<ImageViewInOut> views) {
+    // A draw that samples its own colour target reads it while the host writes it, a feedback
+    // loop: RADV reads compressed tiles back as garbage (DK Bananza's video panel came out in
+    // tiles). Maxwell reads the texel before the draw's write lands, so sample a copy instead.
+    const auto& regs = maxwell3d->regs;
+    // Every replacement remains live until this draw executes. Reusing a same-shaped shadow
+    // within this call would overwrite an earlier binding's snapshot before it is sampled.
+    boost::container::small_vector<ImageId, 8> used_shadows;
+    for (ImageViewInOut& view : views) {
+        if (view.id == NULL_IMAGE_VIEW_ID || view.blacklist) {
+            continue;
+        }
+        const ImageViewBase& image_view = slot_image_views[view.id];
+        if (image_view.IsBuffer()) {
+            continue;
+        }
+        const ImageId image_id = image_view.image_id;
+        const GPUVAddr gpu_addr = slot_images[image_id].gpu_addr;
+        bool is_target = false;
+        for (u32 index = 0; index < regs.rt_control.count; ++index) {
+            const auto& rt = regs.rt[regs.rt_control.Map(index)];
+            is_target |= rt.format != Tegra::RenderTargetFormat::NONE && rt.Address() == gpu_addr;
+        }
+        // ponytail: rescaled and multisampled targets keep the loop; copy them when a game needs it.
+        if (!is_target || True(slot_images[image_id].flags & ImageFlagBits::Rescaled) ||
+            slot_images[image_id].info.num_samples != 1) {
+            continue;
+        }
+        const auto same_shape = [&](ImageId shadow_id) {
+            if (std::ranges::find(used_shadows, shadow_id) != used_shadows.end()) {
+                return false;
+            }
+            const ImageInfo& a = slot_images[shadow_id].info;
+            const ImageInfo& b = slot_images[image_id].info;
+            return a.type == b.type && a.format == b.format && a.size == b.size &&
+                   a.resources.levels == b.resources.levels &&
+                   a.resources.layers == b.resources.layers;
+        };
+        auto it = std::ranges::find_if(feedback_shadows, same_shape);
+        if (it == feedback_shadows.end()) {
+            const ImageInfo info = slot_images[image_id].info;
+            const DAddr cpu_addr = slot_images[image_id].cpu_addr;
+            feedback_shadows.push_back(slot_images.insert(runtime, info, gpu_addr, cpu_addr));
+            LOG_INFO(HW_GPU, "Colour target {}x{} format {} sampled by its own draw: copying it",
+                     info.size.width, info.size.height, static_cast<u32>(info.format));
+            it = std::prev(feedback_shadows.end());
+        }
+        const ImageId shadow_id = *it;
+        used_shadows.push_back(shadow_id);
+        Image& image = slot_images[image_id];
+        Image& shadow = slot_images[shadow_id];
+        const auto copies = MakeShrinkImageCopies(shadow.info, image.info, SubresourceBase{});
+        runtime.CopyImage(shadow, image, copies);
+        const auto view_it = std::ranges::find(image.image_view_ids, view.id);
+        const ImageViewInfo view_info =
+            image.image_view_infos[std::distance(image.image_view_ids.begin(), view_it)];
+        view.id = FindOrEmplaceImageView(shadow_id, view_info);
+    }
 }
 
 template <class P>
@@ -1785,6 +1855,20 @@ std::pair<typename P::ImageView*, bool> TextureCache<P>::TryFindFramebufferImage
                               slot_images[image_id].IsRescaled());
     };
 
+    if (g_yo.enabled) {
+        std::string desc;
+        for (const ImageId id : valid_image_ids) {
+            const auto& img = slot_images[id];
+            desc += fmt::format("[cpu={:#x} gpu={:#x} tick={} gmod={} cmod={} {}x{} fmt{}] ",
+                                img.cpu_addr, img.gpu_addr, img.modification_tick,
+                                True(img.flags & ImageFlagBits::GpuModified),
+                                True(img.flags & ImageFlagBits::CpuModified),
+                                img.info.size.width, img.info.size.height,
+                                static_cast<u32>(img.info.format));
+        }
+        g_yo.pick = fmt::format("req={:#x} cands={} {}", cpu_addr, valid_image_ids.size(), desc);
+        g_yo.pick_cpu = valid_image_ids.size() == 1 ? slot_images[valid_image_ids.front()].cpu_addr : 0;
+    }
     if (valid_image_ids.size() == 1) [[likely]] {
         return GetImageViewForFramebuffer(valid_image_ids.front());
     }
@@ -2783,6 +2867,15 @@ u64 TextureCache<P>::ImageMemoryBytes(const Image& image) const {
         }
         return 0;
     }
+    // What the host image really takes where the runtime knows it: a trimmed image
+    // (reduce_texture_resolution) takes a quarter of its guest size. Counted at guest size, Mario
+    // Kart World's trimmed terrain arrays kept the total over the critical limit for whole races,
+    // and the collector evicted (and re-uploaded) thousands of textures every few seconds.
+    if constexpr (requires { image.HostMemoryBytes(); }) {
+        if (const std::optional<u64> host_bytes = image.HostMemoryBytes()) {
+            return Common::AlignUp(*host_bytes, 1024);
+        }
+    }
     u64 tentative_size = (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes);
     if ((IsPixelFormatASTC(image.info.format) &&
          True(image.flags & ImageFlagBits::AcceleratedUpload)) ||
@@ -3021,7 +3114,7 @@ ImageId TextureCache<P>::InsertImage(const ImageInfo& info, GPUVAddr gpu_addr,
     }
     ASSERT_MSG(cpu_addr, "Tried to insert an image to an invalid gpu_addr={:#x}", gpu_addr);
     ImageInfo storage_info = info;
-    storage_info.native_tiling = gpu_memory->UsesNativeTiling();
+    storage_info.native_tiling = UsesNativeGobs(gpu_memory->UsesNativeTiling(), info);
     if (storage_info.native_tiling && info.type == ImageType::e3D) {
         // Switch 2 3D images (lighting/fog volumes) are rare: log each one's shape.
         LOG_DEBUG(HW_GPU, "3D image at {:#x}: {}x{}x{} levels {} format {} block {}x{}x{}",
@@ -3196,6 +3289,9 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         }
     }
     Image& new_image = slot_images[new_image_id];
+    if (True(new_image.flags & ImageFlagBits::UnwrittenSparse)) {
+        ++unwritten_sparse_images;
+    }
 
     new_image.allocation_tick = frame_tick;
     {
@@ -3412,6 +3508,11 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         DeleteImage(copy_object.id);
     }
 
+    NoteAliasTick(new_image);
+    for (const AliasedImage& alias : new_image.aliased_images) {
+        new_image.alias_modification_tick = (std::max)(new_image.alias_modification_tick,
+                                                       slot_images[alias.id].modification_tick);
+    }
     RegisterImage(new_image_id);
     return new_image_id;
 }
@@ -4247,8 +4348,16 @@ void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
 }
 
 template <class P>
+void TextureCache<P>::NoteAliasTick(const ImageBase& image) {
+    for (const AliasedImage& alias : image.aliased_images) {
+        ImageBase& aliased_image = slot_images[alias.id];
+        aliased_image.alias_modification_tick =
+            (std::max)(aliased_image.alias_modification_tick, image.modification_tick);
+    }
+}
+
+template <class P>
 void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
-    boost::container::small_vector<const AliasedImage*, 8> aliased_images;
     Image& image = slot_images[image_id];
     // Nothing aliased was modified after this image: skip walking its (possibly long) alias list
     // for every draw that samples it (~7% of the GPU back thread in DK Bananza's open areas).

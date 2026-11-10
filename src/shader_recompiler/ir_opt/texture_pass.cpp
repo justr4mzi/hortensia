@@ -1437,6 +1437,43 @@ void PatchTexelFetch(IR::Block& block, IR::Inst& inst, TexturePixelFormat pixel_
                               ir.FPMul(ir.ConvertSToF(32, 32, ir.BitCast<IR::U32>(w)), max_value));
     inst.ReplaceUsesWith(converted);
 }
+// A raw 32-bit surface word can span two physical 16-bit texels. Keep the
+// storage view compatible with the image and distribute the word's bits exactly.
+void SplitPacked16ImageWrite(IR::Block& block, IR::Inst& inst) {
+    IR::IREmitter ir{block, IR::Block::InstructionList::s_iterator_to(inst)};
+    const auto flags = inst.Flags<IR::TextureInstInfo>();
+    const bool scalar_coords = flags.type == TextureType::Buffer ||
+                               flags.type == TextureType::Color1D;
+    const IR::Value coords = inst.Arg(1);
+    const IR::U32 x{scalar_coords ? coords : ir.CompositeExtract(coords, 0)};
+    const auto first_x = ir.ShiftLeftLogical(x, ir.Imm32(1));
+    const IR::U32 word{ir.CompositeExtract(inst.Arg(2), 0)};
+    for (u32 component = 0; component < 2; ++component) {
+        const auto new_x = component ? ir.IAdd(first_x, ir.Imm32(1)) : first_x;
+        const IR::Value new_coords = scalar_coords ? IR::Value{new_x}
+            : ir.CompositeInsert(coords, new_x, 0);
+        const IR::U32 value = component ? IR::U32{ir.ShiftRightLogical(word, ir.Imm32(16))}
+                                        : ir.BitwiseAnd(word, ir.Imm32(0xffff));
+        const auto color = ir.CompositeConstruct(value, ir.Imm32(0), ir.Imm32(0), ir.Imm32(0));
+        const auto write = ir.Inst(IR::Opcode::ImageWrite, inst.Arg(0), new_coords, color);
+        write.Inst()->SetFlags(flags);
+    }
+    inst.Invalidate();
+}
+
+bool IsSingleChannel16Format(TexturePixelFormat format) {
+    switch (format) {
+    case TexturePixelFormat::R16_FLOAT:
+    case TexturePixelFormat::R16_UNORM:
+    case TexturePixelFormat::R16_SNORM:
+    case TexturePixelFormat::R16_UINT:
+    case TexturePixelFormat::R16_SINT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // Anonymous namespace
 
 void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo& host_info) {
@@ -1553,6 +1590,12 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
         case IR::Opcode::ImageWrite: {
             if (cbuf.has_secondary) {
                 throw NotImplementedException("Unexpected separate sampler");
+            }
+            split_packed16_store = inst->GetOpcode() == IR::Opcode::ImageWrite &&
+                flags.image_format == ImageFormat::R32_UINT &&
+                IsSingleChannel16Format(ReadTexturePixelFormatCached(env, cbuf));
+            if (split_packed16_store) {
+                flags.image_format.Assign(ImageFormat::R16_UINT);
             }
             const bool is_written{inst->GetOpcode() != IR::Opcode::ImageRead};
             const bool is_read{inst->GetOpcode() != IR::Opcode::ImageWrite};

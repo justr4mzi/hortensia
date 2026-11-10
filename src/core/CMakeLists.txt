@@ -219,6 +219,7 @@ add_library(core STATIC
     frontend/graphics_context.h
     hle/api_version.h
     hle/ipc.h
+    hle/kernel/address_arbiter_read.h
     hle/kernel/board/nintendo/nx/k_memory_layout.cpp
     hle/kernel/board/nintendo/nx/k_memory_layout.h
     hle/kernel/board/nintendo/nx/k_system_control.cpp

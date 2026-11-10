@@ -7,7 +7,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cstdlib>
 #include <array>
 #include <bit>
 #include <chrono>
@@ -16,6 +15,7 @@
 #include <mutex>
 #include <numeric>
 #include <optional>
+#include <source_location>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -100,6 +100,8 @@ struct Binding {
     GPUVAddr gpu_addr{};
     u32 size{};
     BufferId buffer_id;
+    // Nonzero when a virtual storage range needs a shorter physical fallback.
+    u32 physical_size{};
     u32 segment_first{};
     u32 segment_count{};
 };
@@ -140,6 +142,8 @@ public:
     Binding index_buffer;
     std::array<Binding, NUM_VERTEX_BUFFERS> vertex_buffers;
     std::array<std::array<Binding, NUM_GRAPHICS_UNIFORM_BUFFERS>, NUM_STAGES> uniform_buffers;
+    std::array<std::array<LegacyUniformEligibilityCache, NUM_GRAPHICS_UNIFORM_BUFFERS>, NUM_STAGES>
+        legacy_uniform_eligibility;
     std::array<std::array<Binding, NUM_STORAGE_BUFFERS>, NUM_STAGES> storage_buffers;
     std::array<std::array<TextureBufferBinding, NUM_TEXTURE_BUFFERS>, NUM_STAGES> texture_buffers;
     std::array<Binding, NUM_TRANSFORM_FEEDBACK_BUFFERS> transform_feedback_buffers;
@@ -579,9 +583,13 @@ private:
 
     void BindHostIndexBuffer();
 
+    void MarkUploaded(Buffer& buffer, std::span<const BufferCopy> copies);
+
     void BindHostVertexBuffers();
 
     void BindHostDrawIndirectBuffers();
+
+    void PrepareGraphicsUniformDownloads();
 
     void BindHostGraphicsUniformBuffers(size_t stage);
 
@@ -655,18 +663,24 @@ private:
 
     void TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept;
 
-    bool SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size);
+    void RefreshMultiRangeSegments(std::vector<MultiRangeSegment>& pool);
+
+    bool SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size,
+                           bool sparse_uniform = false,
+                           std::source_location caller = std::source_location::current());
+    bool SynchronizeBufferPages(Buffer& buffer, DAddr device_addr, u32 size, bool sparse_uniform);
 
     /// SynchronizeBuffer for vertex buffer slots 0-31 and the index buffer (slot 32).
     void SynchronizeGeometryBuffer(u32 slot, BufferId buffer_id, DAddr device_addr, u32 size);
 
     void UploadMemory(Buffer& buffer, u64 total_size_bytes, u64 largest_copy,
-                      std::span<BufferCopy> copies);
+                      std::span<BufferCopy> copies, bool sparse_uniform);
 
     void ImmediateUploadMemory(Buffer& buffer, u64 largest_copy,
-                               std::span<const BufferCopy> copies);
+                               std::span<const BufferCopy> copies, bool sparse_uniform);
 
-    void MappedUploadMemory(Buffer& buffer, u64 total_size_bytes, std::span<BufferCopy> copies);
+    void MappedUploadMemory(Buffer& buffer, u64 total_size_bytes, std::span<BufferCopy> copies,
+                            bool sparse_uniform);
 
     void DownloadBufferMemory(Buffer& buffer_id);
 
@@ -727,7 +741,8 @@ private:
     [[nodiscard]] TextureBufferBinding GetTextureBufferBinding(GPUVAddr gpu_addr, u32 size,
                                                                PixelFormat format);
 
-    [[nodiscard]] std::span<const u8> ImmediateBufferWithData(DAddr device_addr, size_t size);
+    [[nodiscard]] std::span<const u8> ImmediateBufferWithData(DAddr device_addr, size_t size,
+                                                              bool sparse_uniform = false);
 
     [[nodiscard]] std::span<u8> ImmediateBuffer(size_t wanted_capacity);
 
@@ -909,6 +924,21 @@ private:
     Common::RangeSet<DAddr> gpu_modified_ranges;
     std::deque<Common::RangeSet<DAddr>> committed_gpu_modified_ranges;
 
+
+    /// Writes downloaded bytes to guest memory, except where a held-back CPU write is newer.
+    void WriteDownloadToGuest(DAddr device_addr, const u8* data, u64 size) {
+        DAddr cursor = device_addr;
+        const auto write_until = [&](DAddr end) {
+            if (cursor < end) {
+                device_memory.WriteBlockUnsafe(cursor, data + (cursor - device_addr), end - cursor);
+            }
+        };
+        cpu_held_ranges.ForEachInRange(device_addr, size, [&](DAddr start, DAddr end) {
+            write_until(start);
+            cursor = (std::max)(cursor, end);
+        });
+        write_until(device_addr + size);
+    }
 
     // Async Buffers
     std::deque<std::optional<Async_Buffer>> async_buffers;

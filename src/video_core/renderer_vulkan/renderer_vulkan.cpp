@@ -31,6 +31,7 @@
 #endif
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
+#include "video_core/renderer_vulkan/vk_hitch_diagnostic.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
@@ -116,10 +117,35 @@ std::string BuildCommaSeparatedExtensions(
 
 Device CreateDevice(const vk::Instance& instance, const vk::InstanceDispatch& dld, VkSurfaceKHR surface) {
     const std::vector<VkPhysicalDevice> devices = instance.EnumeratePhysicalDevices();
-    const u32 device_index = Settings::values.vulkan_device.GetValue();
-    if (device_index >= u32(devices.size())) {
-        LOG_ERROR(Render_Vulkan, "Invalid device index {}!", device_index);
+    if (devices.empty()) {
+        LOG_ERROR(Render_Vulkan, "No Vulkan devices found!");
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
+    }
+    const auto is_cpu = [&](u32 index) {
+        const auto type = vk::PhysicalDevice(devices[index], dld).GetProperties().deviceType;
+        return type == VK_PHYSICAL_DEVICE_TYPE_CPU || type == VK_PHYSICAL_DEVICE_TYPE_OTHER;
+    };
+    // First real GPU, so a saved index never lands on a software renderer (llvmpipe) by
+    // accident: the order of devices can change between runs and loaders.
+    const auto first_gpu = [&]() -> std::optional<u32> {
+        for (u32 i = 0; i < u32(devices.size()); ++i) {
+            if (!is_cpu(i)) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }();
+    u32 device_index = Settings::values.vulkan_device.GetValue();
+    if (device_index >= u32(devices.size())) {
+        const u32 fallback = first_gpu.value_or(0);
+        LOG_WARNING(Render_Vulkan, "Invalid device index {} ({} device(s) found), using device {}",
+                    device_index, devices.size(), fallback);
+        device_index = fallback;
+    } else if (is_cpu(device_index) && first_gpu) {
+        LOG_WARNING(Render_Vulkan,
+                    "Device {} is a software renderer, using GPU device {} instead",
+                    device_index, *first_gpu);
+        device_index = *first_gpu;
     }
     const vk::PhysicalDevice physical_device(devices[device_index], dld);
     return Device(*instance, physical_device, surface, dld);
@@ -413,6 +439,16 @@ void RendererVulkan::RenderAppletCaptureLayer(
 
     if (capture_layers.empty())
         return;
+
+    // Switch 2 titles present through nx2:vi2, and only the Switch 1 vi path and applets read
+    // this capture (GetAppletCaptureBuffer): drawing it for every frame cost a framebuffer
+    // lookup, a render pass break and a 1280x720 draw on the GPU thread. Keep it at most half a
+    // second old for them instead. The first frame is always drawn.
+    const bool switch2_layers = std::ranges::all_of(
+        capture_layers, [](const Tegra::FramebufferConfig& layer) { return layer.native_tiling; });
+    if (switch2_layers && applet_frame.image && (++native_capture_frames % 30) != 0) {
+        return;
+    }
 
     if (!applet_frame.image) {
         applet_frame.image = CreateWrappedImage(memory_allocator, CaptureImageSize, CaptureFormat);

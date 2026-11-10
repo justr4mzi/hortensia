@@ -17,6 +17,7 @@
 #include "common/logging.h"
 #include "common/nx2_sampler.h"
 #include "common/adpf.h"
+#include "common/game_fps.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "common/string_util.h"
@@ -25,6 +26,7 @@
 #include "core/arm/hypervisor/hv_vm.h"
 #endif
 #include "core/core.h"
+#include "core/arm/debug.h"
 
 #include "launch_timestamp_cache.h"
 #include "core/core_timing.h"
@@ -36,6 +38,7 @@
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/fs_filesystem.h"
 #include "core/file_sys/nup_container.h"
+#include "core/loader/loose_directory.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/program_metadata.h"
 #include "core/file_sys/registered_cache.h"
@@ -140,6 +143,9 @@ FileSys::VirtualFile GetGameFileFromPath(const FileSys::VirtualFilesystem& vfs,
     }
 
     if (Common::FS::IsDir(path)) {
+        if (const auto main = Loader::ResolveLooseProgramPath(std::filesystem::path{Common::FS::ToU8String(path)})) {
+            return vfs->OpenFile(Common::FS::PathToUTF8String(*main), FileSys::OpenMode::Read);
+        }
         return vfs->OpenFile(path + "/main", FileSys::OpenMode::Read);
     }
 
@@ -210,8 +216,18 @@ bool IsSwitch2Program(const FileSys::VirtualFile& file, u64 program_id, std::siz
     }
     const auto dir = file->GetContainingDirectory();
     const auto npdm = dir != nullptr ? dir->GetFile("main.npdm") : nullptr;
-    return npdm != nullptr && metadata.Load(npdm) == Loader::ResultStatus::Success &&
-           metadata.IsSwitch2();
+    if (npdm != nullptr && metadata.Load(npdm) == Loader::ResultStatus::Success) {
+        return metadata.IsSwitch2();
+    }
+
+    // NSP/XCI and installed NCAs keep the NPDM in the program NCA's ExeFS.
+    const auto loader = Loader::GetLoader(system, file, program_id, program_index);
+    if (loader == nullptr ||
+        loader->ReadProgramMetadata(metadata) != Loader::ResultStatus::Success) {
+        return false;
+    }
+
+    return metadata.IsSwitch2();
 }
 
 } // namespace
@@ -428,7 +444,7 @@ struct System::Impl {
 
         const bool switch2_program =
             virtual_filesystem != nullptr &&
-            IsSwitch2Program(GetGameFileFromPath(virtual_filesystem, filepath), params.program_id,
+            IsSwitch2Program(system, virtual_filesystem, filepath, params.program_id,
                              params.program_index);
         Settings::SetCurrentProgramIsSwitch2(switch2_program);
         Settings::SetAstcRecompressionOverride(std::nullopt);
@@ -509,10 +525,14 @@ struct System::Impl {
             LOG_ERROR(Core, "Failed to read title for ROM!");
         }
 
+        Common::Log::SetGameLog(params.program_id, name == "Unknown program" ? "" : name);
         LOG_INFO(Core, "Loading {} ({:016X}) ...", name, params.program_id);
 
         // Expose program id to dump sites and other global readers.
         Settings::SetCurrentProgramID(params.program_id);
+        // The per-title GPU decisions (Nx2NeedsBufferDownloads) need it before the first fence;
+        // the nvhost-ctrl-gpu query that also sets it may come later or not at all.
+        Tegra::g_nx2_program_id = params.program_id;
 
         // EDEN_NX2_THREAD_DUMP_AFTER=<seconds>[,...] (diagnostic): dump the guest threads that long
         // after loading, for hangs before the first present.
@@ -536,6 +556,9 @@ struct System::Impl {
         // Make the process created be the application
         kernel.SetApplicationProcess(process->GetHandle());
 
+        // Title defaults the renderer reads while it is created.
+        GameSettings::LoadEarlyOverrides(params.program_id);
+
         // Set up the rest of the system.
         SystemResultStatus init_result{SetupForApplicationProcess(system, emu_window)};
         if (init_result != SystemResultStatus::Success) {
@@ -545,6 +568,7 @@ struct System::Impl {
         }
         // Waiting for GPU before initializing CPU
         cpu_manager.Initialize();
+        Core::StartPkpSampler(system); // ponytail: EDEN_PKP_BT diagnostics only
 
         // Initialize cheat engine
         if (cheat_engine) {
@@ -621,7 +645,6 @@ struct System::Impl {
         services.reset();
         service_manager.reset();
         fs_controller.Reset();
-        cheat_engine.reset();
         core_timing.ClearPendingEvents();
         app_loader.reset();
         audio_core.reset();
@@ -845,6 +868,15 @@ size_t System::GetCurrentHostThreadID() const {
 
 std::span<GPUDirtyMemoryManager> System::GetGPUDirtyMemoryManager() {
     return impl->gpu_dirty_memory_managers;
+}
+
+bool System::HasGPUDirtyMemory() {
+    for (const auto& manager : impl->gpu_dirty_memory_managers) {
+        if (manager.HasPending()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void System::GatherGPUDirtyMemory(std::function<void(PAddr, size_t)>& callback) {

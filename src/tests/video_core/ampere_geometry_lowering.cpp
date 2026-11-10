@@ -147,3 +147,89 @@ TEST_CASE("Ampere geometry index conversion retains U16 truncation and FTZ",
         return (value >> 52) == 0x5cb && ((value >> 8) & 3) == 1 && ((value >> 12) & 1) == 1;
     }));
 }
+
+namespace {
+using Shader::Ampere::TessellationStage;
+
+// Mario Tennis Fever's court grass: a control program (passes its control point through, writes
+// the tessellation levels and a generic patch it reads back) and its evaluation program.
+constexpr Instruction InvocationId{{0x00007919, 0, 0x1100, 0x000e2800}};
+constexpr Instruction InvocationInfo{{0x00017919, 0, 0x1d00, 0x000e6200}};
+constexpr Instruction StageBufferRead{{0x06017923, 0, 0, 0x000e2e00}};
+constexpr Instruction LoadPosition{{0xff007321, 0x7001, 0xc00, 0x000e2800}};
+constexpr Instruction StorePosition{{0xff007322, 0x7000, 0xcff, 0x001fe800}};
+constexpr Instruction StorePatch{{0xff007322, 0x1803, 0x10ff, 0x002fe800}};
+constexpr Instruction LoadOwnPatch{{0xff057321, 0x18ff, 0x9000, 0x000e6200}};
+constexpr Instruction StoreLevel{{0xff007322, 0x0004, 0x10ff, 0x000fe800}};
+constexpr Instruction LoadPatch{{0xff0c7321, 0x18ff, 0x1000, 0x000e6200}};
+constexpr Instruction LaneId{{0x00007919, 0, 0, 0x000f6800}};
+constexpr Instruction LoadTessCoord{{0xff007321, 0x2f000, 0x8400, 0x020e2200}};
+
+u64 LoweredAt(const Shader::Ampere::LoweredProgram& lowered, size_t native) {
+    return lowered.instructions.at(lowered.source_instruction_offsets.at(native));
+}
+} // namespace
+
+TEST_CASE("Ampere tessellation control programs keep control points and patches",
+          "[video_core][ampere][tessellation]") {
+    const std::array control{InvocationId, InvocationInfo, StageBufferRead, LoadPosition, StorePosition,
+                             StorePatch, LoadOwnPatch, StoreLevel, Exit};
+    REQUIRE_FALSE(LowerToMaxwell(control));
+    REQUIRE_FALSE(LowerToMaxwell(control, false, false, TessellationStage::Evaluation));
+    const auto lowered = LowerToMaxwell(control, false, false, TessellationStage::Control);
+    INFO(lowered.error);
+    REQUIRE(lowered);
+    REQUIRE(LoweredAt(lowered, 0) == 0xf0c8000001170000ULL);                 // S2R SR_INVOCATION_ID
+    REQUIRE(LoweredAt(lowered, 2) == 0x5c98078000670001ULL);                 // ISBERD: MOV R1, R6
+    const u64 load = LoweredAt(lowered, 3), store = LoweredAt(lowered, 4);
+    REQUIRE(load >> 52 == 0xefd);
+    REQUIRE(((load >> 31) & 1) == 0);
+    REQUIRE(((load >> 39) & 0xff) == 1); // vertex handle R1
+    REQUIRE(store >> 52 == 0xeff);
+    REQUIRE(((store >> 31) & 1) == 0);
+    for (const size_t index : {5U, 6U, 7U}) {
+        const u64 patch = LoweredAt(lowered, index);
+        REQUIRE(((patch >> 31) & 1) == 1);
+        REQUIRE(((patch >> 32) & 1) == 0);
+        REQUIRE(((patch >> 20) & 0x3ff) == (index == 7 ? 0U : 0x18U));
+    }
+    REQUIRE(LoweredAt(lowered, 6) >> 52 == 0xefd); // the patch read back is an ALD.P
+}
+
+TEST_CASE("Ampere tessellation evaluation programs read patches and their coordinate",
+          "[video_core][ampere][tessellation]") {
+    const std::array evaluation{InvocationInfo, LoadPatch, LaneId, LoadTessCoord, StorePosition, Exit};
+    REQUIRE_FALSE(LowerToMaxwell(evaluation));
+    REQUIRE_FALSE(LowerToMaxwell(evaluation, false, false, TessellationStage::Control));
+    const auto lowered = LowerToMaxwell(evaluation, false, false, TessellationStage::Evaluation);
+    INFO(lowered.error);
+    REQUIRE(lowered);
+    const u64 patch = LoweredAt(lowered, 1), coord = LoweredAt(lowered, 3);
+    REQUIRE(((patch >> 31) & 1) == 1);
+    REQUIRE(((patch >> 20) & 0x3ff) == 0x18);
+    REQUIRE((coord & 0xff) == 0);
+    REQUIRE(((coord >> 20) & 0x3ff) == 0x2f0);
+    REQUIRE(((coord >> 31) & 3) == 0);
+    REQUIRE(((coord >> 39) & 0xff) == 255);
+    REQUIRE(((coord >> 47) & 3) == 1); // U and V
+}
+
+TEST_CASE("Ampere tessellation rejects attribute accesses the frontend cannot express",
+          "[video_core][ampere][tessellation]") {
+    auto output_vertex = LoadPosition;
+    output_vertex.words[2] |= 0x8000; // ALD.O of a control point
+    auto other_vertex = StorePosition;
+    other_vertex.words[2] = 0xc01; // AST to vertex R1 instead of the own control point
+    auto indexed = LoadPosition;
+    indexed.words[2] |= 0x2000; // .PHYS
+    auto level = LoadPatch;
+    level.words[1] = 0x00ff; // ALD.P a[0x00]: a tessellation level
+    for (const auto& code : {std::array{output_vertex, Exit}, std::array{other_vertex, Exit},
+                             std::array{indexed, Exit}}) {
+        REQUIRE_FALSE(LowerToMaxwell(code, false, false, TessellationStage::Control));
+    }
+    REQUIRE_FALSE(LowerToMaxwell(std::array{level, Exit}, false, false, TessellationStage::Evaluation));
+    // The coordinate is indexed by the lane id; without one the index is unknown.
+    REQUIRE_FALSE(LowerToMaxwell(std::array{LoadTessCoord, Exit}, false, false,
+                                 TessellationStage::Evaluation));
+}

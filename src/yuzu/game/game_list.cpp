@@ -24,7 +24,9 @@
 #include <qlayoutitem.h>
 
 #include "common/common_types.h"
+#include "common/fs/path_util.h"
 #include "core/core.h"
+#include "core/loader/loose_directory.h"
 #include "core/file_sys/nup_writer.h"
 #ifdef LICHII_NX_TOOLS
 #include "yuzu/nx_tools.h"
@@ -400,10 +402,9 @@ void GameList::ValidateEntry(const QModelIndex& item) {
             return;
 
         if (file_info.isDir()) {
-            const QDir dir{file_path};
-            const QStringList matching_main = dir.entryList({QStringLiteral("main")}, QDir::Files);
-            if (matching_main.size() == 1) {
-                emit GameChosen(dir.path() + QDir::separator() + matching_main[0]);
+            if (const auto main = Loader::ResolveLooseProgramPath(
+                    std::filesystem::path{Common::FS::ToU8String(file_path.toStdString())})) {
+                emit GameChosen(QString::fromStdString(Common::FS::PathToUTF8String(*main)));
             }
             return;
         }

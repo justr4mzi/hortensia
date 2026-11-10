@@ -16,6 +16,9 @@
 #include "core/cpu_manager.h"
 #include "core/hle/kernel/k_interrupt_manager.h"
 #include "core/hle/kernel/k_process.h"
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
 #include "core/hle/kernel/k_scheduler.h"
 #include "core/hle/kernel/k_scoped_scheduler_lock_and_sleep.h"
 #include "core/hle/kernel/k_thread.h"
@@ -87,6 +90,12 @@ void KScheduler::RescheduleCurrentHLEThread(KernelCore& kernel) {
 
     ASSERT(GetCurrentThread(kernel).GetState() != ThreadState::Waiting);
     GetCurrentThread(kernel).EnableDispatch(kernel);
+}
+
+void KScheduler::TakeWokenDummyThreads(KernelCore& kernel,
+                                       boost::container::small_vector<KThread*, 8>& out,
+                                       boost::container::small_vector<KThread*, 8>& opened) {
+    kernel.GlobalSchedulerContext().TakeWokenDummyThreads(kernel, out, opened);
 }
 
 u64 KScheduler::UpdateHighestPriorityThreads(KernelCore& kernel) {
@@ -456,6 +465,13 @@ void KScheduler::ScheduleImplFiber(KernelCore& kernel) {
                 // If we do, another core is interfering, and we must start again.
                 goto retry;
             }
+            // Another core is still switching away from this thread: back off for a moment
+            // instead of hammering the mutex's cache line that core needs to release it.
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+            _mm_pause();
+#elif defined(__aarch64__)
+            asm volatile("yield");
+#endif
         }
 
         // It's time to switch the thread.

@@ -18,6 +18,7 @@
 #include <exception>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -596,11 +597,16 @@ static bool PackNup(const std::string& source, const std::string& output) {
         output.empty() ? FileSys::Nup::DefaultArchivePath(dump_root) : to_path(output);
     std::signal(SIGINT, [](int) { pack_nup_cancel = true; });
 
+// Runs a NUP job with progress on stderr; Ctrl+C cancels it.
+static bool RunNupJob(const std::filesystem::path& result_path, const char* verb,
+                      const std::function<FileSys::Nup::PackResult(
+                          const std::function<void(const FileSys::Nup::PackProgress&)>&,
+                          std::string*)>& job) {
+    std::signal(SIGINT, [](int) { pack_nup_cancel = true; });
     const auto start = std::chrono::steady_clock::now();
     auto last_report = start;
     std::string error;
-    const auto result = FileSys::Nup::PackDump(
-        dump_root, archive, {},
+    const auto result = job(
         [&](const FileSys::Nup::PackProgress& p) {
             const auto now = std::chrono::steady_clock::now();
             if (now - last_report < std::chrono::seconds(1) && p.files_done != p.files_total) {
@@ -610,19 +616,19 @@ static bool PackNup(const std::string& source, const std::string& output) {
             fmt::print(stderr, "\r{} / {} MiB, {} / {} files", p.bytes_done >> 20,
                        p.bytes_total >> 20, p.files_done, p.files_total);
         },
-        &pack_nup_cancel, &error);
+        &error);
     const auto seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     fmt::print(stderr, "\n");
     switch (result) {
     case FileSys::Nup::PackResult::Success:
-        fmt::print(stderr, "Wrote {} in {:.1f} s\n", archive.string(), seconds);
+        fmt::print(stderr, "Wrote {} in {:.1f} s\n", result_path.string(), seconds);
         return true;
     case FileSys::Nup::PackResult::Cancelled:
         fmt::print(stderr, "Cancelled\n");
         return false;
     default:
-        fmt::print(stderr, "Packing failed: {}\n", error);
+        fmt::print(stderr, "{} failed: {}\n", verb, error);
         return false;
     }
 }
@@ -875,6 +881,10 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     if (lp.pack_nup_source) {
         return PackNup(*lp.pack_nup_source, lp.filepath) ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+    }
+    if (lp.extract_nup_source) {
+        return ExtractNup(*lp.extract_nup_source, lp.filepath) ? SDL_APP_SUCCESS
+                                                               : SDL_APP_FAILURE;
     }
 
     if (lp.unpack_nup_source) {

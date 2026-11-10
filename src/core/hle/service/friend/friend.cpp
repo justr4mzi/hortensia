@@ -4,7 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <map>
 #include <queue>
+#include <string_view>
 #include "common/logging.h"
 #include "common/uuid.h"
 #include "core/core.h"
@@ -558,52 +560,100 @@ public:
     }
 };
 
-// Session returned by chat:u 0. Command 1 hands back a handle the title waits on, so it gets an
-// event that is never signalled; everything else falls through to the nx2 auto stub.
+// Session returned by chat:u 0 and the scoped objects returned by chat:u 2 and 3. Layouts read from
+// the nn::chat proxies in Welcome Tour's and Mario Kart World's SDKs:
+//  chat:u::0  1 and 2 (AttachToRoomInfoChangedEvent) take nothing and return a copy handle.
+//  chat:u::2  (layout customization shim) 0(pid, u64) returns only a result, 1 a copy handle.
+//  chat:u::3  (virtual camera shim) 0..5 take nothing and return only a result.
+// Every handle is an event that is never signalled (no chat room, nothing changes). Commands not
+// listed fall through to the nx2 auto stub.
 class IChatSession final : public ServiceFramework<IChatSession> {
 public:
-    explicit IChatSession(Core::System& system_)
-        : ServiceFramework{system_, "nx2:chat:u::0"}, service_context{system_, "IChatSession"} {
-        static const FunctionInfo functions[] = {
+    explicit IChatSession(Core::System& system_, const char* name)
+        : ServiceFramework{system_, name}, service_context{system_, name} {
+        static const FunctionInfo session[] = {
             {1, &IChatSession::GetEvent, "GetEvent (guessed)"},
+            {2, &IChatSession::GetEvent, "GetRoomInfoChangedEvent"},
         };
-        RegisterHandlers(functions);
-        event = service_context.CreateEvent("IChatSession:Event");
+        static const FunctionInfo layout_shim[] = {
+            {0, &IChatSession::Succeed, "Initialize (pid)"},
+            {1, &IChatSession::GetEvent, "GetEvent"},
+        };
+        static const FunctionInfo virtual_camera_shim[] = {
+            {0, &IChatSession::Succeed, "Unknown0"}, {1, &IChatSession::Succeed, "Unknown1"},
+            {2, &IChatSession::Succeed, "Unknown2"}, {3, &IChatSession::Succeed, "Unknown3"},
+            {4, &IChatSession::Succeed, "Unknown4"}, {5, &IChatSession::Succeed, "Unknown5"},
+        };
+        const std::string_view n{name};
+        if (n.ends_with("::2")) {
+            RegisterHandlers(layout_shim);
+        } else if (n.ends_with("::3")) {
+            RegisterHandlers(virtual_camera_shim);
+        } else {
+            RegisterHandlers(session);
+        }
     }
 
     ~IChatSession() override {
-        service_context.CloseEvent(event);
+        for (auto& [command, event] : events) {
+            service_context.CloseEvent(event);
+        }
     }
 
 private:
     void GetEvent(HLERequestContext& ctx) {
-        LOG_WARNING(Service_Friend, "(STUBBED) chat:u::0 1 [5]={:#x}", ctx.CommandBuffer()[5]);
+        LOG_WARNING(Service_Friend, "(STUBBED) {} {}, returning an event", GetServiceName(),
+                    ctx.GetCommand());
+        auto*& event = events[ctx.GetCommand()];
+        if (event == nullptr) {
+            event = service_context.CreateEvent("IChatSession:Event");
+        }
         IPC::ResponseBuilder rb{ctx, 2, 1};
         rb.Push(ResultSuccess);
         rb.PushCopyObjects(ctx, event->GetReadableEvent());
     }
 
+    void Succeed(HLERequestContext& ctx) {
+        LOG_WARNING(Service_Friend, "(STUBBED) {} {}", GetServiceName(), ctx.GetCommand());
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSuccess);
+    }
+
     KernelHelpers::ServiceContext service_context;
-    Kernel::KEvent* event;
+    std::map<u32, Kernel::KEvent*> events;
 };
 
-// Switch 2 GameChat (chat:u). Command 0 opens a session the title keeps using, so it has to
-// return an interface; everything else falls through to the nx2 auto stub.
+// Switch 2 GameChat (chat:u). 0 opens the session the title keeps using; 2 and 3 (3 sends the pid
+// and a u64) open scoped objects; 23 is SetScreenSharingMode(u32), result only. Everything else
+// falls through to the nx2 auto stub.
 class IChatService final : public ServiceFramework<IChatService> {
 public:
     explicit IChatService(Core::System& system_) : ServiceFramework{system_, "nx2:chat:u"} {
         static const FunctionInfo functions[] = {
             {0, &IChatService::OpenSession, "OpenSession"},
+            {2, &IChatService::OpenSession, "OpenLayoutCustomizationShim"},
+            {3, &IChatService::OpenSession, "OpenVirtualCameraShim"},
+            {23, &IChatService::SetScreenSharingMode, "SetScreenSharingMode"},
         };
         RegisterHandlers(functions);
     }
 
 private:
     void OpenSession(HLERequestContext& ctx) {
-        LOG_WARNING(Service_Friend, "(STUBBED) chat:u 0, returning a chat session");
+        static constexpr const char* names[] = {"nx2:chat:u::0", "nx2:chat:u::1", "nx2:chat:u::2",
+                                                "nx2:chat:u::3"};
+        const char* name = names[ctx.GetCommand()];
+        LOG_WARNING(Service_Friend, "(STUBBED) chat:u {}, returning {}", ctx.GetCommand(), name);
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IChatSession>(ctx, system);
+        rb.PushIpcInterface<IChatSession>(ctx, system, name);
+    }
+
+    void SetScreenSharingMode(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        LOG_WARNING(Service_Friend, "(STUBBED) chat:u 23 mode={}", rp.Pop<u32>());
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSuccess);
     }
 };
 

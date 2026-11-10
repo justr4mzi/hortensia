@@ -27,6 +27,7 @@
 #include "video_core/gpu_split.h"
 #include "video_core/renderer_vulkan/fragment_barrier_state.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
+#include "video_core/renderer_vulkan/vk_hitch_diagnostic.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 namespace VideoCommon {
@@ -225,6 +226,11 @@ public:
         return true;
     }
 
+    /// Commands recorded so far (any kind), to tell whether anything was recorded since.
+    [[nodiscard]] u64 RecordCount() const noexcept {
+        return record_count;
+    }
+
     /// Returns the current command buffer tick.
     [[nodiscard]] u64 CurrentTick() const noexcept {
         return master_semaphore->CurrentTick();
@@ -402,6 +408,16 @@ private:
             return submit;
         }
 
+        void MarkDiagnosticQueued(u64 time_ns, size_t queue_depth, u64 logical_tick) {
+            diagnostic_enqueue_ns = time_ns;
+            diagnostic_queue_depth = queue_depth;
+            diagnostic_logical_tick = logical_tick;
+        }
+
+        u64 diagnostic_enqueue_ns{};
+        size_t diagnostic_queue_depth{};
+        u64 diagnostic_logical_tick{};
+
     private:
         Command* first = nullptr;
         Command* last = nullptr;
@@ -557,6 +573,7 @@ private:
     DeferredClear deferred_clear;
 
     std::unique_ptr<CommandChunk> chunk;
+    u64 record_count{};
     std::function<void()> on_submit;
 
     State state;

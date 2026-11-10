@@ -339,6 +339,9 @@ struct NpadStyleTag {
         BitField<9, 1, u32> lucia;
         BitField<10, 1, u32> lagoon;
         BitField<11, 1, u32> lager;
+        // ponytail: guessed Switch 2 Joy-Con 2 pair style (Drag x Drive supports only this bit); served by the
+        // JoyconDual pad until the real Joy-Con 2 shared memory layout is known.
+        BitField<12, 1, u32> joycon2_dual;
         BitField<29, 1, u32> system_ext;
         BitField<30, 1, u32> system;
     };

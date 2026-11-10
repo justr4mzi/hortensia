@@ -171,6 +171,7 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     u64 largest_upload{};    ///< Largest of them
     u64 layer_uploads{};     ///< Of them, uploads of only the written layers
     bool native_thresholds_applied{};
+    bool native_driver_budget_available{};
     u64 native_critical_memory{};
     u64 native_expected_memory{};
     u64 budget_check_frames{};
@@ -577,6 +578,9 @@ private:
     void MarkModification(ImageBase& image) noexcept;
 
     /// Synchronize image aliases, copying data if needed
+    /// Tells the aliases of an image that it now holds contents up to its modification tick.
+    void NoteAliasTick(const ImageBase& image);
+
     void SynchronizeAliases(ImageId image_id);
 
     /// Prepare an image view to be used
@@ -748,6 +752,8 @@ private:
     Tegra::Texture::UnswizzleWorker unswizzle_worker;
 
     u64 modification_tick = 0;
+    /// Live images created with ImageFlagBits::UnwrittenSparse (MarkModification).
+    size_t unwritten_sparse_images = 0;
     u64 frame_tick = 0;
 
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
@@ -758,6 +764,9 @@ private:
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;
+
+    /// Copies of colour targets their own draws sample, one per image shape (never deleted).
+    std::vector<ImageId> feedback_shadows;
 
     // Join caching
     boost::container::small_vector<ImageId, 4> join_overlap_ids;

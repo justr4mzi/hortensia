@@ -558,8 +558,10 @@ private:
     bool front_macros{};
     std::unique_ptr<u64[]> ring;
 
-    // Front side.
-    u64 write_position{};
+    // Front side. Its own cache line: the front writes write_position for every entry, and the
+    // back reads system and ring (above) for every entry; on one line, each write sent the line
+    // to the other core and back.
+    alignas(64) u64 write_position{};
     u64 last_writer_position{};
     static constexpr u32 PendingWriteWords = 8;
     struct PendingWrite {
@@ -598,7 +600,7 @@ private:
     std::vector<std::function<void()>> hand_backs;
 
     // Back side.
-    Tegra::Engines::EngineInterface* back_engine{};
+    alignas(64) Tegra::Engines::EngineInterface* back_engine{};
 
     /// Whether the back is done with the Vulkan scheduler until it gets more work: set after its
     /// idle hook ran, cleared before it executes entries.

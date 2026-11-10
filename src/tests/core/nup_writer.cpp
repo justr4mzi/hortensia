@@ -20,6 +20,8 @@
 #include <fmt/format.h>
 #include <openssl/evp.h>
 
+#include "core/core.h"
+#include "core/file_sys/control_metadata.h"
 #include "core/file_sys/nup_container.h"
 #include "core/file_sys/nup_writer.h"
 #include "core/file_sys/control_metadata.h"
@@ -530,6 +532,11 @@ TEST_CASE("NUP marks updates standalone when the dump has no base", "[nup]") {
     REQUIRE(nup.GetPackages().size() == 1);
     REQUIRE(nup.GetPackages()[0].kind == NupContainer::PackageKind::Update);
     REQUIRE(nup.GetPackages()[0].standalone_update);
+    Loader::AppLoader_NUP loader{real.OpenFile(archive.string(), FileSys::OpenMode::Read)};
+    const auto embedded = loader.ReadEmbeddedPatches();
+    REQUIRE(embedded.size() == 1);
+    REQUIRE(embedded[0].type == FileSys::PatchType::Update);
+    REQUIRE(embedded[0].numeric_version == 65536);
     REQUIRE(nup.GetPackages()[0].title_id == TitleId);
     REQUIRE(Read(nup.GetRomFSDir(0)->GetFile("file")) == "rom");
 }

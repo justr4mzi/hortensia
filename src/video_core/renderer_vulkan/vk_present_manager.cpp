@@ -13,6 +13,7 @@
 #include "video_core/renderer_vulkan/present/lsfg_common.h"
 #endif
 #include "video_core/renderer_vulkan/vk_present_manager.h"
+#include "video_core/renderer_vulkan/vk_hitch_diagnostic.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -185,7 +186,10 @@ Frame* PresentManager::GetRenderFrame() {
     free_queue.pop_front();
 
     // Wait for the presentation to be finished so all frame resources are free
-    frame->present_done.Wait();
+    {
+        HitchTrace::Scope trace{HitchTrace::Event::PresentFrameFence, frame->index};
+        frame->present_done.Wait();
+    }
     frame->present_done.Reset();
 
     return frame;
@@ -405,7 +409,8 @@ void PresentManager::DiscardFrame(Frame* frame) {
 }
 
 void PresentManager::CopyToSwapchain(Frame* frame) {
-    bool requires_recreation = false;
+    HitchTrace::Scope trace{HitchTrace::Event::PresentCopy, frame->index};
+    bool requires_recreation = surface_recreation_pending;
 
     for (u32 attempt = 0; attempt < MAX_PRESENT_ATTEMPTS; ++attempt) {
         try {
@@ -415,6 +420,7 @@ void PresentManager::CopyToSwapchain(Frame* frame) {
                 surface = CreateSurface(instance, render_window.GetWindowInfo());
 #endif
                 RecreateSwapchain(frame);
+                surface_recreation_pending = false;
             }
 
             // Draw to swapchain.
@@ -581,9 +587,17 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
 
     // Submit the image copy/blit to the swapchain
     {
-        std::scoped_lock submit_lock{scheduler.submit_mutex};
-        switch (const VkResult result =
-                    device.GetGraphicsQueue().Submit(submit_info, *frame->present_done)) {
+        std::unique_lock submit_lock{scheduler.submit_mutex, std::defer_lock};
+        {
+            HitchTrace::Scope trace{HitchTrace::Event::PresentSubmitMutex, frame->index};
+            submit_lock.lock();
+        }
+        VkResult result;
+        {
+            HitchTrace::Scope trace{HitchTrace::Event::PresentSubmit, frame->index};
+            result = device.GetGraphicsQueue().Submit(submit_info, *frame->present_done);
+        }
+        switch (result) {
         case VK_SUCCESS:
             break;
         case VK_ERROR_DEVICE_LOST:

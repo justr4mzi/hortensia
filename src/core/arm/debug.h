@@ -10,6 +10,8 @@
 
 namespace Core {
 
+class System;
+
 std::optional<std::string> GetThreadName(const Kernel::KThread* thread);
 std::string_view GetThreadWaitReason(const Kernel::KThread* thread);
 std::string GetThreadState(const Kernel::KThread* thread);
@@ -31,5 +33,8 @@ struct BacktraceEntry {
 std::vector<BacktraceEntry> GetBacktraceFromContext(Kernel::KProcess* process,
                                                     const Kernel::Svc::ThreadContext& ctx);
 std::vector<BacktraceEntry> GetBacktrace(const Kernel::KThread* thread);
+
+// ponytail: diagnostics, EDEN_PKP_BT=1 only. Samples guest thread PC/LR/backtrace every 2 s from t=10 s, no pausing.
+void StartPkpSampler(System& system);
 
 } // namespace Core

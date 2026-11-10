@@ -565,6 +565,10 @@ struct Values {
 
     GpuAccuracy current_gpu_accuracy{GpuAccuracy::High};
 
+    /// Set per title by Core::GameSettings::LoadOverrides: guest CPU reads of GPU-written buffer
+    /// pages that are already copied back at fences use that copy instead of waiting for the GPU.
+    bool preemptive_cpu_reads{false};
+
     SwitchableSetting<DmaAccuracy, true> dma_accuracy{linkage,
                                                       DmaAccuracy::Default,
                                                       "dma_accuracy",
@@ -738,6 +742,14 @@ struct Values {
                                           Specialization::Default,
                                           true,
                                           true};
+
+    /// Built-in code patch for titles whose frame-rate controller can be held at 30 fps
+    /// (FileSys::PatchManager, FPS30_PATCHES). Ignored for other titles and builds.
+    SwitchableSetting<bool> fps30_patch{linkage, false, "fps30_patch", Category::System};
+    SwitchableSetting<u32, true> tennis_fps{linkage, 60, 1, 1000, "tennis_fps_target",
+                                          Category::System, Specialization::Countable};
+    SwitchableSetting<u32, true> wonder_fps{linkage, 60, 1, 1000, "wonder_fps_target",
+                                          Category::System, Specialization::Countable};
 
     SwitchableSetting<bool> skip_cpu_inner_invalidation{linkage,
                                                         false,

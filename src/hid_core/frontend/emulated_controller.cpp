@@ -1652,7 +1652,8 @@ void EmulatedController::SetSupportedNpadStyleTag(NpadStyleTag supported_styles)
     }
 
     // Fallback Pro controllers to Dual joycon
-    if (npad_type == NpadStyleIndex::Fullkey && supported_style_tag.joycon_dual) {
+    if (npad_type == NpadStyleIndex::Fullkey &&
+        (supported_style_tag.joycon_dual || supported_style_tag.joycon2_dual)) {
         LOG_WARNING(Service_HID, "Reconnecting controller type {} as Dual Joycons", npad_type.load());
         SetNpadStyleIndex(NpadStyleIndex::JoyconDual);
         Connect();
@@ -1681,7 +1682,7 @@ bool EmulatedController::IsControllerSupported(bool use_temporary_value) const {
     switch (type) {
     case NpadStyleIndex::Fullkey:     return bool(supported_style_tag.fullkey);
     case NpadStyleIndex::Handheld:    return bool(supported_style_tag.handheld);
-    case NpadStyleIndex::JoyconDual:  return bool(supported_style_tag.joycon_dual);
+    case NpadStyleIndex::JoyconDual:  return bool(supported_style_tag.joycon_dual || supported_style_tag.joycon2_dual);
     case NpadStyleIndex::JoyconLeft:  return bool(supported_style_tag.joycon_left);
     case NpadStyleIndex::JoyconRight: return bool(supported_style_tag.joycon_right);
     case NpadStyleIndex::GameCube:    return bool(supported_style_tag.gamecube);

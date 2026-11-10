@@ -16,10 +16,12 @@
 #include <string>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <utility>
 
+#include <ranges>
 #include "common/assert.h"
 #include "common/cityhash.h"
 #include "common/common_types.h"
@@ -30,6 +32,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "video_core/native_shader_hitch_trace.h"
 #include <ranges>
 #include "shader_recompiler/environment.h"
 #include "shader_recompiler/exception.h"
@@ -38,6 +41,9 @@
 #include "shader_recompiler/frontend/ampere/program_override.h"
 #include "shader_recompiler/frontend/ampere/program_capture.h"
 #include "shader_recompiler/frontend/ampere/program_address_map.h"
+#include "shader_recompiler/frontend/ampere/program_capture.h"
+#include "shader_recompiler/frontend/ampere/program_override.h"
+#include "video_core/compute_binding_diagnostic.h"
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/memory_manager.h"
 #include "video_core/native_lowering.h"
@@ -46,6 +52,7 @@
 #include "video_core/shader_cache_v2/cache.h"
 #include "video_core/shader_cache_v2/records.h"
 #include "video_core/shader_environment.h"
+#include "video_core/stall_diagnostics.h"
 #include "video_core/texture_cache/format_lookup_table.h"
 #include "video_core/textures/texture.h"
 
@@ -587,12 +594,87 @@ public:
             return false;
         }
         out = page[(address - page_begin) / sizeof(Instruction)];
+        if (trace_loaded_page) {
+            TraceConsumedInstruction(address, out);
+        }
         return true;
     }
 
 private:
     bool Holds(GPUVAddr address) const {
         return address >= page_begin && address + sizeof(Instruction) <= page_end;
+    }
+
+    struct CaptureTraceState {
+        const bool enabled = [] {
+            const char* value = std::getenv("EDEN_NX2_SHADER_CAPTURE_TRACE");
+            return value != nullptr && std::string_view{value} != "0";
+        }();
+        std::mutex mutex;
+        std::array<GPUVAddr, 32> reported_pages{};
+        size_t count{};
+    };
+
+    static CaptureTraceState& TraceState() {
+        static CaptureTraceState state;
+        return state;
+    }
+
+    // Only report differences in an instruction the capture actually consumes. The rest of a
+    // loaded page can contain unrelated data after the shader's EXIT; changes there are expected.
+    void TraceConsumedInstruction(GPUVAddr address, const Instruction& instruction) {
+        const size_t instruction_offset = static_cast<size_t>(address - page_begin);
+        const auto* after_words = reinterpret_cast<const u8*>(instruction.words.data());
+        const u8* before_words = before_page->data() + instruction_offset;
+        const auto difference = std::mismatch(before_words, before_words + sizeof(Instruction),
+                                              after_words);
+        if (difference.first == before_words + sizeof(Instruction)) {
+            return;
+        }
+        trace_loaded_page = false;
+        auto& state = TraceState();
+        const GPUVAddr trace_page = page_begin & ~(PageSize - 1);
+        const size_t report = [&] {
+            std::scoped_lock lock{state.mutex};
+            if (state.count == state.reported_pages.size() ||
+                std::find(state.reported_pages.begin(), state.reported_pages.begin() + state.count,
+                          trace_page) != state.reported_pages.begin() + state.count) {
+                return state.reported_pages.size();
+            }
+            state.reported_pages[state.count] = trace_page;
+            return state.count++;
+        }();
+        if (report == state.reported_pages.size()) {
+            return;
+        }
+        const size_t length = static_cast<size_t>(page_end - page_begin);
+        const auto* after = reinterpret_cast<const u8*>(page.data());
+        const size_t offset = instruction_offset +
+                              static_cast<size_t>(difference.first - before_words);
+        std::array<u32, 4> previous{};
+        std::memcpy(previous.data(), before_words, sizeof(Instruction));
+        LOG_WARNING(Shader,
+                    "Native shader capture readback changed page #{}, address={:#x} "
+                    "length={:#x}, hash {:016x}->{:016x}, consumed instruction={:#x}, "
+                    "first consumed difference +{:#x}, "
+                    "before [{:08x} {:08x} {:08x} {:08x}] after [{:08x} {:08x} {:08x} {:08x}]",
+                    report, page_begin, length,
+                    Common::CityHash64(reinterpret_cast<const char*>(before_page->data()), length),
+                    Common::CityHash64(reinterpret_cast<const char*>(after), length), address, offset,
+                    previous[0], previous[1], previous[2], previous[3], instruction.words[0],
+                    instruction.words[1], instruction.words[2], instruction.words[3]);
+        if (const char* directory = std::getenv("EDEN_NX2_SHADER_DUMP")) {
+            const auto folder = std::filesystem::path{directory};
+            std::error_code error;
+            std::filesystem::create_directories(folder, error);
+            if (!error) {
+                const auto prefix = fmt::format("capture-trace-{:02}-{:x}", report, page_begin);
+                std::ofstream old_page(folder / (prefix + "-before.bin"), std::ios::binary);
+                old_page.write(reinterpret_cast<const char*>(before_page->data()), length);
+                std::ofstream new_page(folder / (prefix + "-after.bin"), std::ios::binary);
+                new_page.write(reinterpret_cast<const char*>(after), length);
+            }
+        }
     }
 
     // Loads from `address` up to the next page boundary; loads nothing if that range is not
@@ -602,7 +684,22 @@ private:
         const GPUVAddr length = next_page - address;
         page_begin = address;
         page_end = address;
+        trace_loaded_page = false;
         if (length >= sizeof(Instruction) && gpu_memory.IsFullyMappedRange(address, length)) {
+            auto& state = TraceState();
+            if (state.enabled) {
+                const GPUVAddr trace_page = address & ~(PageSize - 1);
+                std::scoped_lock lock{state.mutex};
+                trace_loaded_page = state.count < state.reported_pages.size() &&
+                    std::find(state.reported_pages.begin(), state.reported_pages.begin() + state.count,
+                              trace_page) == state.reported_pages.begin() + state.count;
+            }
+            if (trace_loaded_page) {
+                if (!before_page) {
+                    before_page = std::make_unique<std::array<u8, PageSize>>();
+                }
+                gpu_memory.ReadBlockUnsafe(address, before_page->data(), length);
+            }
             gpu_memory.ReadBlock(address, page.data(), length);
             page_end = next_page;
         }
@@ -610,6 +707,8 @@ private:
 
     Tegra::MemoryManager& gpu_memory;
     std::array<Instruction, PageSize / sizeof(Instruction)> page;
+    std::unique_ptr<std::array<u8, PageSize>> before_page;
+    bool trace_loaded_page{};
     GPUVAddr page_begin{};
     GPUVAddr page_end{};
 };
@@ -649,38 +748,58 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(
     const u32 native_header_size = source_header_size;
     constexpr u32 maximum_instructions = Shader::Ampere::ProgramCaptureState::MaximumInstructions;
     std::vector<Instruction> native;
+    NativeShaderHitchTrace::Lowering hitch{program_base, stage, native, source_header_size};
+    hitch.Begin(NativeShaderHitchTrace::Phase::Capture);
     Shader::Ampere::ProgramCaptureState capture;
     NativeInstructionReader reader{*gpu_memory};
-    for (u32 index = 0; index < maximum_instructions; ++index) {
-        const GPUVAddr address = program_base + native_header_size + index * sizeof(Instruction);
-        Instruction instruction;
-        if (!reader.TryRead(address, instruction)) {
-            // Not inside a fully mapped page: check and read this one instruction on its own.
-            if (!gpu_memory->IsFullyMappedRange(address, sizeof(Instruction))) {
-                // The program may end before a branch target past its last EXIT (the capture
-                // can't tell); stop at the mapping's end and let the lowering judge what was
-                // captured.
-                if (!native.empty()) break;
-                throw Shader::RuntimeError("Unmapped native shader instruction at {:#x}", address);
-            }
-            gpu_memory->ReadBlock(address, &instruction, sizeof(instruction));
-        }
-        native.push_back(instruction);
-        const auto status = capture.Observe(instruction, index);
-        if (status == Shader::Ampere::ProgramCaptureState::Result::InvalidTarget) {
-            if (const char* dir = std::getenv("EDEN_NX2_SHADER_DUMP")) {
-                const auto path = fmt::format("{}/rejected-{:x}.bin", dir, program_base + native_header_size);
-                if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
-                    std::fwrite(native.data(), sizeof(Instruction), std::min<size_t>(native.size(), 4096), file);
-                    std::fclose(file);
+    {
+        StallDiagnostics::Scope diagnostic{{StallDiagnostics::Phase::NativeCapture,
+                                            "native-shader-caller", 0, program_base,
+                                            static_cast<s32>(stage)}};
+        for (u32 index = 0; index < maximum_instructions; ++index) {
+            const GPUVAddr address =
+                program_base + native_header_size + index * sizeof(Instruction);
+            Instruction instruction;
+            if (!reader.TryRead(address, instruction)) {
+                // Not inside a fully mapped page: check and read this one instruction on its own.
+                if (!gpu_memory->IsFullyMappedRange(address, sizeof(Instruction))) {
+                    // The program may end before a branch target past its last EXIT (the capture
+                    // can't tell); stop at the mapping's end and let the lowering judge what was
+                    // captured.
+                    if (!native.empty())
+                        break;
+                    throw Shader::RuntimeError("Unmapped native shader instruction at {:#x}",
+                                               address);
                 }
+                gpu_memory->ReadBlock(address, &instruction, sizeof(instruction));
             }
-            throw Shader::RuntimeError("Native shader branch outside capture bounds at {:#x} +{:#x} [{:08x} {:08x} {:08x} {:08x}]",
-                                       program_base + native_header_size, index * 16,
-                                       instruction.words[0], instruction.words[1],
-                                       instruction.words[2], instruction.words[3]);
+            native.push_back(instruction);
+            const auto status = capture.Observe(instruction, index);
+            if (status == Shader::Ampere::ProgramCaptureState::Result::InvalidTarget &&
+                capture.FallbackEnd() != 0) {
+                // Data past the program's closing self-branch decoded as a branch.
+                native.resize(capture.FallbackEnd());
+                break;
+            }
+            if (status == Shader::Ampere::ProgramCaptureState::Result::InvalidTarget) {
+                if (const char* dir = std::getenv("EDEN_NX2_SHADER_DUMP")) {
+                    const auto path =
+                        fmt::format("{}/rejected-{:x}.bin", dir, program_base + native_header_size);
+                    if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
+                        std::fwrite(native.data(), sizeof(Instruction),
+                                    std::min<size_t>(native.size(), 4096), file);
+                        std::fclose(file);
+                    }
+                }
+                throw Shader::RuntimeError("Native shader branch outside capture bounds at {:#x} "
+                                           "+{:#x} [{:08x} {:08x} {:08x} {:08x}]",
+                                           program_base + native_header_size, index * 16,
+                                           instruction.words[0], instruction.words[1],
+                                           instruction.words[2], instruction.words[3]);
+            }
+            if (status == Shader::Ampere::ProgramCaptureState::Result::Complete)
+                break;
         }
-        if (status == Shader::Ampere::ProgramCaptureState::Result::Complete) break;
     }
     const std::vector<u32> verified_traps = NativeTrapOffsets(native);
     const size_t trap_count = verified_traps.empty() ? 0 : verified_traps.back() / sizeof(Instruction) + 1;
@@ -865,6 +984,8 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(
     }
     LOG_DEBUG(Shader, "Lowered native shader at {:#x}: {} source bytes, {} instructions",
               program_base, result->source_size, lowered.instructions.size());
+    hitch.Finish("ok", static_cast<s64>(result->source_size),
+                 static_cast<s64>(lowered.instructions.size()));
     return result;
 }
 
@@ -1023,6 +1144,8 @@ GraphicsEnvironment::GraphicsEnvironment(Tegra::Engines::Maxwell3D& maxwell3d_,
     is_proprietary_driver = maxwell3d->GetNativeMacroEngine().native_turing || texture_bound == 2;
     has_hle_engine_state =
         maxwell3d->engine_state == Tegra::Engines::Maxwell3D::EngineHint::OnHLEMacro;
+    hitch.SourceBytes(native_source_size);
+    hitch.Finish("ok");
 }
 
 u32 GraphicsEnvironment::ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) {
@@ -1134,6 +1257,8 @@ ComputeEnvironment::ComputeEnvironment(Tegra::Engines::KeplerCompute& kepler_com
         InitializeNativeCode(std::move(lowered_native_), 0, false, cache_v2);
         start_address = sizeof(sph);
     }
+    hitch.SourceBytes(native_source_size);
+    hitch.Finish("ok");
 }
 
 std::optional<u32> ReadNativeGuardConstant(Tegra::Engines::KeplerCompute& compute,
@@ -1163,6 +1288,7 @@ u32 ComputeEnvironment::ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) {
     u32 value{};
     if (cbuf_offset < cbuf.size) {
         value = gpu_memory->Read<u32>(cbuf.Address() + cbuf_offset);
+        ComputeBindingDiagnostic::CompileWord(cbuf_index, cbuf_offset, value);
     }
     cbuf_values.emplace(MakeCbufKey(cbuf_index, cbuf_offset), value);
     return value;

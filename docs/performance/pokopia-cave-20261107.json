@@ -1,0 +1,101 @@
+{
+  "run_id": "20261107-164226-b69a3144",
+  "scene": "stationary first cave facing wall after first movement; gameplay confirmed, not a representative heavy scene",
+  "source_sha": "b2f19333a6",
+  "window_start_ns": 54285662554890,
+  "window_end_ns": 54345662554890,
+  "qualification": "single-boot light stationary diagnostic; not full-game acceptance",
+  "measurement": {
+    "available": true,
+    "reason": null,
+    "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-164226-b69a3144/frames/system-frames-0400A3A01EE4C000-1825285-54041973298820-0.csv",
+    "sha256": "2a6dddb237451d902857691226caf56acbc05a885d960d1cfcc7427516588335",
+    "metric": "timestamped_system_frame_work_ms",
+    "semantics": "Timestamped Core::PerfStats BeginSystemFrame-to-EndSystemFrame elapsed milliseconds, using the Linux monotonic steady clock. The inverse mean is a work-rate estimate, not measured game/display FPS or GPU execution time.",
+    "scope": "selected_window",
+    "fps_estimate_kind": "work_rate_only_not_game_fps",
+    "rows_read": 26695,
+    "excluded_intervals": 23096,
+    "window_start_ns": 54285662554890,
+    "window_end_ns": 54345662554890,
+    "stats": {
+      "available": true,
+      "count": 3599,
+      "sum_ms": 59979.289618,
+      "mean_ms": 16.66554310030564,
+      "p50_ms": 16.651226,
+      "p95_ms": 18.5318259,
+      "p99_ms": 19.80328162,
+      "min_ms": 10.554196,
+      "max_ms": 25.667004,
+      "inverse_mean_fps_estimate": 60.004045111596774,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    }
+  },
+  "statistics": {
+    "available": true,
+    "count": 3599,
+    "sum_ms": 59979.289618,
+    "mean_ms": 16.66554310030564,
+    "p50_ms": 16.651226,
+    "p95_ms": 18.5318259,
+    "p99_ms": 19.80328162,
+    "min_ms": 10.554196,
+    "max_ms": 25.667004,
+    "inverse_mean_fps_estimate": 60.004045111596774,
+    "stutters_over_ms": {
+      "16.666667": 1739,
+      "33.333333": 0,
+      "50.0": 0,
+      "100.0": 0
+    }
+  },
+  "host_diagnostic": {
+    "cpu_core_equivalents": 3.0363359566862744,
+    "rss_bytes": 11228114944,
+    "gpu_busy_percent": [
+      31,
+      31,
+      31,
+      31,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      29,
+      30,
+      30,
+      30,
+      30,
+      30
+    ],
+    "scope": "profiling diagnostic phase; GPU utilization is device-wide, not process attribution"
+  },
+  "errors": [
+    "[   4.019710] Debug <Critical> core/hle/service/service.cpp:178:operator(): ../src/core/hle/service/service.cpp: assert Unknown / unimplemented function '1(<unknown>)': port='IUserShimScopedObject' cmd_buf={[0]=0x6, [1]=0xa, [2]=0x0, [3]=0x0, [4]=0x49434653, [5]=0x1, [6]=0x1, [7]=0x0, [8]=0x100}",
+    "[ 470.394875] HW.Memory <Error> core/memory.cpp:364:operator(): Unmapped @ 0x00000085c27e00 (start address = 0x00000085c27e00, size = 48)"
+  ],
+  "identity": {
+    "game_identity": {
+      "path": "/home/leon/Switch2/Pokemon Pokopia.nup",
+      "size": 7138689063,
+      "mtime_ns": 1793987729763065893,
+      "prefix_1MiB_sha256": "8e94331e1d46627c415fdcd56bc243058ea82e6972b4d28ade0df8a0448f3dab"
+    },
+    "binary_sha256": "79edc189ab3474cdc50fb415c483958bceb87461a52c0731f25865ecfd98631c",
+    "settings_sha256": "cff09b94bb44d8306ac1d4e4c1362d74564a17ede56ce9cc68a577c7651be0f0",
+    "seed_id": "8f0bacec6934872de4c69532724938d861ae6b99fce850fe63f2fb36df188b65",
+    "quality": "current",
+    "cache_mode": "warm"
+  }
+}

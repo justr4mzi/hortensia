@@ -8,6 +8,9 @@
 #include <openssl/evp.h>
 
 #include "common/scope_exit.h"
+#include "common/settings.h"
+#include "common/game_fps.h"
+#include "core/file_sys/tennis_fps_patch.h"
 #include "core/hle/kernel/k_process.h"
 
 #include "core/hle/service/cmif_serialization.h"
@@ -260,6 +263,25 @@ struct ProcessContext {
 
         // Apply patches to NRO.
         // LocateAndApplyIpsPatchesToModule(module_id, static_cast<u8*>(mapped_memory), nro_size);
+
+        if (m_process->GetProgramId() == Settings::TennisFpsProgramId &&
+            header.m_module_id.data == FileSys::TennisFpsModuleId &&
+            FileSys::TennisFpsPatchWanted(Settings::values.tennis_fps.GetValue())) {
+            std::vector<u8> module(nro_size);
+            auto& memory = m_process->GetMemory();
+            R_UNLESS(memory.ReadBlock(base_address, module.data(), module.size()), RO::ResultInvalidNro);
+            const u32 target = Settings::values.tennis_fps.GetValue();
+            if (FileSys::ApplyTennisFpsPatch(module, header.m_module_id.data, target)) {
+                R_UNLESS(memory.WriteBlock(base_address, module.data(), module.size()), RO::ResultInvalidNro);
+                Settings::tennis_fps_nro_base.store(base_address, std::memory_order_relaxed);
+                Settings::tennis_fps_generation.fetch_add(1, std::memory_order_relaxed);
+                Settings::tennis_fps_active.store(target, std::memory_order_release);
+                LOG_INFO(Service_LDR, "Tennis FPS patch: target {} FPS, canonical step {}, dynamic timing on (698 readers), native interval unlocked",
+                         target, FileSys::TennisSimulationStep(1.0f, target));
+            } else {
+                LOG_WARNING(Service_LDR, "Tennis FPS patch skipped: modified or truncated game module");
+            }
+        }
 
         // Copy to output.
         *out_module_id = *module_id;

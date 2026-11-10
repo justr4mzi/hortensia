@@ -1,0 +1,134 @@
+{
+  "status": "complete",
+  "runs": [
+    {
+      "arm": "candidate",
+      "repetition": 1,
+      "run_id": "20261107-205456-28f2045a",
+      "out": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205456-28f2045a",
+      "start_ns": 69347867094984,
+      "end_ns": 69377897038874,
+      "pre": {
+        "name": "bananza-ingot-tunnel-v2-calibrated",
+        "checkpoint_id": "218569bd358236c577168ea52eff2d6b125a8eb529a859cae1fd630be7360316",
+        "kind": "gameplay",
+        "validated": true,
+        "matched": true,
+        "rmse": 0.0430069,
+        "max_rmse": 0.05,
+        "image": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205456-28f2045a/0002-checkpoint-bananza-ingot-tunnel-v2-calib.png",
+        "at_ns": 69347866882306,
+        "qualification": "Matches an explicitly labelled reference ROI; no semantic rendering correctness proof."
+      },
+      "post": {
+        "name": "bananza-ingot-tunnel-v2-calibrated",
+        "checkpoint_id": "218569bd358236c577168ea52eff2d6b125a8eb529a859cae1fd630be7360316",
+        "kind": "gameplay",
+        "validated": true,
+        "matched": true,
+        "rmse": 0.0422455,
+        "max_rmse": 0.05,
+        "image": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205456-28f2045a/0003-checkpoint-bananza-ingot-tunnel-v2-calib.png",
+        "at_ns": 69378112085472,
+        "qualification": "Matches an explicitly labelled reference ROI; no semantic rendering correctness proof."
+      },
+      "stop": {
+        "method": "qt_sigterm",
+        "returncode": 0,
+        "forced": false,
+        "finalized": true,
+        "profile": null,
+        "stopped_ns": 69379593456043,
+        "qt_teardown_seen": true,
+        "instrumented": false,
+        "csv_files": [
+          "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205456-28f2045a/frames/system-frames-040074A01BF12000-2685496-69192603114074-0.csv",
+          "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205456-28f2045a/profile/data/eden/log/hitch-frames-040074a01bf12000-69197647502376.csv"
+        ],
+        "bundle": "/home/leon/.local/share/codex-orchid-mcp/state/bundles/20261107-205456-28f2045a-1794081485622074071"
+      },
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205456-28f2045a/profile/data/eden/log/hitch-frames-040074a01bf12000-69197647502376.csv",
+        "sha256": "942975e5b702ddb39cfc561ed6fe14ad22d860915aa1cde45e5ad84bebc99b32",
+        "metric": "native_present_interval_ms",
+        "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "native_present_service_cadence_estimate",
+        "rows_read": 9463,
+        "excluded_intervals": 8156,
+        "window_start_ns": 69347867094984,
+        "window_end_ns": 69377897038874,
+        "stats": {
+          "available": true,
+          "count": 1307,
+          "sum_ms": 30000.379438,
+          "mean_ms": 22.95361854475899,
+          "p50_ms": 16.782155,
+          "p95_ms": 33.476222299999996,
+          "p99_ms": 33.747851600000004,
+          "min_ms": 14.283765,
+          "max_ms": 50.196316,
+          "inverse_mean_fps_estimate": 43.566115645340396,
+          "stutters_over_ms": {
+            "33.333333": 240,
+            "50.0": 3,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1307,
+        "sum_ms": 30000.379438,
+        "mean_ms": 22.95361854475899,
+        "p50_ms": 16.782155,
+        "p95_ms": 33.476222299999996,
+        "p99_ms": 33.747851600000004,
+        "min_ms": 14.283765,
+        "max_ms": 50.196316,
+        "inverse_mean_fps_estimate": 43.566115645340396,
+        "stutters_over_ms": {
+          "16.666667": 893,
+          "33.333333": 240,
+          "50.0": 3,
+          "100.0": 0
+        }
+      },
+      "identity": {
+        "game_identity": {
+          "path": "/home/leon/Switch2/Donkey Kong Bananza.nup",
+          "size": 9288700437,
+          "mtime_ns": 1793746379539877288,
+          "prefix_1MiB_sha256": "a2257bb63f89a8bb9a73848941f348e13f89f72d1aa8ff728a043538d2ec4b90"
+        },
+        "binary_sha256": "2eba2e9443b96eeafbb836d0022a045d97cb8f9e808ee0035d954893b786fe23",
+        "seed_id": "56e57703f9e5b9669e5622032646f8151c0decdb9fde6eb8cbe1d17617a4c1cd",
+        "settings_sha256": "fcf72365f580e41a6ad8848b08beec6814d84c07f910806208af4cd71392a14a"
+      },
+      "errors": [
+        "[   4.249937] Debug <Critical> core/hle/service/service.cpp:178:operator(): ../src/core/hle/service/service.cpp: assert Unknown / unimplemented function '1(<unknown>)': port='IUserShimScopedObject' cmd_buf={[0]=0x6, [1]=0xa, [2]=0x0, [3]=0x0, [4]=0x49434653, [5]=0x1, [6]=0x1, [7]=0x0, [8]=0x1}",
+        "[ 120.240316] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x2116f9c400, instruction 0x2800: native matrix multiply cooperative path unavailable [op 23c 102c723c 00000030 000008ff 04aff000]",
+        "[ 120.486598] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x2117010700, instruction 0x2650: native matrix multiply cooperative path unavailable [op 23c 1418723c 0000001c 000008ff 04aff000]"
+      ]
+    }
+  ],
+  "candidate": {
+    "EDEN_NX2_FENCE_GUEST_SLEEP": "1"
+  },
+  "qualification": "Single instrumented candidate smoke only. No paired comparison, repeated batch, simulation-speed proof or completed graphics/regression gate. Not promoted.",
+  "stage": "candidate/1: complete",
+  "summary": {
+    "candidate": {
+      "runs": 1,
+      "median_native_cadence": 43.566115645340396,
+      "min": 43.566115645340396,
+      "max": 43.566115645340396,
+      "spread": 0.0
+    }
+  },
+  "source_head": "e462a9a0eeee2afece048ff48b42344a4acfa84c",
+  "experimental_source_diff": "diff --git a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h\nindex 28680a91b..ecbdb16e4 100644\n--- a/src/core/hle/service/nx2_gsv.h\n+++ b/src/core/hle/service/nx2_gsv.h\n@@ -1845,7 +1845,22 @@ private:\n                         return false;\n                     }\n                 }\n-                wake->cv.wait_for(lk, std::chrono::milliseconds{unless_gpu_waits ? 1 : 50});\n+                static const bool guest_sleep = [] {\n+                    const char* value = std::getenv(\"EDEN_NX2_FENCE_GUEST_SLEEP\");\n+                    return value && std::string_view{value} == \"1\";\n+                }();\n+                if (unless_gpu_waits && guest_sleep) {\n+                    // Let other guest work on this core run during the bounded fence probe.\n+                    lk.unlock();\n+                    const auto result = Kernel::GetCurrentThread(kernel).Sleep(\n+                        kernel, kernel.HardwareTimer().GetTick() + 1'000'002);\n+                    lk.lock();\n+                    if (result.IsError()) {\n+                        return false;\n+                    }\n+                } else {\n+                    wake->cv.wait_for(lk, std::chrono::milliseconds{unless_gpu_waits ? 1 : 50});\n+                }\n             }\n         }\n         if (unless_gpu_waits && !syncpoints.IsReadyGuest(fence_id, fence_value)) {\n",
+  "runner_sha256": "77613a5cfc6f933e6fec2bc5c591c811370abe98fd46250ce1b0d90256f167a0"
+}

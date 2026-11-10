@@ -136,18 +136,23 @@ void PlayTimeManager::AutoTimestamp(std::stop_token stop_token) {
     while (!stop_token.stop_requested()) {
         Common::StoppableTimedWait(stop_token, 30s);
 
-        database[running_program_id] += GetDuration();
+        {
+            std::scoped_lock lock{database_mutex};
+            database[running_program_id] += GetDuration();
+        }
         Save();
     }
 }
 
 void PlayTimeManager::Save() {
+    std::scoped_lock lock{database_mutex};
     if (!WritePlayTimeFile(database)) {
         LOG_ERROR(Frontend, "Failed to update play time database!");
     }
 }
 
 u64 PlayTimeManager::GetPlayTime(u64 program_id) const {
+    std::scoped_lock lock{database_mutex};
     auto it = database.find(program_id);
     if (it != database.end()) {
         return it->second;
@@ -157,12 +162,18 @@ u64 PlayTimeManager::GetPlayTime(u64 program_id) const {
 }
 
 void PlayTimeManager::SetPlayTime(u64 program_id, u64 play_time) {
-    database[program_id] = play_time;
+    {
+        std::scoped_lock lock{database_mutex};
+        database[program_id] = play_time;
+    }
     Save();
 }
 
 void PlayTimeManager::ResetProgramPlayTime(u64 program_id) {
-    database.erase(program_id);
+    {
+        std::scoped_lock lock{database_mutex};
+        database.erase(program_id);
+    }
     Save();
 }
 

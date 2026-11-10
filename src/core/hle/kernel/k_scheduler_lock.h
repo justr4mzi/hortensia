@@ -4,6 +4,8 @@
 #pragma once
 
 #include <atomic>
+
+#include <boost/container/small_vector.hpp>
 #include "common/assert.h"
 #include "common/cpu_features.h"
 #include "core/hle/kernel/k_interrupt_manager.h"
@@ -67,6 +69,10 @@ public:
             // We're no longer going to hold the lock. Take note of what cores need scheduling.
             const u64 cores_needing_scheduling =
                 SchedulerType::UpdateHighestPriorityThreads(m_kernel);
+            boost::container::small_vector<KThread*, 8> woken_dummy_threads;
+            boost::container::small_vector<KThread*, 8> opened_dummy_threads;
+            SchedulerType::TakeWokenDummyThreads(m_kernel, woken_dummy_threads,
+                                                 opened_dummy_threads);
 
             // Note that we no longer hold the lock, and unlock the spinlock.
             m_owner_thread = nullptr;
@@ -76,8 +82,19 @@ public:
             }
             m_spin_lock.Unlock();
 
+            // Wake the host threads of dummy threads made runnable (a futex wake-up each), now
+            // that the other cores no longer wait for the lock behind it.
+            for (KThread* const thread : woken_dummy_threads) {
+                thread->DummyThreadNotify();
+            }
+
             // Enable scheduling, and perform a rescheduling operation.
             SchedulerType::EnableScheduling(m_kernel, cores_needing_scheduling);
+
+            // The references that kept the woken dummy threads alive until their notify.
+            for (KThread* const thread : opened_dummy_threads) {
+                thread->Close(m_kernel);
+            }
         }
     }
 
@@ -86,7 +103,8 @@ private:
 
     KernelCore& m_kernel;
     KAlignedSpinLock m_spin_lock{};
-    s32 m_lock_count{};
+    // The holder's own state, off the line the other cores spin on.
+    alignas(64) s32 m_lock_count{};
     std::atomic<KThread*> m_owner_thread{};
     s64 m_nx2_acquired_ns{};
 };

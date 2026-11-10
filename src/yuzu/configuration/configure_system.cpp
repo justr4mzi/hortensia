@@ -14,9 +14,11 @@
 #include <QFileDialog>
 #include <QGraphicsItem>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMessageBox>
 #include <QSpinBox>
 
+#include "common/game_fps.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "qt_common/qt_compat.h"
@@ -50,8 +52,10 @@ static bool IsValidLocale(u32 region_index, u32 language_index) {
 
 ConfigureSystem::ConfigureSystem(Core::System& system_,
                                  std::shared_ptr<std::vector<ConfigurationShared::Tab*>> group_,
-                                 const ConfigurationShared::Builder& builder, QWidget* parent)
-    : Tab(group_, parent), ui{std::make_unique<Ui::ConfigureSystem>()}, system{system_} {
+                                 const ConfigurationShared::Builder& builder, QWidget* parent,
+                                 u64 program_id_)
+    : Tab(group_, parent), ui{std::make_unique<Ui::ConfigureSystem>()}, system{system_},
+      program_id{program_id_} {
     ui->setupUi(this);
 
     const auto posix_time = std::chrono::system_clock::now().time_since_epoch();
@@ -111,6 +115,20 @@ void ConfigureSystem::changeEvent(QEvent* event) {
 
 void ConfigureSystem::RetranslateUI() {
     ui->retranslateUi(this);
+    UpdateTennisWarning();
+}
+
+void ConfigureSystem::UpdateTennisWarning() {
+    if (tennis_fps_warning) {
+        tennis_fps_warning->setText(
+            tr("<b>WARNING: HIGHLY EXPERIMENTAL — Mario Tennis Fever FPS patch</b><br>"
+               "Not fully validated and not recommended for normal play. "
+               "Game speed, hit detection, ball prediction and animations may behave incorrectly. "
+               "<b>Reported issue: CPU opponents may swing without hitting the ball.</b> "
+               "A displayed game speed of 100% does not guarantee correct gameplay. "
+               "60 FPS (the default) leaves the game unpatched. "
+               "Requires a supported game update and a game restart after changing FPS."));
+    }
 }
 
 void ConfigureSystem::Setup(const ConfigurationShared::Builder& builder) {
@@ -131,6 +149,18 @@ void ConfigureSystem::Setup(const ConfigurationShared::Builder& builder) {
     push(Settings::values.linkage.by_category[Settings::Category::System]);
 
     for (auto setting : settings) {
+        if (setting->Id() == Settings::values.fps30_patch.Id() &&
+            !Settings::ShowBananzaFps(program_id, Settings::IsConfiguringGlobal())) {
+            continue;
+        }
+        if (setting->Id() == Settings::values.tennis_fps.Id() &&
+            !Settings::ShowTennisFps(program_id, Settings::IsConfiguringGlobal())) {
+            continue;
+        }
+        if (setting->Id() == Settings::values.wonder_fps.Id() &&
+            !Settings::ShowWonderFps(program_id, Settings::IsConfiguringGlobal())) {
+            continue;
+        }
         if (setting->Id() == Settings::values.use_docked_mode.Id() &&
             Settings::IsConfiguringGlobal()) {
             continue;
@@ -184,6 +214,15 @@ void ConfigureSystem::Setup(const ConfigurationShared::Builder& builder) {
     }
     for (const auto& [id, widget] : system_hold) {
         system_layout.addWidget(widget);
+        if (id == Settings::values.tennis_fps.Id()) {
+            tennis_fps_warning = new QLabel(this);
+            tennis_fps_warning->setObjectName(QStringLiteral("tennisFpsExperimentalWarning"));
+            tennis_fps_warning->setWordWrap(true);
+            tennis_fps_warning->setTextFormat(Qt::RichText);
+            tennis_fps_warning->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            system_layout.addWidget(tennis_fps_warning);
+            UpdateTennisWarning();
+        }
     }
 }
 

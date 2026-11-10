@@ -26,8 +26,66 @@
 #include "common/logging.h"
 #include "common/swap.h"
 #include "core/file_sys/vfs/vfs_offset.h"
+#include "core/file_sys/common_funcs.h"
+#include "core/file_sys/romfs.h"
 
 namespace FileSys {
+
+std::vector<std::size_t> NupContainer::FindAddonPackages(u64 program_id) const {
+    std::map<u64, std::size_t> selected;
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        const auto& package = packages[i];
+        const u64 title_id = WithPlatformOf(package.title_id, program_id);
+        if (package.kind != PackageKind::Addon ||
+            GetBaseTitleID(title_id) != GetBaseTitleID(program_id) ||
+            title_id < GetAOCBaseTitleID(program_id) || package.romfs_dir == 0xFFFFFFFF) {
+            continue;
+        }
+        const auto it = selected.find(package.title_id);
+        if (it == selected.end() || package.version > packages[it->second].version) {
+            selected[package.title_id] = i;
+        }
+    }
+    std::vector<std::size_t> indices;
+    for (const auto& entry : selected) {
+        indices.push_back(entry.second);
+    }
+    return indices;
+}
+
+std::vector<std::pair<u64, VirtualDir>> NupContainer::GetAddonRomFS(u64 program_id) {
+    std::vector<std::pair<u64, VirtualDir>> entries;
+    for (const auto index : FindAddonPackages(program_id)) {
+        const auto title_id = WithPlatformOf(packages[index].title_id, program_id);
+        if (auto romfs = GetRomFSDir(index)) {
+            LOG_INFO(Loader, "NUP add-on content {:016X} (v{}) mounted", title_id,
+                     packages[index].version);
+            entries.emplace_back(title_id, std::move(romfs));
+        }
+    }
+    return entries;
+}
+
+std::vector<std::pair<u64, VirtualDir>> NupContainer::GetSiblingProgramRomFS() {
+    std::vector<std::pair<u64, VirtualDir>> entries;
+    // The first base package is the application itself; further ones are its other programs.
+    const auto main = FindBasePackage();
+    if (!main) {
+        return entries;
+    }
+    const u64 application = GetBaseTitleID(packages[*main].title_id);
+    for (std::size_t i = *main + 1; i < packages.size(); ++i) {
+        if (packages[i].kind != PackageKind::Base ||
+            GetBaseTitleID(packages[i].title_id) != application) {
+            continue;
+        }
+        if (auto romfs = GetRomFSDir(i)) {
+            entries.emplace_back(packages[i].title_id, std::move(romfs));
+        }
+    }
+    return entries;
+}
+
 namespace {
 
 constexpr u32 NoDir = 0xFFFFFFFF;
@@ -728,6 +786,23 @@ bool NupContainer::ValidateDirTree() const {
         u32 dir;
         u32 next;
     };
+    // BuildDirTree expands every reference to a directory, so a directory listed by two parents
+    // (or twice by one) lets a chain of them grow exponentially. Each one may have one parent.
+    std::vector<bool> listed(dirs.size(), false);
+    for (const DirNode& node : dirs) {
+        for (u32 slot = 0; slot < node.child_count; ++slot) {
+            const u32 child = children[static_cast<std::size_t>(node.first_child) + slot];
+            if (child >= dirs.size()) {
+                continue;
+            }
+            if (listed[child]) {
+                LOG_ERROR(Loader, "NUP directory is listed more than once");
+                return false;
+            }
+            listed[child] = true;
+        }
+    }
+
     std::vector<u8> state(dirs.size(), Unvisited);
     std::vector<u32> height(dirs.size(), 0);
     // A tree: a directory listed twice, under two parents or twice under one, passes the cycle
@@ -974,6 +1049,39 @@ void NupContainer::BuildDirTree(u32 dir_index, VectorVfsDirectory& out) {
             out.AddDirectory(sub);
         }
     }
+}
+
+bool NupContainer::ForEachMember(
+    std::size_t package_index,
+    const std::function<bool(const std::string&, const std::string&, const VirtualFile&,
+                             const std::array<u8, 0x20>&)>& visit) {
+    if (package_index >= packages.size()) {
+        return false;
+    }
+    static constexpr std::array<u8, 0x20> NoHash{};
+    // ValidateDirTree bounds the depth, so recursion is safe.
+    const std::function<bool(u32, const std::string&)> walk = [&](u32 dir_index,
+                                                                  const std::string& prefix) {
+        const DirNode& node = dirs[dir_index];
+        const u64 end = static_cast<u64>(node.first_child) + node.child_count;
+        for (u64 slot = node.first_child; slot < end; ++slot) {
+            const u32 child = children[slot];
+            if (child >= dirs.size()) {
+                const std::size_t index = child - dirs.size();
+                const auto& name = files[index].name;
+                if (!visit(prefix + name, name, OpenFile(index), files[index].sha256)) {
+                    return false;
+                }
+            } else {
+                const auto path = prefix + dirs[child].name;
+                if (!visit(path, dirs[child].name, nullptr, NoHash) || !walk(child, path + "/")) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    return walk(packages[package_index].root_dir, "");
 }
 
 VirtualDir NupContainer::BuildPackageDir(u32 dir_index) {

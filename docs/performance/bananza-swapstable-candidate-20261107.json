@@ -1,0 +1,178 @@
+{
+  "run_id": "20261107-165701-dc3bbdf2",
+  "candidate": {
+    "EDEN_NX2_SWAP_STABLE": "120"
+  },
+  "diagnostics": {
+    "EDEN_NX2_HITCH_TRACE": "1"
+  },
+  "qualification": "single exploratory candidate; automated checkpoint FAIL; not promoted; independent repeated A/B and timing validation pending",
+  "window_start_ns": 55056339398053,
+  "window_end_ns": 55116339398053,
+  "measurement": {
+    "available": true,
+    "reason": null,
+    "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165701-dc3bbdf2/profile/data/eden/log/hitch-frames-040074a01bf12000-54922392429477.csv",
+    "sha256": "fa39b9014487d8f44fb5bc4895446ca50d5577c65715ae0bac73f203524c5223",
+    "metric": "native_present_interval_ms",
+    "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+    "scope": "selected_window",
+    "fps_estimate_kind": "native_present_service_cadence_estimate",
+    "rows_read": 13832,
+    "excluded_intervals": 10238,
+    "window_start_ns": 55056339398053,
+    "window_end_ns": 55116339398053,
+    "stats": {
+      "available": true,
+      "count": 3594,
+      "sum_ms": 59989.824191,
+      "mean_ms": 16.691659485531442,
+      "p50_ms": 16.659018,
+      "p95_ms": 18.23495285,
+      "p99_ms": 20.309154030000006,
+      "min_ms": 14.129113,
+      "max_ms": 30.25399,
+      "inverse_mean_fps_estimate": 59.91016057251908,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    }
+  },
+  "statistics": {
+    "available": true,
+    "count": 3594,
+    "sum_ms": 59989.824191,
+    "mean_ms": 16.691659485531442,
+    "p50_ms": 16.659018,
+    "p95_ms": 18.23495285,
+    "p99_ms": 20.309154030000006,
+    "min_ms": 14.129113,
+    "max_ms": 30.25399,
+    "inverse_mean_fps_estimate": 59.91016057251908,
+    "stutters_over_ms": {
+      "16.666667": 1709,
+      "33.333333": 0,
+      "50.0": 0,
+      "100.0": 0
+    }
+  },
+  "phase_statistics_nonzero_only": {
+    "external_us": {
+      "available": true,
+      "count": 3595,
+      "sum_ms": 8947.89,
+      "mean_ms": 2.488981919332406,
+      "p50_ms": 0.877,
+      "p95_ms": 12.658899999999996,
+      "p99_ms": 15.831799999999996,
+      "min_ms": 0.703,
+      "max_ms": 19.46,
+      "inverse_mean_fps_estimate": 401.77069677879365,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "fence_us": {
+      "available": true,
+      "count": 3595,
+      "sum_ms": 11389.646,
+      "mean_ms": 3.1681908205841447,
+      "p50_ms": 3.171,
+      "p95_ms": 3.178,
+      "p99_ms": 3.188,
+      "min_ms": 3.097,
+      "max_ms": 3.867,
+      "inverse_mean_fps_estimate": 315.63755361667955,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "composite_us": {
+      "available": true,
+      "count": 3595,
+      "sum_ms": 12.084,
+      "mean_ms": 0.0033613351877607787,
+      "p50_ms": 0.003,
+      "p95_ms": 0.004,
+      "p99_ms": 0.007,
+      "min_ms": 0.002,
+      "max_ms": 0.162,
+      "inverse_mean_fps_estimate": 297500.8275405495,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "pace_us": {
+      "available": true,
+      "count": 3363,
+      "sum_ms": 39648.402,
+      "mean_ms": 11.789593220338984,
+      "p50_ms": 12.625,
+      "p95_ms": 12.724,
+      "p99_ms": 12.76038,
+      "min_ms": 0.003,
+      "max_ms": 12.815,
+      "inverse_mean_fps_estimate": 84.82056855658394,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "service_us": {
+      "available": true,
+      "count": 3595,
+      "sum_ms": 51053.701,
+      "mean_ms": 14.201307649513213,
+      "p50_ms": 15.789,
+      "p95_ms": 15.894,
+      "p99_ms": 15.924,
+      "min_ms": 3.125,
+      "max_ms": 15.964,
+      "inverse_mean_fps_estimate": 70.41605073841757,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    }
+  },
+  "errors": [
+    "[   4.140869] Debug <Critical> core/hle/service/service.cpp:178:operator(): ../src/core/hle/service/service.cpp: assert Unknown / unimplemented function '1(<unknown>)': port='IUserShimScopedObject' cmd_buf={[0]=0x6, [1]=0xa, [2]=0x0, [3]=0x0, [4]=0x49434653, [5]=0x1, [6]=0x1, [7]=0x0, [8]=0x1}",
+    "[ 124.407906] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x21169b6b00, instruction 0x2050: native matrix multiply cooperative path unavailable [op 23c 1408723c 00000018 000008ff 04aff000]",
+    "[ 124.563800] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x2116a10700, instruction 0x2650: native matrix multiply cooperative path unavailable [op 23c 1418723c 0000001c 000008ff 04aff000]"
+  ],
+  "checkpoint": {
+    "name": "bananza-ingot-tunnel-v1",
+    "checkpoint_id": "40a4358d3c89c02f9879a9e77a460b9d3c57e552f070a5d00c853752e1a05504",
+    "kind": "gameplay",
+    "validated": true,
+    "matched": false,
+    "rmse": 0.0376142,
+    "max_rmse": 0.02,
+    "image": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165701-dc3bbdf2/0003-checkpoint-bananza-ingot-tunnel-v1.png",
+    "at_ns": 55116612897462,
+    "qualification": "Matches an explicitly labelled reference ROI; no semantic rendering correctness proof."
+  },
+  "identity": {
+    "game_identity": {
+      "path": "/home/leon/Switch2/Donkey Kong Bananza.nup",
+      "size": 9288700437,
+      "mtime_ns": 1793746379539877288,
+      "prefix_1MiB_sha256": "a2257bb63f89a8bb9a73848941f348e13f89f72d1aa8ff728a043538d2ec4b90"
+    },
+    "binary_sha256": "79edc189ab3474cdc50fb415c483958bceb87461a52c0731f25865ecfd98631c",
+    "settings_sha256": "fcf72365f580e41a6ad8848b08beec6814d84c07f910806208af4cd71392a14a",
+    "seed_id": "56e57703f9e5b9669e5622032646f8151c0decdb9fde6eb8cbe1d17617a4c1cd",
+    "quality": "current",
+    "cache_mode": "warm"
+  }
+}

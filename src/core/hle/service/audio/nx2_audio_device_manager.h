@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -17,6 +18,10 @@
 
 #include <fmt/ranges.h>
 
+#include "audio_core/audio_core.h"
+#include "audio_core/common/common.h"
+#include "audio_core/sink/sink.h"
+#include "audio_core/sink/sink_stream.h"
 #include "common/string_util.h"
 #include "audio_core/audio_core.h"
 #include "core/core.h"
@@ -86,6 +91,14 @@ struct Nx2SysmixStreams {
     Core::System& system;
     std::shared_ptr<Core::Timing::EventType> timer;
 };
+
+// Call with the list locked.
+inline void Nx2SysmixCloseHost(Core::System& system, Nx2SysmixStream& stream) {
+    if (stream.host) {
+        system.AudioCore().GetOutputSink().CloseStream(stream.host);
+        stream.host = nullptr;
+    }
+}
 
 // Switch 2 virtual output devices (nn::audio::ListVirtualOutputDevices and friends), reached through
 // the object auddmg:u command 0 returns. Eden plays everything through one stereo 48 kHz output, so
@@ -343,6 +356,11 @@ private:
     }
 
     void GetStreamGain(HLERequestContext& ctx) {
+        f32 gain{};
+        {
+            std::scoped_lock lk{streams->mutex};
+            gain = stream->gain;
+        }
         IPC::ResponseBuilder rb{ctx, 3};
         rb.Push(ResultSuccess);
         rb.Push(stream->GetGain());

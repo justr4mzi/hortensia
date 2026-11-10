@@ -1,0 +1,137 @@
+{
+  "run_id": "20261107-171456-6bbec008",
+  "qualification": "single light hub window; title edition identification; no full-game acceptance",
+  "scene": "Forgotten Land Switch 2 edition Waddle Dee hub, controller idle after movement",
+  "start_ns": 56187028697693,
+  "end_ns": 56217028697693,
+  "identity": {
+    "game_identity": {
+      "path": "/home/leon/Switch2/KirbySwitch2.nup",
+      "size": 15424373958,
+      "mtime_ns": 1793982476605261866,
+      "prefix_1MiB_sha256": "064ade3ee9970ec7f28bd6db9469fde75b4223290957e7e152f9e2259716bff4"
+    },
+    "binary_sha256": "79edc189ab3474cdc50fb415c483958bceb87461a52c0731f25865ecfd98631c",
+    "seed_id": "d512fc287f026023cd82346d4e824d8c74e965380040f99d525c5854ea50eb4a",
+    "settings_sha256": "5a24a58791d4a30491bd82162fe2c78ecda31d45b71775677e2bed952579e545"
+  },
+  "measurements": [
+    {
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-171456-6bbec008/frames/system-frames-04004D300C5AE001-1947968-56097596765096-0.csv",
+        "sha256": "1f3d5de4e5efa5d02f7b8c31d5f940cc53dfb1ed0cf6c11c687296795e3d6da3",
+        "metric": "timestamped_system_frame_work_ms",
+        "semantics": "Timestamped Core::PerfStats BeginSystemFrame-to-EndSystemFrame elapsed milliseconds, using the Linux monotonic steady clock. The inverse mean is a work-rate estimate, not measured game/display FPS or GPU execution time.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "work_rate_only_not_game_fps",
+        "rows_read": 9314,
+        "excluded_intervals": 7515,
+        "window_start_ns": 56187028697693,
+        "window_end_ns": 56217028697693,
+        "stats": {
+          "available": true,
+          "count": 1799,
+          "sum_ms": 29981.926276,
+          "mean_ms": 16.665884533629793,
+          "p50_ms": 16.665488,
+          "p95_ms": 18.177556999999997,
+          "p99_ms": 18.443762800000002,
+          "min_ms": 14.046136,
+          "max_ms": 20.87302,
+          "inverse_mean_fps_estimate": 60.00281581107308,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1799,
+        "sum_ms": 29981.926276,
+        "mean_ms": 16.665884533629793,
+        "p50_ms": 16.665488,
+        "p95_ms": 18.177556999999997,
+        "p99_ms": 18.443762800000002,
+        "min_ms": 14.046136,
+        "max_ms": 20.87302,
+        "inverse_mean_fps_estimate": 60.00281581107308,
+        "stutters_over_ms": {
+          "33.333333": 0,
+          "50.0": 0,
+          "100.0": 0
+        }
+      }
+    },
+    {
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-171456-6bbec008/profile/data/eden/log/hitch-frames-04004d300c5ae001-56102546926338.csv",
+        "sha256": "ea08fa3011e43c037d623644aab97ebde113a794d1e19ac3cb9fe069cedba9e8",
+        "metric": "native_present_interval_ms",
+        "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "native_present_service_cadence_estimate",
+        "rows_read": 9314,
+        "excluded_intervals": 7515,
+        "window_start_ns": 56187028697693,
+        "window_end_ns": 56217028697693,
+        "stats": {
+          "available": true,
+          "count": 1799,
+          "sum_ms": 29983.18061,
+          "mean_ms": 16.666581773207337,
+          "p50_ms": 16.667628,
+          "p95_ms": 19.318233,
+          "p99_ms": 19.85488078,
+          "min_ms": 11.249104,
+          "max_ms": 22.324631,
+          "inverse_mean_fps_estimate": 60.00030561801029,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1799,
+        "sum_ms": 29983.18061,
+        "mean_ms": 16.666581773207337,
+        "p50_ms": 16.667628,
+        "p95_ms": 19.318233,
+        "p99_ms": 19.85488078,
+        "min_ms": 11.249104,
+        "max_ms": 22.324631,
+        "inverse_mean_fps_estimate": 60.00030561801029,
+        "stutters_over_ms": {
+          "33.333333": 0,
+          "50.0": 0,
+          "100.0": 0
+        }
+      }
+    }
+  ],
+  "errors": [
+    "[ 115.987197] Debug <Critical> video_core/texture_cache/format_lookup_table.cpp:278:operator(): ../src/video_core/texture_cache/format_lookup_table.cpp: assert texture format=0 srgb=false components={0 0 0 0}",
+    "[ 115.987467] Debug <Critical> video_core/renderer_vulkan/maxwell_to_vk.cpp:32:operator(): ../src/video_core/renderer_vulkan/maxwell_to_vk.cpp: assert Invalid sampler filter=3",
+    "[ 115.987473] Debug <Critical> video_core/renderer_vulkan/maxwell_to_vk.cpp:32:operator(): ../src/video_core/renderer_vulkan/maxwell_to_vk.cpp: assert Invalid sampler filter=3",
+    "[ 115.987477] Debug <Critical> video_core/renderer_vulkan/maxwell_to_vk.cpp:865:operator(): ../src/video_core/renderer_vulkan/maxwell_to_vk.cpp: assert Invalid sampler mode=3",
+    "[ 116.001969] Debug <Critical> video_core/texture_cache/format_lookup_table.cpp:278:operator(): ../src/video_core/texture_cache/format_lookup_table.cpp: assert texture format=0 srgb=false components={0 0 0 0}",
+    "[ 116.001978] Debug <Critical> video_core/texture_cache/format_lookup_table.cpp:278:operator(): ../src/video_core/texture_cache/format_lookup_table.cpp: assert texture format=0 srgb=false components={0 0 0 0}",
+    "[ 116.001982] Debug <Critical> video_core/texture_cache/format_lookup_table.cpp:278:operator(): ../src/video_core/texture_cache/format_lookup_table.cpp: assert texture format=0 srgb=false components={0 0 0 0}",
+    "[ 116.001993] Debug <Critical> video_core/texture_cache/format_lookup_table.cpp:278:operator(): ../src/video_core/texture_cache/format_lookup_table.cpp: assert texture format=0 srgb=false components={2 2 2 2}",
+    "[ 116.016432] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x161c0d5b00, instruction 0x2050: native matrix multiply cooperative path unavailable [op 23c 1408723c 00000018 000008ff 04aff000]",
+    "[ 116.037607] Debug <Critical> video_core/texture_cache/format_lookup_table.cpp:278:operator(): ../src/video_core/texture_cache/format_lookup_table.cpp: assert texture format=0 srgb=false components={0 0 0 0}",
+    "[ 116.038108] Debug <Critical> video_core/renderer_vulkan/maxwell_to_vk.cpp:32:operator(): ../src/video_core/renderer_vulkan/maxwell_to_vk.cpp: assert Invalid sampler filter=3",
+    "[ 116.038114] Debug <Critical> video_core/renderer_vulkan/maxwell_to_vk.cpp:32:operator(): ../src/video_core/renderer_vulkan/maxwell_to_vk.cpp: assert Invalid sampler filter=3",
+    "[ 116.038118] Debug <Critical> video_core/renderer_vulkan/maxwell_to_vk.cpp:865:operator(): ../src/video_core/renderer_vulkan/maxwell_to_vk.cpp: assert Invalid sampler mode=3",
+    "[ 157.700138] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x161c094200, instruction 0x2780: native matrix multiply cooperative path unavailable [op 23c 181c723c 00000020 000008ff 04aff000]",
+    "[ 158.164028] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x161c055200, instruction 0x2d60: native matrix multiply cooperative path unavailable [op 23c 1424723c 00000028 000008ff 04aff000]"
+  ]
+}

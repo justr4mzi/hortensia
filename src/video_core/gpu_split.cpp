@@ -160,7 +160,7 @@ void GpuSplit::Stop() {
     }
     back_thread.request_stop();
     wake.fetch_add(1, std::memory_order_seq_cst);
-    wake.notify_one();
+    wake.notify_all();
     back_thread.join();
     active = false;
     // The split is static and outlives the emulation session. The next session's back thread
@@ -229,6 +229,11 @@ void GpuSplit::WaitForSpace(size_t words) {
             Pause();
         } else {
             std::this_thread::yield();
+            // As in Drain: re-wake a back thread whose wake-up was lost.
+            if ((spins & 1023) == 0 && back_waiting.load(std::memory_order_seq_cst)) {
+                wake.fetch_add(1, std::memory_order_seq_cst);
+                wake.notify_all();
+            }
         }
     }
 }
@@ -242,7 +247,9 @@ void GpuSplit::Publish() {
     published.store(write_position, std::memory_order_seq_cst);
     if (back_waiting.load(std::memory_order_seq_cst)) {
         wake.fetch_add(1, std::memory_order_seq_cst);
-        wake.notify_one();
+        // All: libc++ (Android) parks atomic waiters in a shared hash table, where notify_one
+        // can wake an unrelated waiter on the same slot and leave the back thread asleep.
+        wake.notify_all();
     }
 }
 

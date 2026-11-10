@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <deque>
 #include <filesystem>
+#include <future>
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
@@ -354,6 +355,8 @@ private:
 
     Shader::Profile profile;
     Shader::HostTranslateInfo host_info;
+    [[nodiscard]] Shader::HostTranslateInfo StageHostInfo(const ShaderTranslationKey& key,
+                                                          size_t index) const;
 
     std::filesystem::path pipeline_cache_filename;
 

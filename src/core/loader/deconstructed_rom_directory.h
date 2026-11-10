@@ -19,6 +19,15 @@ class System;
 
 namespace Loader {
 
+/// Resolve the add-on content stored alongside a loose multi-program dump.
+std::vector<std::pair<u64, FileSys::VirtualDir>> FindLooseAOC(
+    const FileSys::VirtualDir& exefs_dir, u64 program_id);
+
+/// Resolve the RomFS directories of the other programs in a loose multi-program dump, keyed by
+/// the title ID of their program index.
+std::vector<std::pair<u64, FileSys::VirtualDir>> FindLooseSiblingPrograms(
+    const FileSys::VirtualDir& exefs_dir, u64 program_id);
+
 /**
  * This class loads a "deconstructed ROM directory", which are the typical format we see for Switch
  * game dumps. The path should be a "main" NSO, which must be in a directory that contains the other
@@ -52,6 +61,7 @@ public:
     ResultStatus ReadProgramId(u64& out_program_id) override;
     ResultStatus ReadTitle(std::string& title) override;
     ResultStatus ReadControlData(FileSys::NACP& control) override;
+    ResultStatus ReadProgramMetadata(FileSys::ProgramMetadata& out) override;
     ResultStatus ReadDisplayVersion(std::string& version) override;
     bool IsRomFSUpdatable() const override;
 

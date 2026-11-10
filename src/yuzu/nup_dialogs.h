@@ -59,6 +59,9 @@ class NupMetadataDialog : public QDialog {
 public:
     NupMetadataDialog(const std::filesystem::path& source, const std::filesystem::path& archive,
                       u64 needed_bytes, u64 available_bytes, QWidget* parent = nullptr);
+    // Edits an existing archive; `current` is what it stores, and empty fields keep it.
+    NupMetadataDialog(const FileSys::Nup::Metadata& current, const std::filesystem::path& archive,
+                      QWidget* parent = nullptr);
     ~NupMetadataDialog() override;
 
     // Empty fields keep what the dump supplies.
@@ -69,6 +72,9 @@ public:
     QPixmap CurrentIcon() const;
 
 private:
+    NupMetadataDialog(FileSys::Nup::Metadata detected, bool editing, const QString& paths_html,
+                      u64 needed_bytes, u64 available_bytes, QWidget* parent);
+
     void ChooseIcon();
     void SetIconFromFile(const QString& path);
     void ResetIcon();
@@ -76,6 +82,7 @@ private:
     void UpdateVersionEnabled();
 
     FileSys::Nup::Metadata detected;
+    bool editing;
     QByteArray custom_icon;
     QPixmap current_icon;
 

@@ -132,4 +132,25 @@ EditResult EditNupMetadata(const std::filesystem::path& archive, const MetadataE
 // Current default-language metadata of the edit target, for prefilling the UI.
 Metadata ProbeNupMetadata(const std::filesystem::path& archive);
 
+// Writes every package of a NUP back to the folder layout PackDump reads: base/,
+// updates/<version>/ and dlc/<titleid>/<version>/. Each file is checked against its stored
+// SHA-256. `output` must be missing or empty; a failed or cancelled run removes what it wrote.
+PackResult ExtractNup(const std::filesystem::path& archive, const std::filesystem::path& output,
+                      const std::function<void(const PackProgress&)>& progress = {},
+                      const std::atomic_bool* cancel = nullptr, std::string* error_out = nullptr);
+// Where ExtractNup writes by default: the archive's name without .nup, next to it.
+std::filesystem::path DefaultExtractPath(const std::filesystem::path& archive);
+
+// The name, icon and display version the game list shows for a NUP.
+std::optional<Metadata> ReadNupMetadata(const std::filesystem::path& archive);
+
+// Changes a NUP's metadata the way PackOptions::metadata does when packing; empty fields keep
+// what is stored. File data is kept as is: the archive is copied to <archive>.part (a reflink
+// where the filesystem allows it), only its TOC and metadata are rewritten, and the copy
+// replaces the archive once it parses.
+PackResult EditNupMetadata(const std::filesystem::path& archive, const Metadata& metadata,
+                           const std::function<void(const PackProgress&)>& progress = {},
+                           const std::atomic_bool* cancel = nullptr,
+                           std::string* error_out = nullptr);
+
 } // namespace FileSys::Nup

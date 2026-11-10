@@ -287,6 +287,20 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, gpu_clock, tr("GPU Clocks"),
            tr("Makes the game believe GPU work finishes faster than it does, so it stops lowering "
               "resolution and render distance to fit the Switch's clocks."));
+    INSERT(Settings, tennis_fps, tr("Frame rate (FPS, HIGHLY EXPERIMENTAL game patch)"),
+           tr("WARNING: This Tennis FPS patch is not fully validated. CPU opponents have been "
+              "reported to swing without hitting the ball. Game speed, hit detection, ball "
+              "prediction and animations may behave incorrectly. A game speed of 100% does not "
+              "guarantee correct gameplay. Not recommended for normal play. "
+              "Supports 1–1000 FPS with a supported game update. Restart the game after changes."));
+    INSERT(Settings, wonder_fps, tr("Frame rate (FPS, game patch)"),
+           tr("Sets Wonder's frame rate and simulation rate together. Requires a supported game "
+              "version and a restart. This target controls frame pacing; above 60 FPS, presentation "
+              "is allowed to run ahead of the display. Higher rates require sufficient performance."));
+    INSERT(Settings, fps30_patch, tr("Lock to 30 FPS (game patch)"),
+           tr("Patches the game's frame-rate controller to always pick 30 fps, so it runs at full "
+              "speed at a steady 30 fps. Only for supported games and versions (Donkey Kong "
+              "Bananza); others ignore it. Takes effect on the next game start."));
     INSERT(Settings, gpu_unswizzle_enabled, tr("GPU Unswizzle"),
            tr("Accelerates BCn 3D texture decoding using GPU compute.\n"
               "Disable if experiencing crashes or graphical glitches."));

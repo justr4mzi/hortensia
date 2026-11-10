@@ -15,7 +15,7 @@ namespace Service::Audio {
 
 class IAudioIn final : public ServiceFramework<IAudioIn> {
 public:
-    explicit IAudioIn(Core::System& system_, AudioCore::AudioIn::Manager& manager,
+    explicit IAudioIn(Core::System& system_, std::shared_ptr<AudioCore::AudioIn::Manager> manager,
                       size_t session_id, const std::string& device_name,
                       const AudioCore::AudioIn::AudioInParameter& in_params,
                       Kernel::KProcess* handle, u64 applet_resource_user_id);
@@ -49,6 +49,8 @@ private:
     Kernel::KProcess* process;
     KernelHelpers::ServiceContext service_context;
     Kernel::KEvent* event;
+    // impl->Free() locks the manager, also when the manager service closed first.
+    std::shared_ptr<AudioCore::AudioIn::Manager> manager;
     std::shared_ptr<AudioCore::AudioIn::In> impl;
     Common::ScratchBuffer<u64> released_buffer;
 };

@@ -154,7 +154,8 @@ bool NPadData::IsNpadStyleIndexSupported(Core::HID::NpadStyleIndex style_index) 
     case Core::HID::NpadStyleIndex::Handheld:
         return bool(style.handheld);
     case Core::HID::NpadStyleIndex::JoyconDual:
-        return bool(style.joycon_dual);
+        // ponytail: Joy-Con 2 dual (bit 12) is served by the JoyconDual npad, same as in EmulatedController.
+        return bool(style.joycon_dual || style.joycon2_dual);
     case Core::HID::NpadStyleIndex::JoyconLeft:
         return bool(style.joycon_left);
     case Core::HID::NpadStyleIndex::JoyconRight:

@@ -11,7 +11,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <mutex>
-#include <set>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -634,8 +634,9 @@ struct Memory::Impl {
     }
 
     void RasterizerArmReadTraps(u64 vaddr, u64 size) {
-        // Clean cached read areas also need invalidation when reactive flushing is enabled.
-        read_trap_generation.fetch_add(1, std::memory_order_release);
+        // Clean cached read areas also need invalidation when reactive flushing is enabled: a
+        // new generation ends the area each core keeps (GetFlushArea no longer marks clean ones).
+        read_traps.NewGeneration();
         if (vaddr == 0 || size == 0 || !AddressSpaceContains(*current_page_table, vaddr, size) ||
             !ReadTrapsEnabled()) {
             return;
@@ -1172,10 +1173,6 @@ struct Memory::Impl {
         });
     }
 
-    struct GPUDirtyState {
-        PAddr last_address;
-    };
-
     void InvalidateGPUMemory(u8* p, size_t size) {
         constexpr size_t sys_core = Core::Hardware::NUM_CPU_CORES - 1;
         const size_t core = (std::min)(system.GetCurrentHostThreadID(),
@@ -1207,7 +1204,8 @@ struct Memory::Impl {
     std::set<u64> armed_read_traps;
     std::atomic<size_t> armed_read_trap_count{};
     std::mutex read_trap_mutex;
-    std::array<GPUDirtyState, Core::Hardware::NUM_CPU_CORES> rasterizer_write_areas{};
+    std::array<Core::GPUDirtyMemoryManager::ReportedPage, Core::Hardware::NUM_CPU_CORES>
+        rasterizer_write_areas{};
     std::array<Common::ScratchBuffer<u32>, Core::Hardware::NUM_CPU_CORES> scratch_buffers{};
     std::span<Core::GPUDirtyMemoryManager> gpu_dirty_managers;
     std::mutex sys_core_guard;

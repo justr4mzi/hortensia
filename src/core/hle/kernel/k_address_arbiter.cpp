@@ -6,6 +6,7 @@
 
 #include "core/arm/exclusive_monitor.h"
 #include "core/core.h"
+#include "core/hle/kernel/address_arbiter_read.h"
 #include "core/hle/kernel/k_address_arbiter.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_scheduler.h"

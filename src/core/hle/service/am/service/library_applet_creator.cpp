@@ -4,10 +4,17 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
+#include <cstdlib>
 #include <mutex>
+#include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "common/settings.h"
+#include "core/hle/kernel/k_page_table.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_transfer_memory.h"
 #include "core/hle/service/am/applet_data_broker.h"
 #include "core/hle/service/am/applet_manager.h"
@@ -228,6 +235,91 @@ ILibraryAppletCreator::ILibraryAppletCreator(Core::System& system_, std::shared_
 
 ILibraryAppletCreator::~ILibraryAppletCreator() = default;
 
+// ponytail: DxD round-9 debug, dumps the game's controller-manager object (EDEN_DXD_BT only)
+static void DxdDumpControllerState(Core::System& system) {
+    auto& mem = system.ApplicationMemory();
+    // ponytail: FindModules() finds no named modules here, so walk the page table for code regions
+    std::vector<std::pair<u64, std::string>> mods;
+    auto& pt = system.ApplicationProcess()->GetPageTable();
+    VAddr cur = 0;
+    while (true) {
+        Kernel::KMemoryInfo info{};
+        Kernel::Svc::PageInfo pinfo{};
+        if (pt.QueryInfo(std::addressof(info), std::addressof(pinfo), cur).IsError()) {
+            break;
+        }
+        const auto svc = info.GetSvcMemoryInfo();
+        if (svc.permission == Kernel::Svc::MemoryPermission::ReadExecute &&
+            (svc.state == Kernel::Svc::MemoryState::Code ||
+             svc.state == Kernel::Svc::MemoryState::AliasCode)) {
+            mods.emplace_back(svc.base_address, std::string{});
+        }
+        const u64 next = svc.base_address + svc.size;
+        if (next <= cur) {
+            break;
+        }
+        cur = next;
+    }
+    // ponytail: code regions come in rtld, main, sdk order
+    u64 base = 0;
+    for (size_t idx = 0; idx < mods.size(); idx++) {
+        LOG_ERROR(Service_AM, "DXD_R9 code region {} at {:#x} MOD0={:#x}", idx, mods[idx].first,
+                  mem.Read32(mods[idx].first + 4));
+        if (idx == 1) {
+            base = mods[idx].first;
+        }
+    }
+    if (base == 0) {
+        LOG_ERROR(Service_AM, "DXD_R9 main module not found");
+        return;
+    }
+    // ponytail: nearest module start below addr, ignores module end
+    const auto where = [&](u64 a) {
+        std::string r = "?";
+        for (size_t idx = 0; idx < mods.size(); idx++) {
+            if (a >= mods[idx].first) {
+                r = fmt::format("reg{}+{:#x}", idx, a - mods[idx].first);
+            }
+        }
+        return r;
+    };
+    const u64 g = mem.Read64(base + 0x227c5e8);
+    const u64 obj = mem.Read64(g);
+    LOG_ERROR(Service_AM, "DXD_R9 main={:#x} g={:#x} obj={:#x}", base, g, obj);
+    if (obj == 0) {
+        return;
+    }
+    LOG_ERROR(Service_AM, "DXD_R9 obj+0x178 n(s8)={} obj+0x17c flags={:#x}",
+              static_cast<s8>(mem.Read8(obj + 0x178)), mem.Read32(obj + 0x17c));
+    for (const u64 off : std::array<u64, 4>{0x30, 0x50, 0x70, 0x90}) {
+        const u64 s = mem.Read64(obj + off);
+        if (s == 0) {
+            LOG_ERROR(Service_AM, "DXD_R9 obj+{:#x} null", off);
+            continue;
+        }
+        const u64 vt = mem.Read64(s);
+        const u64 fn = mem.Read64(vt + 0x20);
+        LOG_ERROR(Service_AM,
+                  "DXD_R9 obj+{:#x}: s={:#x} vt={:#x} ({}) fn+0x20={:#x} ({}) s+8={:#x} s+0x17c={:#x}",
+                  off, s, vt, where(vt), fn, where(fn), mem.Read32(s + 8), mem.Read8(s + 0x17c));
+    }
+    // ponytail: DxD round-10 debug, player object s1=obj+0x30 holds +0x17c flags; log its
+    // style index and the nn::hid-style record it last read (sampling, buttons, attributes).
+    const u64 s1 = mem.Read64(obj + 0x30);
+    if (s1 != 0) {
+        const u64 rec = mem.Read64(s1 + 0x180);
+        LOG_ERROR(Service_AM, "DXD_R10 s1={:#x} +0x178={:#x} +0x17c={:#x} rec(+0x180)={:#x}",
+                  s1, mem.Read32(s1 + 0x178), mem.Read8(s1 + 0x17c), rec);
+        if (rec != 0) {
+            LOG_ERROR(Service_AM, "DXD_R10 rec sampling={} buttons={:#x} attr={:#x} ({})",
+                      mem.Read64(rec), mem.Read64(rec + 8), mem.Read32(rec + 0x20), where(rec));
+        }
+    }
+    const u64 x23 = mem.Read64(mem.Read64(base + 0x227c5e0));
+    LOG_ERROR(Service_AM, "DXD_R9 list x23={:#x} head={:#x} sentinel={:#x}", x23,
+              mem.Read64(x23 + 0x168), x23 + 0x160);
+}
+
 Result ILibraryAppletCreator::CreateLibraryApplet(
     Out<SharedPointer<ILibraryAppletAccessor>> out_library_applet_accessor, AppletId applet_id,
     LibraryAppletMode library_applet_mode) {
@@ -235,6 +327,18 @@ Result ILibraryAppletCreator::CreateLibraryApplet(
               library_applet_mode);
 
     applet_id = NormalizeAppletId(applet_id);
+    // ponytail: DxD round-8 debug, EDEN_DXD_BT=1 logs guest backtrace on controller applet creation
+    // ponytail: IPC runs on a host thread, so CurrentPhysicalCore() is unusable; dump every guest core.
+    if (applet_id == AppletId::Controller && std::getenv("EDEN_DXD_BT")) {
+        DxdDumpControllerState(system);
+        auto* proc = system.ApplicationProcess();
+        for (s32 core = 0; core < 4; core++) {
+            if (auto* arm = proc->GetArmInterface(core)) {
+                LOG_ERROR(Service_AM, "DXD_BT core={}", core);
+                arm->LogBacktrace(proc);
+            }
+        }
+    }
 
     std::shared_ptr<ILibraryAppletAccessor> library_applet;
     if (ShouldCreateGuestApplet(applet_id)) {
@@ -263,6 +367,17 @@ Result ILibraryAppletCreator::CreateLibraryAppletEx(
               library_applet_mode, thread_id);
 
     applet_id = NormalizeAppletId(applet_id);
+    // ponytail: DxD round-8 debug, EDEN_DXD_BT=1 logs guest backtrace on controller applet creation
+    if (applet_id == AppletId::Controller && std::getenv("EDEN_DXD_BT")) {
+        DxdDumpControllerState(system);
+        auto* proc = system.ApplicationProcess();
+        for (s32 core = 0; core < 4; core++) {
+            if (auto* arm = proc->GetArmInterface(core)) {
+                LOG_ERROR(Service_AM, "DXD_BT core={}", core);
+                arm->LogBacktrace(proc);
+            }
+        }
+    }
 
     std::shared_ptr<ILibraryAppletAccessor> library_applet;
     if (ShouldCreateGuestApplet(applet_id)) {

@@ -166,6 +166,15 @@ IR::Value MakeColor(IR::IREmitter& ir, IR::Reg reg, int num_regs) {
     }
     return ir.CompositeConstruct(colors[0], colors[1], colors[2], colors[3]);
 }
+
+IR::Value MakeMaskedColor(IR::IREmitter& ir, IR::Reg reg, unsigned mask) {
+    std::array<IR::U32, 4> colors;
+    int next{};
+    for (unsigned component = 0; component < 4; ++component) {
+        colors[component] = ((mask >> component) & 1) != 0 ? ir.GetReg(reg + next++) : ir.Imm32(0);
+    }
+    return ir.CompositeConstruct(colors[0], colors[1], colors[2], colors[3]);
+}
 } // Anonymous namespace
 
 void TranslatorVisitor::SULD(u64 insn) {

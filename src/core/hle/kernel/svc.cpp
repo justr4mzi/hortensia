@@ -23,6 +23,14 @@
 #include "core/arm/arm_interface.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
+#include "common/game_fps.h"
+#include "common/fs/path_util.h"
+#include "common/settings.h"
+#include "core/wonder_dynamic_fps.h"
+#include "core/tennis_clock_log.h"
+#include "core/tennis_speed_meter.h"
+#include "core/tennis_dynamic_fps.h"
+#include "core/file_sys/tennis_fps_patch.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/svc.h"
 #include "core/hle/kernel/svc_results.h"
@@ -2787,12 +2795,14 @@ void Call(Core::System& system, u32 imm) {
                 const u32 handle = process.GetMemory().Read32(GetArg64(args, 1) + 4 * i);
                 KScopedAutoObject event =
                     process.GetHandleTable().GetObject<KReadableEvent>(kernel, handle);
-                list += fmt::format(" {:#x}{}", handle,
-                                    event.IsNotNull()
-                                        ? "=" + Service::KernelHelpers::DebugEventName(event.GetPointerUnsafe())
-                                        : std::string{});
+                list += fmt::format(
+                    " {:#x}{}", handle,
+                    event.IsNotNull()
+                        ? "=" + Service::KernelHelpers::DebugEventName(event.GetPointerUnsafe())
+                        : std::string{});
             }
-            LOG_INFO(Kernel_SVC, "svc 0x18 t{} waits on{}", GetCurrentThread(kernel).GetThreadId(), list);
+            LOG_INFO(Kernel_SVC, "svc 0x18 t{} waits on{}", GetCurrentThread(kernel).GetThreadId(),
+                     list);
         }
     }
     // svc 0x7d and 0x7e are CreateResourceLimit and SetResourceLimitLimitValue: only the svcs the

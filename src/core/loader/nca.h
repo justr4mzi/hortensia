@@ -16,6 +16,7 @@ class System;
 namespace FileSys {
 class NACP;
 class NCA;
+class ProgramMetadata;
 }
 
 namespace Loader {
@@ -48,6 +49,7 @@ public:
     ResultStatus ReadRomFS(FileSys::VirtualFile& dir) override;
     ResultStatus ReadProgramId(u64& out_program_id) override;
     ResultStatus ReadControlData(FileSys::NACP& out_control) override;
+    ResultStatus ReadProgramMetadata(FileSys::ProgramMetadata& out) override;
     ResultStatus ReadTitle(std::string& out_title) override;
 
     ResultStatus ReadBanner(std::vector<u8>& buffer) override;

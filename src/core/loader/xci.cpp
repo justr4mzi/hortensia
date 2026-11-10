@@ -152,6 +152,10 @@ ResultStatus AppLoader_XCI::ReadUpdateRaw(FileSys::VirtualFile& out_file) {
     return ResultStatus::Success;
 }
 
+ResultStatus AppLoader_XCI::ReadProgramMetadata(FileSys::ProgramMetadata& out) {
+    return nca_loader->ReadProgramMetadata(out);
+}
+
 ResultStatus AppLoader_XCI::ReadProgramId(u64& out_program_id) {
     return nca_loader->ReadProgramId(out_program_id);
 }

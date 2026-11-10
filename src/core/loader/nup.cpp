@@ -10,6 +10,7 @@
 #include "common/string_util.h"
 #include "core/core.h"
 #include "core/file_sys/nup_container.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/romfs.h"
@@ -242,18 +243,6 @@ AppLoader_NUP::AppLoader_NUP(FileSys::VirtualFile file_)
                 meta.localized_icons.front().second, "icon.dat");
         }
     }
-
-    const auto addon_count = std::count_if(nup->GetPackages().begin(), nup->GetPackages().end(),
-                                           [](const auto& package) {
-                                               return package.kind ==
-                                                      NupContainer::PackageKind::Addon;
-                                           });
-    if (addon_count > 0) {
-        LOG_WARNING(Loader,
-                    "NUP container has {} add-on content package(s); AoC mounting is not "
-                    "supported yet",
-                    addon_count);
-    }
 }
 
 AppLoader_NUP::~AppLoader_NUP() = default;
@@ -313,6 +302,42 @@ ResultStatus AppLoader_NUP::VerifyIntegrity(
         return nup->GetStatus();
     }
     return nup->VerifyIntegrity(std::move(progress_callback));
+}
+
+std::vector<FileSys::Patch> AppLoader_NUP::ReadEmbeddedPatches() const {
+    std::vector<FileSys::Patch> patches;
+    if (nup->GetStatus() != ResultStatus::Success) {
+        return patches;
+    }
+    const auto& packages = nup->GetPackages();
+    if (const auto update = nup->FindBestUpdatePackage()) {
+        const auto& package = packages[*update];
+        patches.push_back({.enabled = true,
+                           .name = "Update",
+                           .version = package.display_version.empty()
+                                          ? DecodeVersion(package.version)
+                                          : package.display_version,
+                           .type = FileSys::PatchType::Update,
+                           .program_id = base_title_id,
+                           .title_id = package.title_id,
+                           .source = FileSys::PatchSource::Embedded,
+                           .numeric_version = package.version});
+    }
+    const u64 application_id = nacp_file && nacp_file->GetDLCBaseTitleId() != 0
+                                   ? FileSys::GetBaseTitleID(nacp_file->GetDLCBaseTitleId())
+                                   : base_title_id;
+    for (const auto index : nup->FindAddonPackages(application_id)) {
+        const auto& package = packages[index];
+        patches.push_back({.enabled = true,
+                           .name = "DLC",
+                           .version = fmt::format("{}", package.title_id & 0x7FF),
+                           .type = FileSys::PatchType::DLC,
+                           .program_id = application_id,
+                           .title_id = package.title_id,
+                           .source = FileSys::PatchSource::Embedded,
+                           .numeric_version = package.version});
+    }
+    return patches;
 }
 
 ResultStatus AppLoader_NUP::ReadRomFS(FileSys::VirtualFile& out_file) {
@@ -377,10 +402,19 @@ ResultStatus AppLoader_NUP::ReadTitle(std::string& title) {
     if (nacp_file == nullptr) {
         return ResultStatus::ErrorNoControl;
     }
-    title = nacp_file->GetApplicationName();
+    title = title_override.empty() ? nacp_file->GetApplicationName() : title_override;
     if (title.empty()) {
         return ResultStatus::ErrorNoControl;
     }
+    return ResultStatus::Success;
+}
+
+ResultStatus AppLoader_NUP::ReadDisplayVersion(std::string& version) {
+    if (nacp_file == nullptr) {
+        return ResultStatus::ErrorNoControl;
+    }
+    // Keep authentic control bytes intact while honoring the selected update and UI overrides.
+    version = display_version.empty() ? nacp_file->GetVersionString() : display_version;
     return ResultStatus::Success;
 }
 

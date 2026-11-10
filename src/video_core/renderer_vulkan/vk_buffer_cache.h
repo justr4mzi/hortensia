@@ -337,6 +337,8 @@ private:
     u32 vertex_repack_mask{};
     bool static_vertex_repack{};
     QuadIndexedPass quad_index_pass;
+    QuadIndirectPass quad_indirect_pass;
+    std::pair<VkBuffer, VkDeviceSize> array_indirect_args{};
 
     MultiRangeBufferCache multi_range_buffers;
     boost::container::small_vector<MultiRangeSource, 16> multi_range_sources;

@@ -34,6 +34,7 @@ public:
                 if (IsValid(tmp.address)) {
                     std::scoped_lock lk(guard);
                     back_buffer.emplace_back(tmp);
+                    has_back.store(true, std::memory_order_release);
                     current.exchange(t, std::memory_order_relaxed);
                     return;
                 }
@@ -44,7 +45,7 @@ public:
                 return;
             }
             tmp.mask |= t.mask;
-        } while (!current.compare_exchange_weak(original, tmp, std::memory_order_release,
+        } while (!current.compare_exchange_weak(original, tmp, std::memory_order_acq_rel,
                                                 std::memory_order_relaxed));
     }
 
@@ -73,8 +74,11 @@ public:
         std::scoped_lock gather_lk(gather_guard);
         {
             std::scoped_lock lk(guard);
-            TransformAddress t = current.exchange(default_transform, std::memory_order_relaxed);
+            // Before the exchange: a Collect that lands in the next list sees the new generation.
+            generation.fetch_add(1, std::memory_order_relaxed);
+            TransformAddress t = current.exchange(default_transform, std::memory_order_acq_rel);
             front_buffer.swap(back_buffer);
+            has_back.store(false, std::memory_order_relaxed);
             if (IsValid(t.address)) {
                 front_buffer.emplace_back(t);
             }
@@ -168,6 +172,8 @@ private:
     }
 
     std::atomic<TransformAddress> current{};
+    std::atomic<bool> has_back{}; ///< back_buffer holds entries (set and cleared under guard)
+    std::atomic<u64> generation{};
     std::mutex guard;
     std::mutex gather_guard;
     std::vector<TransformAddress> back_buffer;

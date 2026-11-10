@@ -60,6 +60,9 @@ struct WordManager {
     }
     explicit WordManager() = default;
 
+    /// Grows whenever pages here become CPU modified (MemoryTrackerBase::CpuWriteEpoch).
+    u64 cpu_epoch{1};
+
     static u64 ExtractBits(u64 word, size_t page_start, size_t page_end) {
         constexpr size_t number_bits = sizeof(u64) * 8;
         const size_t limit_page_end = number_bits - (std::min)(page_end, number_bits);
@@ -138,6 +141,8 @@ struct WordManager {
             }
             if (enable) {
                 state_words[index] |= mask;
+                if (type == Type::CPU)
+                    ++cpu_epoch;
                 if (type == Type::CPU || type == Type::CachedCPU)
                     untracked_words[index] |= mask;
                 if (type == Type::CPU)

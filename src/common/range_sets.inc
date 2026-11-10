@@ -194,7 +194,8 @@ struct OverlapRangeSet<AddressType>::OverlapRangeSetImpl {
 
     template <typename Func>
     void ForEachInRange(AddressType base_address, size_t size, Func&& func) const {
-        if (m_split_ranges_set.empty()) {
+        // An empty query breaks the set's ordering: at address 0 it visits every range, inverted.
+        if (m_split_ranges_set.empty() || size == 0) {
             return;
         }
         const AddressType start_address = base_address;
@@ -255,6 +256,7 @@ void RangeSet<AddressType>::Add(AddressType base_address, size_t size) {
 
 template <typename AddressType>
 void RangeSet<AddressType>::Subtract(AddressType base_address, size_t size) {
+    ++m_removals;
     m_impl->Subtract(base_address, size);
 }
 
@@ -266,6 +268,17 @@ void RangeSet<AddressType>::Clear() {
 template <typename AddressType>
 bool RangeSet<AddressType>::Empty() const {
     return m_impl->m_ranges.empty();
+}
+
+template <typename AddressType>
+bool RangeSet<AddressType>::Contains(AddressType base_address, size_t size) const {
+    const auto& set = m_impl->m_ranges_set;
+    if (set.empty() || size == 0) {
+        return false;
+    }
+    const AddressType end_address = base_address + static_cast<AddressType>(size);
+    const auto it = set.find(base_address);
+    return it != set.end() && it->lower() <= base_address && it->upper() >= end_address;
 }
 
 template <typename AddressType>

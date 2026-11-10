@@ -1,0 +1,23 @@
+{
+  "roi": [
+    83,
+    135,
+    348,
+    175
+  ],
+  "threshold": 0.05,
+  "positive": {
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0010-checkpoint-bananza-ingot-tunnel-v1.png": 0.008910018556171417,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0011-checkpoint-bananza-ingot-tunnel-v1.png": 0.008834196974318195,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0008-wait.png": 0.017313491488307232,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0009-wait.png": 0.008840955100764845,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165701-dc3bbdf2/0003-checkpoint-bananza-ingot-tunnel-v1.png": 0.037614191319169654
+  },
+  "negative": {
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0002-A.png": 0.407237609217199,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0003-A.png": 0.3882951431900341,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165157-c3f26d25/0004-A.png": 0.3815623834652792,
+    "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-165701-dc3bbdf2/0001-boot.png": 0.364438273095904,
+    "synthetic_black": 0.3877739629109346
+  }
+}

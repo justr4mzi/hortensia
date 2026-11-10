@@ -231,6 +231,11 @@ public:
     /// Sync memory between guest and host.
     virtual void InvalidateGPUCache() = 0;
 
+    /// Guest instruction-cache invalidation after GPU writes to shader code.
+    virtual void InvalidateShaderCache() {
+        InvalidateGPUCache();
+    }
+
     /// Unmap memory range
     virtual void UnmapMemory(DAddr addr, u64 size) = 0;
 

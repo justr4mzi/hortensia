@@ -44,6 +44,8 @@ class UpdateDescriptorQueue final {
 
 public:
     static constexpr size_t GUEST_FRAME_PAYLOAD_SIZE = 0x80000;
+    /// A frame's slice grows (doubling) up to this many times its initial size when it overflows.
+    static constexpr size_t MAX_PAYLOAD_GROWTH = 4;
     static constexpr size_t COMPUTE_FRAME_PAYLOAD_SIZE = 0x20000;
 
     explicit UpdateDescriptorQueue(const Device& device_, size_t frame_payload_size_,

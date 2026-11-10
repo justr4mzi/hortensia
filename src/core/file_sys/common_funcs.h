@@ -52,4 +52,10 @@ constexpr u64 BASE_TITLE_ID_MASK = 0xFFFFFFFFFFFFE000;
     return aoc_title_id & AOC_TITLE_ID_MASK;
 }
 
+/// Switch 2 Edition dumps name add-on content after the NX application (0100...) even when the
+/// program is the Switch 2 build (0400...): the platform byte follows the running program.
+[[nodiscard]] constexpr u64 WithPlatformOf(u64 title_id, u64 program_id) {
+    return (title_id & 0x00FFFFFFFFFFFFFFULL) | (program_id & 0xFF00000000000000ULL);
+}
+
 } // namespace FileSys

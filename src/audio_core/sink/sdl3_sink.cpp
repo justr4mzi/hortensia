@@ -109,7 +109,9 @@ public:
                                            this);
 
         if (stream == nullptr) {
-            LOG_CRITICAL(Audio_Sink, "Error opening SDL audio device: {}", SDL_GetError());
+            LOG_CRITICAL(Audio_Sink, "Error opening SDL audio device: {}, playing silence instead",
+                         SDL_GetError());
+            StartSilentDevice();
             return;
         }
 
@@ -173,7 +175,7 @@ public:
      * Stop the sink stream.
      */
     void Stop() override {
-        if (stream == nullptr || paused) {
+        if (paused) {
             return;
         }
         SignalPause();

@@ -11,6 +11,8 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/logging.h"
+#include "common/paged_scalar.h"
+#include "common/unmapped_read_diagnostic.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_page_table.h"
 #include "core/hle/kernel/k_process.h"
@@ -26,6 +28,31 @@
 #include "video_core/texture_cache/util.h"
 
 namespace Tegra {
+namespace {
+// Called only for an already-reported scalar fault with the explicit trace opt-in.
+// Capture host callers here; source_location inside Read's lambda names the lambda itself.
+void LogScalarReadFaultStack(u64 address, size_t bits, u32 record) {
+#if (defined(__linux__) || defined(__APPLE__)) && __has_include(<execinfo.h>)
+    void* frames[24]{};
+    const int count = backtrace(frames, static_cast<int>(std::size(frames)));
+    for (int index = 0; index < count; ++index) {
+        Dl_info info{};
+        const bool resolved = dladdr(frames[index], &info) != 0;
+        const auto pc = reinterpret_cast<std::uintptr_t>(frames[index]);
+        const auto base = reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+        LOG_ERROR(HW_GPU, "Scalar read fault stack bits={} fault={:#x} record={} frame={} "
+                          "pc={:#x} module={} offset={:#x} symbol={}",
+                  bits, address, record, index, pc, resolved && info.dli_fname ? info.dli_fname : "unknown",
+                  resolved ? pc - base : pc,
+                  resolved && info.dli_sname ? info.dli_sname : "unknown");
+    }
+#else
+    LOG_ERROR(HW_GPU, "Scalar read fault stack unavailable on this platform: bits={} "
+                      "fault={:#x} record={}", bits, address, record);
+#endif
+}
+} // namespace
+
 bool MemoryManager::IsShuttingDown() const {
     return system.IsShuttingDown();
 }
@@ -58,6 +85,8 @@ MemoryManager::MemoryManager(Core::System& system_, MaxwellDeviceMemoryManager& 
     big_entries.resize(big_page_table_size / 32, 0);
     big_page_continuous.resize(big_page_table_size / continuous_bits, 0);
     entries.resize(page_table_size / 32, 0);
+    // A new address space at the address of a destroyed one must not reuse its kinds.
+    kind_generation.fetch_add(1, std::memory_order_release);
 }
 
 MemoryManager::MemoryManager(Core::System& system_, u64 address_space_bits_, GPUVAddr split_address_, u64 big_page_bits_, u64 page_bits_)
@@ -68,7 +97,9 @@ void MemoryManager::SetNativeSyncpointShim(GPUVAddr address) {
     native_syncpoint_shim.store(address, std::memory_order_release);
 }
 
-MemoryManager::~MemoryManager() = default;
+MemoryManager::~MemoryManager() {
+    kind_generation.fetch_add(1, std::memory_order_release);
+}
 
 MemoryManager::EntryType MemoryManager::GetEntry(size_t position, bool is_big_page) const {
     // Ranges that run past the address space (Mario Kart World asks for some) are unmapped there.
@@ -246,6 +277,7 @@ GPUVAddr MemoryManager::BigPageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr
     {
         std::unique_lock<std::mutex> lock(guard);
         kind_map.Map(gpu_addr, gpu_addr + size, kind);
+        kind_generation.fetch_add(1, std::memory_order_release);
     }
     UpdateContinuousRuns(gpu_addr, size);
     map_serial.fetch_add(1, std::memory_order_release);
@@ -335,19 +367,37 @@ T MemoryManager::Read(GPUVAddr addr) const {
         }
     }
 
-    if (auto page_pointer{GetPointer(addr)}; page_pointer) {
-        // NOTE: Avoid adding any extra logic to this fast-path block
-        T value;
-        std::memcpy(&value, page_pointer, sizeof(T));
-        return value;
-    }
-
-    static std::atomic<u32> reported{};
-    if (reported.fetch_add(1) < 16) {
-        LOG_ERROR(HW_GPU, "Read{} of unmapped GPU address {:#x}", sizeof(T) * 8, addr);
-    }
-
-    return {};
+    // A host pointer is only valid within its 4 KiB device page, even inside a big GPU page.
+    return Common::ReadPagedScalar<T>(addr, [&](GPUVAddr address) {
+        const u8* const page_pointer = GetPointer(address);
+        if (!page_pointer) {
+            static std::atomic<u32> reported{};
+            const u32 report = reported.fetch_add(1);
+            if (report < 16) {
+                LOG_ERROR(HW_GPU, "Read{} of unmapped GPU address {:#x}", sizeof(T) * 8,
+                          address);
+                if (Common::UnmappedReadDiagnostic::Enabled()) {
+                    // Re-query only on this failure path. Mapping can change concurrently:
+                    // these fields describe the diagnostic instant, not the original lookup.
+                    const auto translated = GpuToCpuAddress(address);
+                    const bool backed_now = translated && memory.GetPointer<u8>(*translated);
+                    const char* const classification = !translated ? "gpu-translation"
+                        : backed_now ? "mapping-changed-or-transient" : "missing-device-backing";
+                    LOG_ERROR(HW_GPU, "Scalar read fault trace: memory_id={} requested={:#x}+{} "
+                                      "fault={:#x} mapping_at_trace={} translated={} device={:#x} "
+                                      "backed_now={} record={}/16",
+                              GetID(), addr, sizeof(T), address, classification,
+                              translated.has_value(), translated.value_or(0), backed_now, report + 1);
+                    LogScalarReadFaultStack(address, sizeof(T) * 8, report + 1);
+                    if (report == 15) {
+                        LOG_ERROR(HW_GPU, "Scalar read fault trace cap reached for Read{}: "
+                                          "additional_faults_not_traced=true", sizeof(T) * 8);
+                    }
+                }
+            }
+        }
+        return page_pointer;
+    });
 }
 
 template <typename T>
@@ -897,7 +947,19 @@ size_t MemoryManager::GetMemoryLayoutSize(GPUVAddr gpu_addr,
 
 size_t MemoryManager::GetMemoryLayoutSizeUncached(GPUVAddr gpu_addr) const {
     std::unique_lock<std::mutex> lock(guard);
-    return kind_map.GetContinuousSizeFrom(gpu_addr);
+    const auto key = static_cast<s64>(gpu_addr);
+    if (key < 0) {
+        return 0;
+    }
+    const auto segment = kind_map.GetSegment(key);
+    cached = {
+        .owner = this,
+        .generation = kind_generation.load(std::memory_order_relaxed),
+        .start = static_cast<GPUVAddr>(std::max<s64>(segment.start, 0)),
+        .end = static_cast<GPUVAddr>(segment.end),
+        .null = segment.value == PTEKind::INVALID,
+    };
+    return cached.null ? 0 : static_cast<size_t>(cached.end - gpu_addr);
 }
 
 void MemoryManager::InvalidateRegion(GPUVAddr gpu_addr, size_t size,

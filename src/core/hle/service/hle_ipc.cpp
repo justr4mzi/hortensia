@@ -30,7 +30,9 @@
 namespace Service {
 
 SessionRequestHandler::SessionRequestHandler(Kernel::KernelCore& kernel_, const char* service_name_)
-    : kernel{kernel_} {}
+    : kernel{kernel_} {
+    diag_service_name = service_name_;
+}
 
 SessionRequestHandler::~SessionRequestHandler() = default;
 

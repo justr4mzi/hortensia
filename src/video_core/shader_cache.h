@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -79,6 +80,10 @@ public:
     /// Shader programs registered on the page holding addr (EDEN_NX2_WRITE_STATS).
     size_t EntriesOnPage(VAddr addr);
     void InvalidateRegions(std::span<const std::pair<DAddr, size_t>> sequences);
+
+    /// Regions whose GPU writes can invalidate compiled code or a remembered rejection.
+    /// Returns a snapshot so callers can perform readbacks without holding cache locks.
+    std::vector<std::pair<DAddr, size_t>> GetShaderCodeRanges();
 
     /// @brief Unmarks a memory region as cached and marks it for removal
     /// @param addr Start address of the CPU write operation
@@ -180,7 +185,9 @@ private:
     /// Whether a native program at this address was rejected.
     bool IsRejected(VAddr addr);
     /// Remembers the exception being handled as this address's rejection.
-    void RememberRejection(VAddr addr);
+    void RememberRejection(VAddr addr, GPUVAddr gpu_addr);
+    /// Drops a rejection whose program bytes changed since it was made (see the .cpp).
+    bool RecheckRejection(VAddr addr);
     /// Hash of the state task and mesh programs are translated with.
     u64 MeshStateHash() const;
 
@@ -193,6 +200,12 @@ private:
     ::Common::unordered_map<u64, std::vector<Entry*>> invalidation_cache;
     std::vector<std::unique_ptr<ShaderInfo>> storage;
     std::vector<Entry*> marked_for_removal;
+    // Invalidation can run on a CPU thread while a renderer lookup still uses a ShaderInfo.
+    // Keep removed objects alive until the next renderer lookup has dropped its old bindings.
+    std::vector<std::unique_ptr<ShaderInfo>> retired_shaders;
+    std::atomic<u64> invalidation_generation{};
+    u64 observed_invalidation_generation{}; // renderer thread only
+    std::chrono::steady_clock::time_point next_failed_stage_retry{};
 
     /// Shaders removed from the cache, freed by FreeRemovedShaders. Removals also run on guest CPU
     /// threads, and a game may rewrite a bound program and draw without writing the shader
@@ -205,7 +218,14 @@ private:
     /// Native programs the lowering rejected, by address, so each draw or dispatch rethrows the
     /// first error instead of lowering again; dropped when guest memory there is written.
     std::mutex rejected_mutex;
-    ::Common::unordered_map<u64, std::exception_ptr> rejected_native;
+    struct Rejection {
+        std::exception_ptr error;
+        GPUVAddr gpu_addr{};
+        std::vector<u8> bytes;
+        std::chrono::steady_clock::time_point made;
+        std::chrono::steady_clock::time_point checked;
+    };
+    ::Common::unordered_map<u64, Rejection> rejected_native;
     /// Bounds of every address ever rejected (never shrinks): a quick test for invalidations.
     std::atomic<VAddr> rejected_lowest{~VAddr{}};
     std::atomic<VAddr> rejected_highest{};

@@ -1,15 +1,21 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <chrono>
+#include "common/game_fps.h"
+#include "core/tennis_speed_meter.h"
+
 // Static Qt on macOS doesn't use Vulkan
 // Other platforms do, and thus have conflicting VulkanMemoryAllocator symbols
 #include "core/launch_params.h"
+#include "core/loader/loose_directory.h"
 #if defined(QT_STATICPLUGIN) && !defined(__APPLE__)
 #undef VMA_IMPLEMENTATION
 #endif
 
 #include <QSysInfo>
 #include <boost/algorithm/string/split.hpp>
+#include "common/fs/fs_paths.h"
 #include "common/fs/path_util.h"
 #include "common/game_presets.h"
 #include "common/settings.h"
@@ -82,6 +88,11 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QVBoxLayout>
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
@@ -158,6 +169,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "core/frontend/applets/mii_edit.h"
 #include "core/frontend/applets/software_keyboard.h"
 
+#include "core/game_settings.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/service/acc/profile_manager.h"
 #include "core/hle/service/am/applet_manager.h"
@@ -1584,6 +1596,7 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Stop, &MainWindow::OnStopGame);
     connect_menu(ui->action_Open_Mods_Page, &MainWindow::OnOpenModsPage);
     connect_menu(ui->action_Open_UserHandbook, &MainWindow::OnOpenUserHandbook);
+    connect_menu(ui->action_Report_Crash, &MainWindow::OnReportCrash);
     connect_menu(ui->action_Restart, &MainWindow::OnRestartGame);
     connect_menu(ui->action_Configure, &MainWindow::OnConfigure);
     connect_menu(ui->action_Configure_Current_Game, &MainWindow::OnConfigurePerGame);
@@ -2038,8 +2051,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
                           StartGameType type) {
     if (nup_running && filename.toStdString() == nup_source_path) {
         QMessageBox::information(this, tr("Conversion in Progress"),
-                                 tr("This game cannot be started while its dump is being "
-                                    "converted."));
+                                 tr("This game cannot be started while a NUP task is "
+                                    "working on it."));
         return;
     }
     if (shader_warm_dialog && shader_warm_dialog->IsRunning()) {
@@ -2060,6 +2073,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         return;
     }
     boot_in_progress = true;
+    game_booted = true;
     game_list->SetScanEnabled(false);
     QElapsedTimer boot_timer;
     boot_timer.start();
@@ -2102,6 +2116,17 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     config->SaveAllValues();
 
     u64 title_id{0};
+    bool boot_settings_loaded = false;
+    SCOPE_EXIT {
+        // A cancelled preset/user dialog or a failed boot must not leak session values or the
+        // loaded per-game input selection into the next title.
+        if (boot_settings_loaded && !emulation_running && !QtCommon::system->IsPoweredOn()) {
+            Settings::RestoreGlobalState(false);
+            QtCommon::system->HIDCore().ReloadInputDevices();
+            QtCommon::system->ApplySettings();
+            Settings::UpdateGPUAccuracy();
+        }
+    };
 
     last_filename_booted = filename;
 
@@ -2119,6 +2144,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
                                           ? Common::FS::PathToUTF8String(file_path.filename())
                                           : fmt::format("{:016X}", title_id);
         QtConfig per_game_config(config_file_name, Config::ConfigType::PerGameConfig);
+        boot_settings_loaded = true;
         QtCommon::system->HIDCore().ReloadInputDevices();
         QtCommon::system->ApplySettings();
     }
@@ -2137,11 +2163,106 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
         LOG_INFO(Config, "MKW recommended settings accepted: {}", use_recommended_mkw_settings);
     }
-    if (Settings::ApplyMarioKartWorldPreset(Settings::values, title_id,
-                                          use_recommended_mkw_settings)) {
-        QtCommon::system->ApplySettings();
-        Settings::UpdateGPUAccuracy();
-        LOG_INFO(Config, "Applied recommended MKW settings after per-game configuration");
+
+    if (const Settings::GamePreset* preset = Settings::FindGamePreset(title_id);
+        preset != nullptr) {
+        using Quality = Settings::GamePresetQuality;
+        std::optional<Quality> selected;
+        const QByteArray preset_override = qgetenv("EDEN_RECOMMENDED_SETTINGS");
+        if (!preset_override.isEmpty()) {
+            selected = Settings::GamePresetEnvironmentQuality(preset_override.toStdString());
+        } else {
+            QDialog dialog(this);
+            dialog.setObjectName(QStringLiteral("gamePresetDialog"));
+            dialog.setWindowTitle(tr("Start %1").arg(QString::fromUtf8(preset->name)));
+            dialog.setMinimumWidth(440);
+            auto* layout = new QVBoxLayout(&dialog);
+            auto* label = new QLabel(tr("Graphics preset"), &dialog);
+            auto* quality = new QComboBox(&dialog);
+            quality->setObjectName(QStringLiteral("gamePresetQuality"));
+            quality->addItem(tr("Low"), static_cast<int>(Quality::Low));
+            quality->addItem(tr("Standard (recommended)"), static_cast<int>(Quality::Standard));
+            quality->addItem(tr("High"), static_cast<int>(Quality::High));
+            label->setBuddy(quality);
+            const Quality remembered =
+                UISettings::values.game_preset_qualities.value(title_id, Quality::Standard);
+            const int remembered_index = quality->findData(static_cast<int>(remembered));
+            quality->setCurrentIndex(remembered_index < 0 ? 1 : remembered_index);
+            auto* summary = new QLabel(&dialog);
+            summary->setObjectName(QStringLiteral("gamePresetSummary"));
+            summary->setWordWrap(true);
+            summary->setMinimumHeight(76);
+            const auto update_summary = [&] {
+                switch (static_cast<Quality>(quality->currentData().toInt())) {
+                case Quality::Low:
+                    summary->setText(
+                        tr("0.75× resolution · FXAA · BC3 textures · 2× anisotropic filtering\n"
+                           "Lower GPU load with a softer image."));
+                    break;
+                case Quality::High:
+                    summary->setText(tr(
+                        "2× resolution · SMAA · Uncompressed textures · 16× anisotropic filtering\n"
+                        "Sharper image with higher GPU and graphics memory use."));
+                    break;
+                default:
+                    summary->setText(
+                        tr("1× resolution · FXAA · BC3 textures · 4× anisotropic filtering\n"
+                           "A balance of image quality and performance."));
+                    break;
+                }
+            };
+            connect(quality, &QComboBox::currentIndexChanged, &dialog, update_summary);
+            update_summary();
+            auto* compatibility = new QLabel(
+                preset->program_id == Settings::DonkeyKongBananzaProgramId
+                    ? tr("Game compatibility settings and the 30 FPS lock stay enabled in every "
+                         "preset.")
+                : preset->program_id == Settings::MarioTennisFeverProgramId ||
+                        preset->program_id == Settings::HyruleWarriorsAgeOfImprisonmentProgramId
+                    ? tr("Recommended game compatibility settings stay enabled in every preset.")
+                    : tr("Settings apply for this launch. Your saved graphics settings stay "
+                         "unchanged."),
+                &dialog);
+            compatibility->setObjectName(QStringLiteral("gamePresetCompatibility"));
+            compatibility->setWordWrap(true);
+            auto* buttons = new QDialogButtonBox(&dialog);
+            auto* start = buttons->addButton(tr("Start"), QDialogButtonBox::AcceptRole);
+            start->setObjectName(QStringLiteral("gamePresetStart"));
+            start->setDefault(true);
+            auto* current =
+                buttons->addButton(tr("Use current settings"), QDialogButtonBox::ActionRole);
+            current->setObjectName(QStringLiteral("gamePresetCurrent"));
+            auto* cancel = buttons->addButton(QDialogButtonBox::Cancel);
+            cancel->setObjectName(QStringLiteral("gamePresetCancel"));
+            connect(start, &QPushButton::clicked, &dialog, &QDialog::accept);
+            connect(current, &QPushButton::clicked, &dialog, [&dialog] { dialog.done(2); });
+            connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+            layout->addWidget(label);
+            layout->addWidget(quality);
+            layout->addWidget(summary);
+            layout->addWidget(compatibility);
+            layout->addSpacing(8);
+            layout->addWidget(buttons);
+            quality->setFocus();
+            const int result = dialog.exec();
+            if (result == QDialog::Rejected) {
+                return;
+            }
+            if (result == QDialog::Accepted) {
+                selected = static_cast<Quality>(quality->currentData().toInt());
+                UISettings::values.game_preset_qualities.insert(title_id, *selected);
+                config->SaveGamePresetQualities();
+            }
+        }
+        if (selected && Settings::ApplyGamePreset(Settings::values, title_id, *selected)) {
+            boot_settings_loaded = true;
+            QtCommon::system->ApplySettings();
+            Settings::UpdateGPUAccuracy();
+            LOG_INFO(Config, "Applied {} graphics preset for {}",
+                     Settings::GamePresetQualityToken(*selected), preset->name);
+        } else {
+            LOG_INFO(Config, "Using current settings for {}", preset->name);
+        }
     }
     PrepareShaderPrecache(title_id, std::filesystem::path{filename.toStdU16String()});
     Settings::LogSettings();
@@ -3268,13 +3389,15 @@ void MainWindow::OnMenuLoadFolder() {
         return;
     }
 
-    const QDir dir{dir_path};
-    const QStringList matching_main = dir.entryList({QStringLiteral("main")}, QDir::Files);
-    if (matching_main.size() == 1) {
-        BootGame(dir.path() + QDir::separator() + matching_main[0], ApplicationAppletParameters());
+    const auto main = Loader::ResolveLooseProgramPath(
+        std::filesystem::path{Common::FS::ToU8String(dir_path.toStdString())});
+    if (main) {
+        BootGame(QString::fromStdString(Common::FS::PathToUTF8String(*main)),
+                 ApplicationAppletParameters());
     } else {
         QMessageBox::warning(this, tr("Invalid Directory Selected"),
-                             tr("The directory you have selected does not contain a 'main' file."));
+                             tr("The directory you have selected does not contain a usable extracted "
+                                "game."));
     }
 }
 
@@ -3686,6 +3809,72 @@ void MainWindow::OnOpenModsPage() {
 
 void MainWindow::OnOpenUserHandbook() {
     OpenURL(QUrl(QStringLiteral("https://github.com/notsapinho/Eglantine/blob/main/docs/user/README.md")));
+}
+
+void MainWindow::OnReportCrash() {
+    const auto log_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir);
+    Common::Log::Flush();
+    auto log_path = Common::Log::GetLogFilePath();
+    if (!game_booted) {
+        // Game logs survive restarts. Offer the most recently written game session.
+        log_path = log_dir / (std::string{LOG_FILE} + ".old.txt");
+        std::filesystem::file_time_type latest = std::filesystem::file_time_type::min();
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(log_dir, ec), end;
+             !ec && it != end; it.increment(ec)) {
+            const auto filename = it->path().filename().string();
+            if (!filename.starts_with("orchid_") || filename == LOG_FILE ||
+                filename.ends_with(".old.txt") || it->path().extension() != ".txt") {
+                continue;
+            }
+            const auto modified = it->last_write_time(ec);
+            if (!ec && modified > latest) {
+                latest = modified;
+                log_path = it->path();
+            }
+        }
+    }
+    QFile file(QString::fromStdString(Common::FS::PathToUTF8String(log_path)));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Report an Issue"),
+                             tr("No log of a previous run was found. Start the game again until "
+                                "it crashes, then use this menu entry after restarting Orchid."));
+        return;
+    }
+    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+
+    // The log's first lines are the version and the host, its Report lines the GPU and driver;
+    // its last lines lead up to the crash.
+    const QString system =
+        (lines.mid(0, 8) + lines.filter(QStringLiteral(":Report: "))).join(QLatin1Char('\n'));
+    qsizetype tail_count = 80;
+    QUrl url;
+    do {
+        const QString log =
+            QStringLiteral("Attach the full `%1` from the folder that just opened.\n\n"
+                           "```\n%2\n```")
+                .arg(QString::fromStdString(Common::FS::PathToUTF8String(log_path.filename())),
+                     lines.mid(std::max<qsizetype>(0, lines.size() - tail_count))
+                         .join(QLatin1Char('\n')));
+        // Field ids are the ones in .github/ISSUE_TEMPLATE/bug_report.yml.
+        QByteArray query = "template=bug_report.yml&title=Crash%3A%20";
+        const auto add = [&query](const char* field, const QString& value) {
+            query += QByteArray("&") + field + "=" + QUrl::toPercentEncoding(value);
+        };
+        add("build", QStringLiteral("%1 (%2)").arg(QString::fromUtf8(Common::g_build_version),
+                                                   QString::fromUtf8(Common::g_scm_rev)));
+        add("system-config", system);
+        add("log", log);
+        const QByteArray encoded = "https://github.com/" +
+                                   QByteArray(Common::g_build_auto_update_repo) +
+                                   "/issues/new?" + query;
+        url = QUrl::fromEncoded(encoded);
+        tail_count -= 10;
+        // GitHub rejects issue URLs longer than about 8 KB.
+    } while (url.toEncoded().size() > 8000 && tail_count > 0);
+
+    QtCommon::Game::OpenLogFolder();
+    OpenURL(url);
 }
 
 void MainWindow::ToggleFullscreen() {
@@ -4242,6 +4431,13 @@ void MainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file_
     const bool is_powered_on = QtCommon::system->IsPoweredOn();
     Settings::RestoreGlobalState(is_powered_on);
     QtCommon::system->HIDCore().ReloadInputDevices();
+    if (is_powered_on) {
+        // The dialog set every setting the user left alone back to global, dropping the running
+        // title's defaults; reapplied after its config file was saved, so they stay out of it.
+        Core::GameSettings::LoadOverrides(QtCommon::system->GetApplicationProcessProgramID(),
+                                          QtCommon::system->Renderer());
+        QtCommon::system->ApplySettings();
+    }
 
     UISettings::values.configuration_applied = false;
 
@@ -4545,6 +4741,121 @@ void MainWindow::OnGameListConvertToNup(const std::string& game_path) {
         progress_icon = dialog.CurrentIcon();
     }
 
+    const auto root_path = *root;
+    RunNupJob(
+        tr("Converting to NUP"), progress_title, progress_icon, game_path,
+        [root_path, archive, delete_sources, metadata](const auto& progress, const auto* cancel,
+                                                       std::string* error) {
+            return FileSys::Nup::PackDump(root_path, archive,
+                                          {.delete_sources = delete_sources, .metadata = metadata},
+                                          progress, cancel, error);
+        },
+        [this, delete_sources](FileSys::Nup::PackResult result, const QString& error) {
+            switch (result) {
+            case FileSys::Nup::PackResult::Success:
+                QMessageBox::information(
+                    this, tr("Conversion Complete"),
+                    delete_sources ? tr("The NUP was created and the loose folder was "
+                                        "removed.")
+                                   : tr("The NUP was created. You can delete the loose "
+                                        "folder if you no longer need it."));
+                OnGameListRefresh();
+                break;
+            case FileSys::Nup::PackResult::Cancelled:
+                if (delete_sources)
+                    QMessageBox::information(this, tr("Conversion Cancelled"),
+                                             tr("The conversion can be resumed by choosing "
+                                                "Convert to NUP again."));
+                break;
+            case FileSys::Nup::PackResult::InvalidSource:
+            case FileSys::Nup::PackResult::IoError:
+                QMessageBox::critical(this, tr("Conversion Failed"), error);
+                break;
+            }
+        });
+}
+
+void MainWindow::OnGameListExtractNup(const std::string& game_path) {
+    if (nup_running)
+        return;
+    const std::filesystem::path archive{std::u8string{game_path.begin(), game_path.end()}};
+    const auto suggested = FileSys::Nup::DefaultExtractPath(archive);
+    const QString parent = QFileDialog::getExistingDirectory(
+        this, tr("Extract NUP Into"),
+        QString::fromStdString(Common::FS::PathToUTF8String(suggested.parent_path())));
+    if (parent.isEmpty())
+        return;
+    // The folder keeps the archive's name so converting it back gives the same archive.
+    const auto output = std::filesystem::path{parent.toStdU16String()} / suggested.filename();
+    const QString output_text = QString::fromStdString(Common::FS::PathToUTF8String(output));
+    std::error_code ec;
+    if (std::filesystem::exists(output, ec) && !std::filesystem::is_empty(output, ec)) {
+        QMessageBox::information(this, tr("Extract NUP"),
+                                 tr("The target folder already exists and is not empty:\n%1")
+                                     .arg(output_text));
+        return;
+    }
+
+    const auto metadata = FileSys::Nup::ReadNupMetadata(archive);
+    QPixmap icon;
+    if (metadata && !metadata->icon.empty())
+        icon.loadFromData(metadata->icon.data(), static_cast<uint>(metadata->icon.size()));
+    RunNupJob(
+        tr("Extracting NUP"),
+        metadata ? QString::fromStdString(metadata->title_name) : QString{}, icon, game_path,
+        [archive, output](const auto& progress, const auto* cancel, std::string* error) {
+            return FileSys::Nup::ExtractNup(archive, output, progress, cancel, error);
+        },
+        [this, output_text](FileSys::Nup::PackResult result, const QString& error) {
+            if (result == FileSys::Nup::PackResult::Success) {
+                QMessageBox::information(this, tr("Extraction Complete"),
+                                         tr("Every package was extracted and verified:\n%1")
+                                             .arg(output_text));
+            } else if (result != FileSys::Nup::PackResult::Cancelled) {
+                QMessageBox::critical(this, tr("Extraction Failed"), error);
+            }
+        });
+}
+
+void MainWindow::OnGameListEditNupMetadata(const std::string& game_path) {
+    if (nup_running)
+        return;
+    if (emulation_running && game_path == last_filename_booted.toStdString()) {
+        QMessageBox::information(this, tr("Edit NUP Metadata"),
+                                 tr("Stop the game before editing its metadata."));
+        return;
+    }
+    const std::filesystem::path archive{std::u8string{game_path.begin(), game_path.end()}};
+    const auto current = FileSys::Nup::ReadNupMetadata(archive);
+    if (!current) {
+        QMessageBox::critical(this, tr("Edit NUP Metadata"),
+                              tr("This file could not be read as a NUP."));
+        return;
+    }
+    NupMetadataDialog dialog(*current, archive, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    const auto metadata = dialog.Metadata();
+    if (metadata.title_name.empty() && metadata.icon.empty() && metadata.display_version.empty())
+        return;
+
+    RunNupJob(
+        tr("Saving NUP Metadata"), dialog.DisplayName(), dialog.CurrentIcon(), game_path,
+        [archive, metadata](const auto& progress, const auto* cancel, std::string* error) {
+            return FileSys::Nup::EditNupMetadata(archive, metadata, progress, cancel, error);
+        },
+        [this](FileSys::Nup::PackResult result, const QString& error) {
+            if (result == FileSys::Nup::PackResult::Success) {
+                OnGameListRefresh();
+            } else if (result != FileSys::Nup::PackResult::Cancelled) {
+                QMessageBox::critical(this, tr("Saving Metadata Failed"), error);
+            }
+        });
+}
+
+void MainWindow::RunNupJob(const QString& window_title, const QString& title, const QPixmap& icon,
+                           const std::string& game_path, NupJob job,
+                           std::function<void(FileSys::Nup::PackResult, const QString&)> done) {
     nup_running = true;
     nup_source_path = game_path;
     game_list->SetNupConversionRunning(true);
@@ -4560,8 +4871,8 @@ void MainWindow::OnGameListConvertToNup(const std::string& game_path) {
 
     const auto cancel = nup_cancel;
     auto last_update = std::make_shared<std::chrono::steady_clock::time_point>();
-    nup_watcher.setFuture(QtConcurrent::run([this, root = *root, archive, delete_sources, metadata,
-                                                  cancel, last_update] {
+    nup_watcher.setFuture(QtConcurrent::run([this, job = std::move(job), done = std::move(done),
+                                             cancel, last_update] {
         std::string error;
         const auto on_progress = [this, last_update](
                                      const FileSys::Nup::PackProgress& progress) {
@@ -4578,12 +4889,10 @@ void MainWindow::OnGameListConvertToNup(const std::string& game_path) {
                     },
                     Qt::QueuedConnection);
         };
-        const auto result = FileSys::Nup::PackDump(
-            root, archive, {.delete_sources = delete_sources, .metadata = metadata}, on_progress,
-            cancel.get(), &error);
+        const auto result = job(on_progress, cancel.get(), &error);
         QMetaObject::invokeMethod(
             this,
-            [this, result, delete_sources, error] {
+            [this, result, done, error] {
                 nup_running = false;
                 nup_source_path.clear();
                 game_list->SetNupConversionRunning(false);
@@ -5301,7 +5610,22 @@ void MainWindow::UpdateStatusBar() {
     res_scale_label->setText(
         tr("Scale: %1x", "%1 is the resolution scaling factor").arg(res_scale));
 
-    if (Settings::values.use_speed_limit.GetValue()) {
+    const bool tennis_speed = QtCommon::system->GetApplicationProcessProgramID() ==
+                                  Settings::TennisFpsProgramId &&
+                              Settings::tennis_fps_active.load(std::memory_order_relaxed) != 0;
+    if (tennis_speed) {
+        const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const auto measured = Core::g_tennis_speed_meter.Read(
+            Settings::tennis_fps_generation.load(std::memory_order_relaxed), now);
+        emu_speed_label->setText(measured ? tr("Game speed: %1%")
+                                                   .arg(*measured * 100.0, 0, 'f', 0)
+                                              : tr("Game speed: —"));
+        emu_speed_label->setToolTip(tr("Measured character simulation time per real second; "
+                                      "menu animation time when no character is active. "
+                                      "100% means normal game speed. No value is shown while "
+                                      "the measurement is missing or interrupted."));
+    } else if (Settings::values.use_speed_limit.GetValue()) {
         emu_speed_label->setText(tr("Speed: %1% / %2%")
                                      .arg(results.emulation_speed * 100.0, 0, 'f', 0)
                                      .arg(Settings::SpeedLimit()));
@@ -5309,6 +5633,10 @@ void MainWindow::UpdateStatusBar() {
         emu_speed_label->setText(tr("Speed: %1%").arg(results.emulation_speed * 100.0, 0, 'f', 0));
     }
 
+    if (!tennis_speed) {
+        emu_speed_label->setToolTip(tr("Current emulation speed. Values higher or lower than 100% "
+                                      "indicate emulation is running faster or slower than a Switch."));
+    }
     QString fpsText = tr("Game: %1 FPS").arg(std::round(results.average_game_fps), 0, 'f', 0);
     if (!m_fpsSuffix.isEmpty())
         fpsText = fpsText % QStringLiteral(" (%1)").arg(m_fpsSuffix);
@@ -5324,7 +5652,7 @@ void MainWindow::UpdateStatusBar() {
     UpdateFrameGenButton();
 
     res_scale_label->setVisible(true);
-    emu_speed_label->setVisible(!Settings::values.use_multi_core.GetValue());
+    emu_speed_label->setVisible(true);
     game_fps_label->setVisible(true);
     emu_frametime_label->setVisible(true);
     firmware_label->setVisible(false);

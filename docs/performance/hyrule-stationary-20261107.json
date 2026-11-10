@@ -1,0 +1,172 @@
+{
+  "qualification": "three consecutive stationary windows within one boot, not independent repetitions",
+  "manual_finalization_evidence": "actual per-game log has Qt cleanup marker; process returned 0 without force",
+  "windows": [
+    {
+      "window": 1,
+      "start_ns": 53647023641869,
+      "end_ns": 53677023641869,
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-163003-2588fe32/frames/system-frames-04003F40232DE000-1784245-53298957812333-0.csv",
+        "sha256": "cb5911cc6207ce4c37317fbe516f1a87ee668a05a3ed55465911a991d07d8fdf",
+        "metric": "timestamped_system_frame_work_ms",
+        "semantics": "Timestamped Core::PerfStats BeginSystemFrame-to-EndSystemFrame elapsed milliseconds, using the Linux monotonic steady clock. The inverse mean is a work-rate estimate, not measured game/display FPS or GPU execution time.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "work_rate_only_not_game_fps",
+        "rows_read": 23628,
+        "excluded_intervals": 22371,
+        "window_start_ns": 53647023641869,
+        "window_end_ns": 53677023641869,
+        "stats": {
+          "available": true,
+          "count": 1257,
+          "sum_ms": 29975.169882,
+          "mean_ms": 23.846594973747017,
+          "p50_ms": 22.497939,
+          "p95_ms": 32.8864516,
+          "p99_ms": 40.97267008000002,
+          "min_ms": 12.132406,
+          "max_ms": 47.225189,
+          "inverse_mean_fps_estimate": 41.934708125034675,
+          "stutters_over_ms": {
+            "33.333333": 52,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1257,
+        "sum_ms": 29975.169882,
+        "mean_ms": 23.846594973747017,
+        "p50_ms": 22.497939,
+        "p95_ms": 32.8864516,
+        "p99_ms": 40.97267008000002,
+        "min_ms": 12.132406,
+        "max_ms": 47.225189,
+        "inverse_mean_fps_estimate": 41.934708125034675,
+        "stutters_over_ms": {
+          "16.666667": 1195,
+          "33.333333": 52,
+          "50.0": 0,
+          "100.0": 0
+        }
+      }
+    },
+    {
+      "window": 2,
+      "start_ns": 53677023641869,
+      "end_ns": 53707023641869,
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-163003-2588fe32/frames/system-frames-04003F40232DE000-1784245-53298957812333-0.csv",
+        "sha256": "cb5911cc6207ce4c37317fbe516f1a87ee668a05a3ed55465911a991d07d8fdf",
+        "metric": "timestamped_system_frame_work_ms",
+        "semantics": "Timestamped Core::PerfStats BeginSystemFrame-to-EndSystemFrame elapsed milliseconds, using the Linux monotonic steady clock. The inverse mean is a work-rate estimate, not measured game/display FPS or GPU execution time.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "work_rate_only_not_game_fps",
+        "rows_read": 23628,
+        "excluded_intervals": 22379,
+        "window_start_ns": 53677023641869,
+        "window_end_ns": 53707023641869,
+        "stats": {
+          "available": true,
+          "count": 1249,
+          "sum_ms": 29962.608526,
+          "mean_ms": 23.989278243394715,
+          "p50_ms": 22.517641,
+          "p95_ms": 34.2564486,
+          "p99_ms": 41.23097892,
+          "min_ms": 12.148878,
+          "max_ms": 78.674251,
+          "inverse_mean_fps_estimate": 41.68528914684389,
+          "stutters_over_ms": {
+            "33.333333": 73,
+            "50.0": 1,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1249,
+        "sum_ms": 29962.608526,
+        "mean_ms": 23.989278243394715,
+        "p50_ms": 22.517641,
+        "p95_ms": 34.2564486,
+        "p99_ms": 41.23097892,
+        "min_ms": 12.148878,
+        "max_ms": 78.674251,
+        "inverse_mean_fps_estimate": 41.68528914684389,
+        "stutters_over_ms": {
+          "16.666667": 1168,
+          "33.333333": 73,
+          "50.0": 1,
+          "100.0": 0
+        }
+      }
+    },
+    {
+      "window": 3,
+      "start_ns": 53707023641869,
+      "end_ns": 53737023641869,
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-163003-2588fe32/frames/system-frames-04003F40232DE000-1784245-53298957812333-0.csv",
+        "sha256": "cb5911cc6207ce4c37317fbe516f1a87ee668a05a3ed55465911a991d07d8fdf",
+        "metric": "timestamped_system_frame_work_ms",
+        "semantics": "Timestamped Core::PerfStats BeginSystemFrame-to-EndSystemFrame elapsed milliseconds, using the Linux monotonic steady clock. The inverse mean is a work-rate estimate, not measured game/display FPS or GPU execution time.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "work_rate_only_not_game_fps",
+        "rows_read": 23628,
+        "excluded_intervals": 22372,
+        "window_start_ns": 53707023641869,
+        "window_end_ns": 53737023641869,
+        "stats": {
+          "available": true,
+          "count": 1256,
+          "sum_ms": 29971.282544,
+          "mean_ms": 23.86248610191083,
+          "p50_ms": 22.468705,
+          "p95_ms": 33.52851975,
+          "p99_ms": 41.45155845,
+          "min_ms": 12.134749,
+          "max_ms": 45.796434,
+          "inverse_mean_fps_estimate": 41.9067818721505,
+          "stutters_over_ms": {
+            "33.333333": 66,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1256,
+        "sum_ms": 29971.282544,
+        "mean_ms": 23.86248610191083,
+        "p50_ms": 22.468705,
+        "p95_ms": 33.52851975,
+        "p99_ms": 41.45155845,
+        "min_ms": 12.134749,
+        "max_ms": 45.796434,
+        "inverse_mean_fps_estimate": 41.9067818721505,
+        "stutters_over_ms": {
+          "16.666667": 1184,
+          "33.333333": 66,
+          "50.0": 0,
+          "100.0": 0
+        }
+      }
+    }
+  ],
+  "errors": [
+    "[ 285.135612] HW.GPU <Error> video_core/shader_cache.cpp:179:RefreshStages: Rejected program 0x234f98dd00 is bound to stage 4: header 100c1081 00000000 01000000 07000000 00000006, slot 00000041 00000000 00000000 00000029 00000000 00000023 4f98dd00 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+    "[ 285.135623] HW.GPU <Error> video_core/shader_cache.cpp:202:RefreshStages: Native graphics shader rejected: Native shader at 0x234f98dd00, instruction 0xf0: native instruction before exit setup state is dead [op 80b 1800780b 40000000 03f1e200 001fc800]"
+  ]
+}

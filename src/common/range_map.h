@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <iterator>
+#include <limits>
 #include <map>
 #include <type_traits>
 

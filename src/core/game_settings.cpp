@@ -121,6 +121,7 @@ EnvironmentInfo DetectEnvironment(const VideoCore::RendererBase& renderer) {
 
 void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& renderer) {
     const auto env = DetectEnvironment(renderer);
+    Settings::values.preemptive_cpu_reads = false;
 
     switch (static_cast<TitleID>(program_id)) {
         case TitleID::NinjaGaidenRagebound:

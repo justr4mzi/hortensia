@@ -24,6 +24,7 @@
 #include "common/paged_scalar.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
+#include "common/unmapped_read_diagnostic.h"
 #include "core/device_memory.h"
 #include "core/device_memory_manager.h"
 #include "core/memory.h"

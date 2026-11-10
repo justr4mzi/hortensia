@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
-#include "common/container/unordered_map.h"
 #include <tuple>
 #include <vector>
-#include <optional>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -15,8 +17,16 @@
 #include "video_core/buffer_cache/read_trap_tracker.h"
 #include "video_core/buffer_cache/memory_tracker_base.h"
 #include "core/device_memory.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_process_page_table.h"
+#include "core/hle/kernel/kernel.h"
 #include "core/memory.h"
+#include "video_core/buffer_cache/memory_tracker_base.h"
+#include "video_core/gpu.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
+#include "video_core/memory_manager.h"
+#include "video_core/nx2.h"
+#include "video_core/renderer_null/null_rasterizer.h"
 
 namespace {
 using Range = std::pair<u64, u64>;
@@ -26,7 +36,7 @@ constexpr u64 WORD = 4096 * 64;
 constexpr u64 HIGH_PAGE_BITS = 22;
 constexpr u64 HIGH_PAGE_SIZE = 1ULL << HIGH_PAGE_BITS;
 
-constexpr DAddr c = 16 * HIGH_PAGE_SIZE;
+constexpr DAddr BASE_ADDRESS = 16 * HIGH_PAGE_SIZE;
 
 class RasterizerInterface {
 public:
@@ -90,65 +100,65 @@ TEST_CASE("MemoryTracker: Small region", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
     REQUIRE(rasterizer.Count() == 0);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == WORD / PAGE);
-    REQUIRE(memory_track->ModifiedCpuRegion(c, WORD) == Range{0, 0});
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS, WORD) == Range{0, 0});
 
-    memory_track->MarkRegionAsCpuModified(c + PAGE, 1);
-    REQUIRE(memory_track->ModifiedCpuRegion(c, WORD) == Range{c + PAGE * 1, c + PAGE * 2});
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE, 1);
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS, WORD) == Range{BASE_ADDRESS + PAGE * 1, BASE_ADDRESS + PAGE * 2});
 }
 
 TEST_CASE("MemoryTracker: Large region", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 32);
-    memory_track->MarkRegionAsCpuModified(c + 4096, WORD * 4);
-    REQUIRE(memory_track->ModifiedCpuRegion(c, WORD + PAGE * 2) == Range{c + PAGE, c + WORD + PAGE * 2});
-    REQUIRE(memory_track->ModifiedCpuRegion(c + PAGE * 2, PAGE * 6) == Range{c + PAGE * 2, c + PAGE * 8});
-    REQUIRE(memory_track->ModifiedCpuRegion(c, WORD * 32) == Range{c + PAGE, c + WORD * 4 + PAGE});
-    REQUIRE(memory_track->ModifiedCpuRegion(c + WORD * 4, PAGE) == Range{c + WORD * 4, c + WORD * 4 + PAGE});
-    REQUIRE(memory_track->ModifiedCpuRegion(c + WORD * 3 + PAGE * 63, PAGE) == Range{c + WORD * 3 + PAGE * 63, c + WORD * 4});
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 32);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + 4096, WORD * 4);
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS, WORD + PAGE * 2) == Range{BASE_ADDRESS + PAGE, BASE_ADDRESS + WORD + PAGE * 2});
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS + PAGE * 2, PAGE * 6) == Range{BASE_ADDRESS + PAGE * 2, BASE_ADDRESS + PAGE * 8});
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS, WORD * 32) == Range{BASE_ADDRESS + PAGE, BASE_ADDRESS + WORD * 4 + PAGE});
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS + WORD * 4, PAGE) == Range{BASE_ADDRESS + WORD * 4, BASE_ADDRESS + WORD * 4 + PAGE});
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS + WORD * 3 + PAGE * 63, PAGE) == Range{BASE_ADDRESS + WORD * 3 + PAGE * 63, BASE_ADDRESS + WORD * 4});
 
-    memory_track->MarkRegionAsCpuModified(c + WORD * 5 + PAGE * 6, PAGE);
-    memory_track->MarkRegionAsCpuModified(c + WORD * 5 + PAGE * 8, PAGE);
-    REQUIRE(memory_track->ModifiedCpuRegion(c + WORD * 5, WORD) == Range{c + WORD * 5 + PAGE * 6, c + WORD * 5 + PAGE * 9});
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD * 5 + PAGE * 6, PAGE);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD * 5 + PAGE * 8, PAGE);
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS + WORD * 5, WORD) == Range{BASE_ADDRESS + WORD * 5 + PAGE * 6, BASE_ADDRESS + WORD * 5 + PAGE * 9});
 
-    memory_track->UnmarkRegionAsCpuModified(c + WORD * 5 + PAGE * 8, PAGE);
-    REQUIRE(memory_track->ModifiedCpuRegion(c + WORD * 5, WORD) == Range{c + WORD * 5 + PAGE * 6, c + WORD * 5 + PAGE * 7});
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + WORD * 5 + PAGE * 8, PAGE);
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS + WORD * 5, WORD) == Range{BASE_ADDRESS + WORD * 5 + PAGE * 6, BASE_ADDRESS + WORD * 5 + PAGE * 7});
 
-    memory_track->MarkRegionAsCpuModified(c + PAGE, WORD * 31 + PAGE * 63);
-    REQUIRE(memory_track->ModifiedCpuRegion(c, WORD * 32) == Range{c + PAGE, c + WORD * 32});
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE, WORD * 31 + PAGE * 63);
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS, WORD * 32) == Range{BASE_ADDRESS + PAGE, BASE_ADDRESS + WORD * 32});
 
-    memory_track->UnmarkRegionAsCpuModified(c + PAGE * 4, PAGE);
-    memory_track->UnmarkRegionAsCpuModified(c + PAGE * 6, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 4, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 6, PAGE);
 
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 32);
-    REQUIRE(memory_track->ModifiedCpuRegion(c, WORD * 32) == Range{0, 0});
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 32);
+    REQUIRE(memory_track->ModifiedCpuRegion(BASE_ADDRESS, WORD * 32) == Range{0, 0});
 }
 
 TEST_CASE("MemoryTracker: Rasterizer counting", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
     REQUIRE(rasterizer.Count() == 0);
-    memory_track->UnmarkRegionAsCpuModified(c, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, PAGE);
     REQUIRE(rasterizer.Count() == 1);
-    memory_track->MarkRegionAsCpuModified(c, PAGE * 2);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, PAGE * 2);
     REQUIRE(rasterizer.Count() == 0);
-    memory_track->UnmarkRegionAsCpuModified(c, PAGE);
-    memory_track->UnmarkRegionAsCpuModified(c + PAGE, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + PAGE, PAGE);
     REQUIRE(rasterizer.Count() == 2);
-    memory_track->MarkRegionAsCpuModified(c, PAGE * 2);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, PAGE * 2);
     REQUIRE(rasterizer.Count() == 0);
 }
 
 TEST_CASE("MemoryTracker: Basic range", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->MarkRegionAsCpuModified(c, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, PAGE);
     int num = 0;
-    memory_track->ForEachUploadRange(c, WORD, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS);
         REQUIRE(size == PAGE);
         ++num;
     });
@@ -158,10 +168,10 @@ TEST_CASE("MemoryTracker: Basic range", "[video_core]") {
 TEST_CASE("MemoryTracker: Border upload", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
-    memory_track->MarkRegionAsCpuModified(c + WORD - PAGE, PAGE * 2);
-    memory_track->ForEachUploadRange(c, WORD * 2, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD - PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 2);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD - PAGE, PAGE * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD * 2, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD - PAGE);
         REQUIRE(size == PAGE * 2);
     });
 }
@@ -169,19 +179,19 @@ TEST_CASE("MemoryTracker: Border upload", "[video_core]") {
 TEST_CASE("MemoryTracker: Border upload range", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
-    memory_track->MarkRegionAsCpuModified(c + WORD - PAGE, PAGE * 2);
-    memory_track->ForEachUploadRange(c + WORD - PAGE, PAGE * 2, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD - PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 2);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD - PAGE, PAGE * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD - PAGE, PAGE * 2, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD - PAGE);
         REQUIRE(size == PAGE * 2);
     });
-    memory_track->MarkRegionAsCpuModified(c + WORD - PAGE, PAGE * 2);
-    memory_track->ForEachUploadRange(c + WORD - PAGE, PAGE, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD - PAGE);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD - PAGE, PAGE * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD - PAGE, PAGE, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD - PAGE);
         REQUIRE(size == PAGE);
     });
-    memory_track->ForEachUploadRange(c + WORD, PAGE, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD, PAGE, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD);
         REQUIRE(size == PAGE);
     });
 }
@@ -189,19 +199,19 @@ TEST_CASE("MemoryTracker: Border upload range", "[video_core]") {
 TEST_CASE("MemoryTracker: Border upload partial range", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
-    memory_track->MarkRegionAsCpuModified(c + WORD - PAGE, PAGE * 2);
-    memory_track->ForEachUploadRange(c + WORD - 1, 2, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD - PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 2);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD - PAGE, PAGE * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD - 1, 2, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD - PAGE);
         REQUIRE(size == PAGE * 2);
     });
-    memory_track->MarkRegionAsCpuModified(c + WORD - PAGE, PAGE * 2);
-    memory_track->ForEachUploadRange(c + WORD - 1, 1, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD - PAGE);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD - PAGE, PAGE * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD - 1, 1, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD - PAGE);
         REQUIRE(size == PAGE);
     });
-    memory_track->ForEachUploadRange(c + WORD + 50, 1, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD + 50, 1, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD);
         REQUIRE(size == PAGE);
     });
 }
@@ -210,20 +220,20 @@ TEST_CASE("MemoryTracker: Partial word uploads", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
     int num = 0;
-    memory_track->ForEachUploadRange(c, WORD, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS);
         REQUIRE(size == WORD);
         ++num;
     });
     REQUIRE(num == 1);
-    memory_track->ForEachUploadRange(c + WORD, WORD, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD, WORD, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD);
         REQUIRE(size == WORD);
         ++num;
     });
     REQUIRE(num == 2);
-    memory_track->ForEachUploadRange(c + 0x79000, 0x24000, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + 0x79000, 0x24000, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD * 2);
         REQUIRE(size == PAGE * 0x1d);
         ++num;
     });
@@ -233,18 +243,18 @@ TEST_CASE("MemoryTracker: Partial word uploads", "[video_core]") {
 TEST_CASE("MemoryTracker: Partial page upload", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     int num = 0;
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 2, PAGE);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 9, PAGE);
-    memory_track->ForEachUploadRange(c, PAGE * 3, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 2);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 2, PAGE);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 9, PAGE);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, PAGE * 3, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 2);
         REQUIRE(size == PAGE);
         ++num;
     });
     REQUIRE(num == 1);
-    memory_track->ForEachUploadRange(c + PAGE * 7, PAGE * 3, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 9);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + PAGE * 7, PAGE * 3, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 9);
         REQUIRE(size == PAGE);
         ++num;
     });
@@ -254,17 +264,17 @@ TEST_CASE("MemoryTracker: Partial page upload", "[video_core]") {
 TEST_CASE("MemoryTracker: Partial page upload with multiple words on the right") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 9);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 13, WORD * 7);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 9);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 13, WORD * 7);
     int num = 0;
-    memory_track->ForEachUploadRange(c + PAGE * 10, WORD * 7, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 13);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + PAGE * 10, WORD * 7, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 13);
         REQUIRE(size == WORD * 7 - PAGE * 3);
         ++num;
     });
     REQUIRE(num == 1);
-    memory_track->ForEachUploadRange(c + PAGE, WORD * 8, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD * 7 + PAGE * 10);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + PAGE, WORD * 8, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD * 7 + PAGE * 10);
         REQUIRE(size == PAGE * 3);
         ++num;
     });
@@ -274,17 +284,17 @@ TEST_CASE("MemoryTracker: Partial page upload with multiple words on the right")
 TEST_CASE("MemoryTracker: Partial page upload with multiple words on the left", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 8);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 13, WORD * 7);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 8);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 13, WORD * 7);
     int num = 0;
-    memory_track->ForEachUploadRange(c + PAGE * 16, WORD * 7, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 16);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + PAGE * 16, WORD * 7, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 16);
         REQUIRE(size == WORD * 7 - PAGE * 3);
         ++num;
     });
     REQUIRE(num == 1);
-    memory_track->ForEachUploadRange(c + PAGE, WORD, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 13);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + PAGE, WORD, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 13);
         REQUIRE(size == PAGE * 3);
         ++num;
     });
@@ -294,23 +304,23 @@ TEST_CASE("MemoryTracker: Partial page upload with multiple words on the left", 
 TEST_CASE("MemoryTracker: Partial page upload with multiple words in the middle", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 8);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 13, PAGE * 140);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 8);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 13, PAGE * 140);
     int num = 0;
-    memory_track->ForEachUploadRange(c + PAGE * 16, WORD, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 16);
+    memory_track->ForEachUploadRange(BASE_ADDRESS + PAGE * 16, WORD, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 16);
         REQUIRE(size == WORD);
         ++num;
     });
     REQUIRE(num == 1);
-    memory_track->ForEachUploadRange(c, WORD, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + PAGE * 13);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + PAGE * 13);
         REQUIRE(size == PAGE * 3);
         ++num;
     });
     REQUIRE(num == 2);
-    memory_track->ForEachUploadRange(c, WORD * 8, [&](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD + PAGE * 16);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD * 8, [&](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD + PAGE * 16);
         REQUIRE(size == PAGE * 73);
         ++num;
     });
@@ -320,10 +330,10 @@ TEST_CASE("MemoryTracker: Partial page upload with multiple words in the middle"
 TEST_CASE("MemoryTracker: Empty right bits", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2048);
-    memory_track->MarkRegionAsCpuModified(c + WORD - PAGE, PAGE * 2);
-    memory_track->ForEachUploadRange(c, WORD * 2048, [](u64 offset, u64 size) {
-        REQUIRE(offset == c + WORD - PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 2048);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD - PAGE, PAGE * 2);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD * 2048, [](u64 offset, u64 size) {
+        REQUIRE(offset == BASE_ADDRESS + WORD - PAGE);
         REQUIRE(size == PAGE * 2);
     });
 }
@@ -331,52 +341,52 @@ TEST_CASE("MemoryTracker: Empty right bits", "[video_core]") {
 TEST_CASE("MemoryTracker: Out of bound ranges 1", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c - WORD, 3 * WORD);
-    memory_track->MarkRegionAsCpuModified(c, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS - WORD, 3 * WORD);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, PAGE);
     REQUIRE(rasterizer.Count() == (3 * WORD - PAGE) / PAGE);
     int num = 0;
-    memory_track->ForEachUploadRange(c - WORD, WORD, [&](u64 offset, u64 size) { ++num; });
-    memory_track->ForEachUploadRange(c + WORD, WORD, [&](u64 offset, u64 size) { ++num; });
-    memory_track->ForEachUploadRange(c - PAGE, PAGE, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachUploadRange(BASE_ADDRESS - WORD, WORD, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachUploadRange(BASE_ADDRESS + WORD, WORD, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachUploadRange(BASE_ADDRESS - PAGE, PAGE, [&](u64 offset, u64 size) { ++num; });
     REQUIRE(num == 0);
-    memory_track->ForEachUploadRange(c - PAGE, PAGE * 2, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachUploadRange(BASE_ADDRESS - PAGE, PAGE * 2, [&](u64 offset, u64 size) { ++num; });
     REQUIRE(num == 1);
-    memory_track->MarkRegionAsCpuModified(c, WORD);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 2 * WORD / PAGE);
 }
 
 TEST_CASE("MemoryTracker: Out of bound ranges 2", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(c + 0x22000, PAGE));
-    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(c + 0x28000, PAGE));
+    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + 0x22000, PAGE));
+    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + 0x28000, PAGE));
     REQUIRE(rasterizer.Count() == 2);
-    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(c + 0x21100, PAGE - 0x100));
+    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + 0x21100, PAGE - 0x100));
     REQUIRE(rasterizer.Count() == 3);
-    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(c - PAGE, PAGE * 2));
-    memory_track->UnmarkRegionAsCpuModified(c - PAGE * 3, PAGE * 2);
-    memory_track->UnmarkRegionAsCpuModified(c - PAGE * 2, PAGE * 2);
+    REQUIRE_NOTHROW(memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS - PAGE, PAGE * 2));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS - PAGE * 3, PAGE * 2);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS - PAGE * 2, PAGE * 2);
     REQUIRE(rasterizer.Count() == 7);
 }
 
 TEST_CASE("MemoryTracker: Out of bound ranges 3", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, 0x310720);
-    REQUIRE(rasterizer.Count(c) == 1);
-    REQUIRE(rasterizer.Count(c + PAGE) == 1);
-    REQUIRE(rasterizer.Count(c + WORD) == 1);
-    REQUIRE(rasterizer.Count(c + WORD + PAGE) == 1);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, 0x310720);
+    REQUIRE(rasterizer.Count(BASE_ADDRESS) == 1);
+    REQUIRE(rasterizer.Count(BASE_ADDRESS + PAGE) == 1);
+    REQUIRE(rasterizer.Count(BASE_ADDRESS + WORD) == 1);
+    REQUIRE(rasterizer.Count(BASE_ADDRESS + WORD + PAGE) == 1);
 }
 
 TEST_CASE("MemoryTracker: Sparse regions 1", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 1, PAGE);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 3, PAGE * 4);
-    memory_track->ForEachUploadRange(c, WORD, [i = 0](u64 offset, u64 size) mutable {
-        static constexpr std::array<u64, 2> offsets{c + PAGE, c + PAGE * 3};
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 1, PAGE);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 3, PAGE * 4);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD, [i = 0](u64 offset, u64 size) mutable {
+        static constexpr std::array<u64, 2> offsets{BASE_ADDRESS + PAGE, BASE_ADDRESS + PAGE * 3};
         static constexpr std::array<u64, 2> sizes{PAGE, PAGE * 4};
         REQUIRE(offset == offsets.at(i));
         REQUIRE(size == sizes.at(i));
@@ -387,12 +397,12 @@ TEST_CASE("MemoryTracker: Sparse regions 1", "[video_core]") {
 TEST_CASE("MemoryTracker: Sparse regions 2", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, PAGE * 0x23);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, PAGE * 0x23);
     REQUIRE(rasterizer.Count() == 0x23);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 0x1B, PAGE);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 0x21, PAGE);
-    memory_track->ForEachUploadRange(c, PAGE * 0x23, [i = 0](u64 offset, u64 size) mutable {
-        static constexpr std::array<u64, 3> offsets{c + PAGE * 0x1B, c + PAGE * 0x21};
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 0x1B, PAGE);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 0x21, PAGE);
+    memory_track->ForEachUploadRange(BASE_ADDRESS, PAGE * 0x23, [i = 0](u64 offset, u64 size) mutable {
+        static constexpr std::array<u64, 3> offsets{BASE_ADDRESS + PAGE * 0x1B, BASE_ADDRESS + PAGE * 0x21};
         static constexpr std::array<u64, 3> sizes{PAGE, PAGE};
         REQUIRE(offset == offsets.at(i));
         REQUIRE(size == sizes.at(i));
@@ -403,24 +413,24 @@ TEST_CASE("MemoryTracker: Sparse regions 2", "[video_core]") {
 TEST_CASE("MemoryTracker: Single page modified range", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    REQUIRE(memory_track->IsRegionCpuModified(c, PAGE));
-    memory_track->UnmarkRegionAsCpuModified(c, PAGE);
-    REQUIRE(!memory_track->IsRegionCpuModified(c, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS, PAGE));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, PAGE);
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS, PAGE));
 }
 
 TEST_CASE("MemoryTracker: Two page modified range", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    REQUIRE(memory_track->IsRegionCpuModified(c, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c, PAGE * 2));
-    memory_track->UnmarkRegionAsCpuModified(c, PAGE);
-    REQUIRE(!memory_track->IsRegionCpuModified(c, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS, PAGE * 2));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, PAGE);
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS, PAGE));
 }
 
 TEST_CASE("MemoryTracker: Multi word modified ranges", "[video_core]") {
     for (int offset = 0; offset < 4; ++offset) {
-        const DAddr address = c + WORD * offset;
+        const DAddr address = BASE_ADDRESS + WORD * offset;
         RasterizerInterface rasterizer;
         std::optional<MemoryTracker> memory_track(rasterizer);
         REQUIRE(memory_track->IsRegionCpuModified(address, PAGE));
@@ -443,129 +453,129 @@ TEST_CASE("MemoryTracker: Multi word modified ranges", "[video_core]") {
 TEST_CASE("MemoryTracker: Single page in large region", "[video_core]") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 16);
-    REQUIRE(!memory_track->IsRegionCpuModified(c, WORD * 16));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 16);
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS, WORD * 16));
 
-    memory_track->MarkRegionAsCpuModified(c + WORD * 12 + PAGE * 8, PAGE);
-    REQUIRE(memory_track->IsRegionCpuModified(c, WORD * 16));
-    REQUIRE(!memory_track->IsRegionCpuModified(c + WORD * 10, WORD * 2));
-    REQUIRE(memory_track->IsRegionCpuModified(c + WORD * 11, WORD * 2));
-    REQUIRE(memory_track->IsRegionCpuModified(c + WORD * 12, WORD * 2));
-    REQUIRE(memory_track->IsRegionCpuModified(c + WORD * 12 + PAGE * 4, PAGE * 8));
-    REQUIRE(memory_track->IsRegionCpuModified(c + WORD * 12 + PAGE * 6, PAGE * 8));
-    REQUIRE(!memory_track->IsRegionCpuModified(c + WORD * 12 + PAGE * 6, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + WORD * 12 + PAGE * 7, PAGE * 2));
-    REQUIRE(memory_track->IsRegionCpuModified(c + WORD * 12 + PAGE * 8, PAGE * 2));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + WORD * 12 + PAGE * 8, PAGE);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS, WORD * 16));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 10, WORD * 2));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 11, WORD * 2));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 12, WORD * 2));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 12 + PAGE * 4, PAGE * 8));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 12 + PAGE * 6, PAGE * 8));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 12 + PAGE * 6, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 12 + PAGE * 7, PAGE * 2));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + WORD * 12 + PAGE * 8, PAGE * 2));
 }
 
 TEST_CASE("MemoryTracker: Wrap word regions") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 32);
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 63, PAGE * 2);
-    REQUIRE(memory_track->IsRegionCpuModified(c, WORD * 2));
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE * 62, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 63, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 64, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 63, PAGE * 2));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 63, PAGE * 8));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 60, PAGE * 8));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 32);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 63, PAGE * 2);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS, WORD * 2));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 62, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 63, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 64, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 63, PAGE * 2));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 63, PAGE * 8));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 60, PAGE * 8));
 
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE * 127, WORD * 16));
-    memory_track->MarkRegionAsCpuModified(c + PAGE * 127, PAGE);
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 127, WORD * 16));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 127, PAGE));
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE * 126, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 126, PAGE * 2));
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE * 128, WORD * 16));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 127, WORD * 16));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + PAGE * 127, PAGE);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 127, WORD * 16));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 127, PAGE));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 126, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 126, PAGE * 2));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 128, WORD * 16));
 }
 
 TEST_CASE("MemoryTracker: Unaligned page region query") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->MarkRegionAsCpuModified(c + 4000, 1000);
-    REQUIRE(memory_track->IsRegionCpuModified(c, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + 4000, 1000));
-    REQUIRE(memory_track->IsRegionCpuModified(c + 4000, 1));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS + 4000, 1000);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + 4000, 1000));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + 4000, 1));
 }
 
 TEST_CASE("MemoryTracker: Cached write") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->CachedCpuWrite(c + PAGE, c + PAGE);
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE, PAGE));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->CachedCpuWrite(BASE_ADDRESS + PAGE, BASE_ADDRESS + PAGE);
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
     memory_track->FlushCachedWrites();
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    memory_track->MarkRegionAsCpuModified(c, WORD);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 0);
 }
 
 TEST_CASE("MemoryTracker: Multiple cached write") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->CachedCpuWrite(c + PAGE, PAGE);
-    memory_track->CachedCpuWrite(c + PAGE * 3, PAGE);
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE * 3, PAGE));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->CachedCpuWrite(BASE_ADDRESS + PAGE, PAGE);
+    memory_track->CachedCpuWrite(BASE_ADDRESS + PAGE * 3, PAGE);
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 3, PAGE));
     memory_track->FlushCachedWrites();
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 3, PAGE));
-    memory_track->MarkRegionAsCpuModified(c, WORD);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE * 3, PAGE));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 0);
 }
 
 TEST_CASE("MemoryTracker: Cached write unmarked") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->CachedCpuWrite(c + PAGE, PAGE);
-    memory_track->UnmarkRegionAsCpuModified(c + PAGE, PAGE);
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE, PAGE));
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->CachedCpuWrite(BASE_ADDRESS + PAGE, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS + PAGE, PAGE);
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
     memory_track->FlushCachedWrites();
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    memory_track->MarkRegionAsCpuModified(c, WORD);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 0);
 }
 
 TEST_CASE("MemoryTracker: Cached write iterated") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
-    memory_track->CachedCpuWrite(c + PAGE, PAGE);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
+    memory_track->CachedCpuWrite(BASE_ADDRESS + PAGE, PAGE);
     int num = 0;
-    memory_track->ForEachUploadRange(c, WORD, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD, [&](u64 offset, u64 size) { ++num; });
     REQUIRE(num == 0);
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE, PAGE));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
     memory_track->FlushCachedWrites();
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    memory_track->MarkRegionAsCpuModified(c, WORD);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 0);
 }
 
 TEST_CASE("MemoryTracker: Cached write downloads") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 64);
-    memory_track->CachedCpuWrite(c + PAGE, PAGE);
+    memory_track->CachedCpuWrite(BASE_ADDRESS + PAGE, PAGE);
     REQUIRE(rasterizer.Count() == 63);
-    memory_track->MarkRegionAsGpuModified(c + PAGE, PAGE);
+    memory_track->MarkRegionAsGpuModified(BASE_ADDRESS + PAGE, PAGE);
     int num = 0;
-    memory_track->ForEachDownloadRangeAndClear(c, WORD, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachDownloadRangeAndClear(BASE_ADDRESS, WORD, [&](u64 offset, u64 size) { ++num; });
     REQUIRE(num == 0);
     num = 0;
-    memory_track->ForEachUploadRange(c, WORD, [&](u64 offset, u64 size) { ++num; });
+    memory_track->ForEachUploadRange(BASE_ADDRESS, WORD, [&](u64 offset, u64 size) { ++num; });
     REQUIRE(num == 0);
-    REQUIRE(!memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    REQUIRE(memory_track->IsRegionGpuModified(c + PAGE, PAGE));
+    REQUIRE(!memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    REQUIRE(memory_track->IsRegionGpuModified(BASE_ADDRESS + PAGE, PAGE));
     memory_track->FlushCachedWrites();
-    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
-    REQUIRE(!memory_track->IsRegionGpuModified(c + PAGE, PAGE));
-    memory_track->MarkRegionAsCpuModified(c, WORD);
+    REQUIRE(memory_track->IsRegionCpuModified(BASE_ADDRESS + PAGE, PAGE));
+    REQUIRE(!memory_track->IsRegionGpuModified(BASE_ADDRESS + PAGE, PAGE));
+    memory_track->MarkRegionAsCpuModified(BASE_ADDRESS, WORD);
     REQUIRE(rasterizer.Count() == 0);
 }
 
@@ -675,10 +685,10 @@ TEST_CASE("CPU read range sets merge overlaps and forget deleted buffer spans", 
 TEST_CASE("MemoryTracker: FlushCachedWrites batching") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 2);
     REQUIRE(rasterizer.UpdateCalls() == 1);
     REQUIRE(rasterizer.UpdateCallsList().size() == 1);
-    REQUIRE(rasterizer.UpdateCallsList().front() == std::tuple{c, WORD * 2, 1});
+    REQUIRE(rasterizer.UpdateCallsList().front() == std::tuple{BASE_ADDRESS, WORD * 2, 1});
 
     memory_track->CachedCpuWrite(c + PAGE, PAGE);
     memory_track->CachedCpuWrite(c + PAGE * 2, PAGE);
@@ -686,7 +696,7 @@ TEST_CASE("MemoryTracker: FlushCachedWrites batching") {
     // Cached writes stop tracking their pages right away; tracking them again leaves the
     // pending cached writes for FlushCachedWrites to report
     REQUIRE(rasterizer.Count() == WORD * 2 / PAGE - 3);
-    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
+    memory_track->UnmarkRegionAsCpuModified(BASE_ADDRESS, WORD * 2);
     REQUIRE(rasterizer.Count() == WORD * 2 / PAGE);
     const size_t calls_before_flush = rasterizer.UpdateCalls();
     const size_t ranges_before_flush = rasterizer.UpdateCallsList().size();
@@ -695,8 +705,8 @@ TEST_CASE("MemoryTracker: FlushCachedWrites batching") {
     REQUIRE(rasterizer.UpdateCalls() == calls_before_flush + 1);
     const auto& calls = rasterizer.UpdateCallsList();
     REQUIRE(calls.size() == ranges_before_flush + 2);
-    REQUIRE(calls[ranges_before_flush] == std::tuple<DAddr, u64, int>{c + PAGE, PAGE * 2, -1});
-    REQUIRE(calls[ranges_before_flush + 1] == std::tuple<DAddr, u64, int>{c + PAGE * 4, PAGE, -1});
+    REQUIRE(calls[ranges_before_flush] == std::tuple<DAddr, u64, int>{BASE_ADDRESS + PAGE, PAGE * 2, -1});
+    REQUIRE(calls[ranges_before_flush + 1] == std::tuple<DAddr, u64, int>{BASE_ADDRESS + PAGE * 4, PAGE, -1});
     REQUIRE(rasterizer.Count() == WORD * 2 / PAGE - 3);
 }
 

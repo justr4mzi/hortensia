@@ -153,7 +153,13 @@ VkBufferView Buffer::View(u32 offset, u32 size, VideoCore::Surface::PixelFormat 
         return offset == view.offset && size == view.size && format == view.format;
     })};
     if (it != views.end()) {
-        return *it->handle;
+        // Views are made per (offset, size, format) and kept with the buffer, so a buffer bound at
+        // many offsets collects many; looked up for every texel buffer of every draw, keep the
+        // one just used at the front (the handles themselves don't move).
+        if (it != views.begin()) {
+            std::iter_swap(it, views.begin());
+        }
+        return *views.front().handle;
     }
     views.push_back({
         .offset = offset,
@@ -382,6 +388,8 @@ BufferCacheRuntime::BufferCacheRuntime(const Device& device_, MemoryAllocator& m
       staging_pool{staging_pool_}, guest_descriptor_queue{guest_descriptor_queue_},
       quad_index_pass(device, scheduler, descriptor_pool, staging_pool,
                       compute_pass_descriptor_queue),
+      quad_indirect_pass(device, scheduler, descriptor_pool, staging_pool,
+                         compute_pass_descriptor_queue),
       multi_range_buffers(device_) {
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool enable_vertex_repack = VertexRepackEnabled();
@@ -785,6 +793,26 @@ void BufferCacheRuntime::BindQuadIndexBuffer(PrimitiveTopology topology, u32 fir
         quad_strip_index_buffer->UpdateBuffer(first + count);
         quad_strip_index_buffer->BindBuffer(first);
     }
+}
+
+// shortcut: an indirect quad draw stops at 2^18 vertices; raise it if a title draws more.
+constexpr u32 MAX_INDIRECT_QUAD_VERTICES = 1U << 18;
+
+void BufferCacheRuntime::ReserveQuadIndirect() {
+    // UpdateBuffer submits the command buffer when it grows. Grown in BindArrayIndirect, after the
+    // vertex buffers were bound, the first indirect quad draw ran in a new command buffer without
+    // them: a device loss on drivers without nullDescriptor (Hyrule Warriors after a movie skip).
+    quad_array_index_buffer->UpdateBuffer(MAX_INDIRECT_QUAD_VERTICES);
+}
+
+void BufferCacheRuntime::BindArrayIndirect(VkBuffer src_buffer, u32 src_offset, bool quads) {
+    if (!quads) {
+        array_indirect_args = quad_indirect_pass.Convert(src_buffer, src_offset, 0);
+        return;
+    }
+    array_indirect_args =
+        quad_indirect_pass.Convert(src_buffer, src_offset, MAX_INDIRECT_QUAD_VERTICES);
+    quad_array_index_buffer->BindBuffer(0);
 }
 
 void BufferCacheRuntime::BindVertexBuffer(u32 index, VkBuffer buffer, u32 offset, u32 size, u32 stride) {

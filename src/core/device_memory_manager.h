@@ -15,12 +15,13 @@
 #include <source_location>
 #include <vector>
 #include <span>
+#include <vector>
 
 #include "common/common_types.h"
 #include "common/range_mutex.h"
 #include "common/scratch_buffer.h"
-#include "common/thread_worker.h"
 #include "common/sparse_large_vector.h"
+#include "common/thread_worker.h"
 
 namespace Core {
 
@@ -54,6 +55,11 @@ public:
     static constexpr size_t AS_BITS = Traits::device_virtual_bits;
 
     void BindInterface(DeviceInterface* device_inter);
+
+    /// Changes after device mappings are updated, including backing installed in sparse holes.
+    [[nodiscard]] u64 MappingGeneration() const noexcept {
+        return translation_generation.load(std::memory_order_acquire);
+    }
 
     /// Marks the memory behind [address, address + size) cold (Common::HostMemory::HintCold),
     /// from a low-priority thread: data the host GPU has its own copy of, e.g. uploaded textures.

@@ -22,6 +22,21 @@ namespace Vulkan {
 
     class Device;
 
+    struct SparseImageAttempt {
+        const char* reason = "not requested";
+        bool called = false;
+        VkResult result = VK_SUCCESS;
+    };
+
+    struct ImageAllocationContext {
+        u64 gpu_address;
+        u32 guest_format;
+        const char* sparse_path;
+        bool backing_requested;
+        bool sparse_aliased;
+        SparseImageAttempt initial_sparse;
+    };
+
 /// Hints and requirements for the backing memory type of a commit
     enum class MemoryUsage {
         DeviceLocal, ///< Requests device local host visible buffer, falling back to device local memory.
@@ -108,7 +123,8 @@ namespace Vulkan {
 
         /// `dedicated`: own device memory, returned to the driver on destruction (short-lived
         /// images would otherwise leave holes in the shared blocks).
-        vk::Image CreateImage(const VkImageCreateInfo &ci, bool dedicated = false) const;
+        vk::Image CreateImage(const VkImageCreateInfo& ci, bool dedicated = false,
+                              const ImageAllocationContext* context = nullptr) const;
 
         /// CreateImage, but a null image instead of an exception when there is no memory for it.
         vk::Image TryCreateImage(const VkImageCreateInfo &ci, bool dedicated = false) const;
@@ -116,7 +132,8 @@ namespace Vulkan {
         /// A sparse resident image with nothing bound (reads return zero, writes are dropped), or
         /// a null image when the device can't make one.
         /// aliased: its sparse blocks may share memory (VK_IMAGE_CREATE_SPARSE_ALIASED_BIT).
-        vk::Image CreateUnbackedImage(const VkImageCreateInfo &ci, bool aliased = false) const;
+        vk::Image CreateUnbackedImage(const VkImageCreateInfo& ci, bool aliased = false,
+                                      SparseImageAttempt* attempt = nullptr) const;
 
         /// Device-local buffers in their own VMA pool; false when it doesn't apply or failed.
         bool CreateBufferInSeparatePool(const VkBufferCreateInfo& ci, MemoryUsage usage,

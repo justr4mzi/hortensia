@@ -7,6 +7,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <QList>
@@ -74,6 +75,7 @@ private:
 
     std::vector<QList<QStandardItem*>> list_items;
     std::vector<QStandardItem*> update_items;
+    std::vector<std::string> embedded_disabled_keys;
 
     Core::System& system;
 };

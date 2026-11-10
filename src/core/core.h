@@ -250,6 +250,9 @@ public:
 
     void GatherGPUDirtyMemory(std::function<void(PAddr, size_t)>& callback);
 
+    /// Whether GatherGPUDirtyMemory would find anything (cheap, no locks).
+    [[nodiscard]] bool HasGPUDirtyMemory();
+
     [[nodiscard]] size_t GetCurrentHostThreadID() const;
 
     /// Gets and resets core performance statistics

@@ -1,0 +1,131 @@
+{
+  "status": "complete",
+  "runs": [
+    {
+      "arm": "candidate",
+      "repetition": 1,
+      "run_id": "20261107-205832-4c403b53",
+      "out": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205832-4c403b53",
+      "start_ns": 69563424612710,
+      "end_ns": 69593454066890,
+      "pre": {
+        "name": "bananza-ingot-tunnel-v2-calibrated",
+        "checkpoint_id": "218569bd358236c577168ea52eff2d6b125a8eb529a859cae1fd630be7360316",
+        "kind": "gameplay",
+        "validated": true,
+        "matched": true,
+        "rmse": 0.0235759,
+        "max_rmse": 0.05,
+        "image": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205832-4c403b53/0002-checkpoint-bananza-ingot-tunnel-v2-calib.png",
+        "at_ns": 69563424423662,
+        "qualification": "Matches an explicitly labelled reference ROI; no semantic rendering correctness proof."
+      },
+      "post": {
+        "name": "bananza-ingot-tunnel-v2-calibrated",
+        "checkpoint_id": "218569bd358236c577168ea52eff2d6b125a8eb529a859cae1fd630be7360316",
+        "kind": "gameplay",
+        "validated": true,
+        "matched": true,
+        "rmse": 0.0217552,
+        "max_rmse": 0.05,
+        "image": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205832-4c403b53/0003-checkpoint-bananza-ingot-tunnel-v2-calib.png",
+        "at_ns": 69593667964077,
+        "qualification": "Matches an explicitly labelled reference ROI; no semantic rendering correctness proof."
+      },
+      "stop": {
+        "method": "qt_sigterm",
+        "returncode": 0,
+        "forced": false,
+        "finalized": true,
+        "profile": null,
+        "stopped_ns": 69595003135542,
+        "qt_teardown_seen": true,
+        "instrumented": false,
+        "csv_files": [
+          "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205832-4c403b53/frames/system-frames-040074A01BF12000-2703383-69407976622512-0.csv",
+          "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205832-4c403b53/profile/data/eden/log/hitch-frames-040074a01bf12000-69412981739723.csv"
+        ],
+        "bundle": "/home/leon/.local/share/codex-orchid-mcp/state/bundles/20261107-205832-4c403b53-1794081701031752090"
+      },
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-205832-4c403b53/profile/data/eden/log/hitch-frames-040074a01bf12000-69412981739723.csv",
+        "sha256": "3be14b5aeae3d8c1ae95c7c88ef8d1c974b0600f88ba579f936d7fef22ec46a6",
+        "metric": "native_present_interval_ms",
+        "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "native_present_service_cadence_estimate",
+        "rows_read": 9127,
+        "excluded_intervals": 8004,
+        "window_start_ns": 69563424612710,
+        "window_end_ns": 69593454066890,
+        "stats": {
+          "available": true,
+          "count": 1123,
+          "sum_ms": 30017.03366,
+          "mean_ms": 26.729326500445236,
+          "p50_ms": 33.136523,
+          "p95_ms": 33.6385401,
+          "p99_ms": 33.86142182,
+          "min_ms": 14.519233,
+          "max_ms": 35.738472,
+          "inverse_mean_fps_estimate": 37.41209117196959,
+          "stutters_over_ms": {
+            "33.333333": 323,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1123,
+        "sum_ms": 30017.03366,
+        "mean_ms": 26.729326500445236,
+        "p50_ms": 33.136523,
+        "p95_ms": 33.6385401,
+        "p99_ms": 33.86142182,
+        "min_ms": 14.519233,
+        "max_ms": 35.738472,
+        "inverse_mean_fps_estimate": 37.41209117196959,
+        "stutters_over_ms": {
+          "16.666667": 908,
+          "33.333333": 323,
+          "50.0": 0,
+          "100.0": 0
+        }
+      },
+      "identity": {
+        "game_identity": {
+          "path": "/home/leon/Switch2/Donkey Kong Bananza.nup",
+          "size": 9288700437,
+          "mtime_ns": 1793746379539877288,
+          "prefix_1MiB_sha256": "a2257bb63f89a8bb9a73848941f348e13f89f72d1aa8ff728a043538d2ec4b90"
+        },
+        "binary_sha256": "2eba2e9443b96eeafbb836d0022a045d97cb8f9e808ee0035d954893b786fe23",
+        "seed_id": "56e57703f9e5b9669e5622032646f8151c0decdb9fde6eb8cbe1d17617a4c1cd",
+        "settings_sha256": "fcf72365f580e41a6ad8848b08beec6814d84c07f910806208af4cd71392a14a"
+      },
+      "errors": [
+        "[   4.228419] Debug <Critical> core/hle/service/service.cpp:178:operator(): ../src/core/hle/service/service.cpp: assert Unknown / unimplemented function '1(<unknown>)': port='IUserShimScopedObject' cmd_buf={[0]=0x6, [1]=0xa, [2]=0x0, [3]=0x0, [4]=0x49434653, [5]=0x1, [6]=0x1, [7]=0x0, [8]=0x1}",
+        "[ 121.056573] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x21163f0100, instruction 0x2650: native matrix multiply cooperative path unavailable [op 23c 1418723c 0000001c 000008ff 04aff000]",
+        "[ 121.269383] HW.GPU <Error> video_core/engines/kepler_compute.cpp:563:DispatchNativeCompute: Native compute shader rejected: Native shader at 0x2116410700, instruction 0x2650: native matrix multiply cooperative path unavailable [op 23c 1418723c 0000001c 000008ff 04aff000]"
+      ]
+    }
+  ],
+  "candidate": {
+    "EDEN_NX2_FENCE_GUEST_SLEEP": "0"
+  },
+  "qualification": "Single control smoke with EDEN_NX2_FENCE_GUEST_SLEEP=0. Runner arm label candidate is historical and does not denote enabled guest sleep. No repeat batch, simulation-speed proof or full graphics/regression gate; no promotion.",
+  "stage": "candidate/1: complete",
+  "summary": {
+    "candidate": {
+      "runs": 1,
+      "median_native_cadence": 37.41209117196959,
+      "min": 37.41209117196959,
+      "max": 37.41209117196959,
+      "spread": 0.0
+    }
+  }
+}

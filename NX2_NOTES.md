@@ -275,3 +275,34 @@ Offline shader check: `nx2work/lowertest/lowertest.exe C:/dev/shaders_title1 [-a
 5. Upstream-worthy pieces independent of Switch 2: MSVC 14.51 build fixes, hortensia-cli SDL3
    lifetime fixes and `_setmaxstdio`, ExeFS loader fixes, FAC/FAH offset fix, GetPseudoDeviceId
    without NACP.
+
+## Mario Tennis Fever performance pass (branch `mario-tennis-fever-perf`, 2026-11-01/02)
+
+Found by reading the code (no test hardware): nothing here is measured yet. Each change is its own
+commit; the ones that change behaviour have a switch to compare against, so an A/B run with
+`EDEN_NX2_GPU_PROFILE` (and the vi2 present stats every 600 presents) shows what each is worth.
+
+| Change | Where it cost | Switch / how to compare |
+|---|---|---|
+| Delayed fences with nothing to download and no earlier fence in flight run their callback at once | Balanced fences (Tennis's default) never skipped empty fences: a fence object, the fencing lock and a fencing-thread wake-up per compute release | `gpu_fence_behavior` Default vs Balanced; profile zone Fence/FenceSkipped |
+| DMA copies out of GPU-written buffers wait for the host GPU only where a fence download follows | Balanced/Accurate called `runtime.Finish()` (submit + full GPU idle) on the GPU thread after each such copy | profile zone/`ReadbackDiagnostics` BufferFinish |
+| Reactive flushing off by default for Tennis | read protection on every GPU-cached page (row 115); read traps (row 150) only run with it off | per-game `use_reactive_flushing` |
+| Slow-path reads of cached pages without an armed trap skip the GPU readback; reads that hit a trap stay on fastmem (dynarmic `recompile_on_fastmem_read_fault`) | a load that once hit a trap took the callbacks for good, and each read outside the core's last area waited for the GPU thread | `EDEN_NX2_READ_TRAPS=0` (traps off) |
+| Command lists: drain the split's back only for pages the GPU wrote, once no page was newly marked for 2048 entries (Tennis only) | 8b7fae3 drained before every GPFIFO entry (the removed comment measured the front stalled ~40% in Tennis) | `EDEN_NX2_CMD_DRAIN=1` (always drain first) / `=0` (check first for every title) |
+| Greater-or-equal acquires met in guest memory, or by a pending release, go on without draining the back (equal and mask acquires still drain: a release queued on the same channel may change the word first); pending releases also count at the first check after the drain | a drain per acquire (thousands a second), and channel suspensions for releases only waiting for the host GPU | `EDEN_NX2_ACQUIRE_PEEK=0` |
+| nx2:gsv sessions (vi2, gpu, syncpt, nvsrv, ...) on a host thread of their own | AM's server is a guest thread on emulated core 3: vi2 229 blocked that core for the fence wait and vblank pacing of every frame, and no other graphics request (GPU submissions included) was answered meanwhile | `EDEN_NX2_GSV_HOST_THREAD=0` |
+| GPU thread waits on the command queue (250 us) instead of sleeping 1 ms while channels are suspended | new submissions waited out the sleep | — |
+| GpuSplit: front fields on their own cache line | false sharing per ring entry | — |
+| Smaller: pipeline looked up once per draw; TickWork without the mutex; per-fence dirty-memory gather and cache invalidation skipped when empty; IterateCache early stop; sparse alias walk skipped; view/sampler ids kept in the descriptor tables; GetMemoryLayoutSize answered from a per-thread kind entry; macro code generation only on changed words; MME DMA reads as one block; native compute inline data without a drain; stub ioctl logs rate-limited (a SEM_EXECUTE shortcut was reverted after review: its `ReleaseFences()` is a full sync point) | per draw / per fence / per method | — |
+| Present from the present thread by default for Tennis (`LoadEarlyOverrides`, applied before the renderer is made) | with `async_presentation` off the back thread acquired and presented itself, each blocking up to a refresh under FIFO vsync | per-game `async_presentation` |
+| No submit after each Switch 2 ASTC GPU decode | a submit and state reset per new texture on cards that keep ASTC uncompressed (12 GiB+) | `EDEN_NX2_ASTC_FLUSH=1` (submit) / `=0` (wait) |
+| Applet "last frame" capture of Switch 2 frames drawn every 30th frame | a framebuffer lookup, render pass break and 1280x720 draw per frame that nothing reads for Switch 2 | — |
+| Kernel: scheduler lock word on its own cache line; host service threads (now the gsv sessions) woken after the lock is released; pause in the context-guard retry; timing thread woken only for a new earliest event; 1 ns timer slack for it on Linux | futex calls and cache-line traffic while every core waits for the global scheduler lock; timeouts up to 50 us late | — |
+| Fixes found on the way: `KeplerCompute::uploads` grew for the whole session in native mode (leak, growing reallocations); `PageTableOp` changed `kind_map` without the lock | | — |
+
+Not done (ideas): a memo for storage buffer bindings and a CPU-dirty generation for
+SynchronizeBuffer (risky without a verify mode); vsync events restarted at a late present (VRR-like,
+the game may count vsyncs); syncpoint actions run outside the SyncpointManager lock; LSE atomics as
+native host atomics in dynarmic; kernel timer arming outside the scheduler lock (measure first: do
+the title's WaitForAddress calls carry timeouts?); batched texture collector downloads and reused
+ASTC decode images (only matter below ~12 GiB of VRAM); a second graphics queue for presents.

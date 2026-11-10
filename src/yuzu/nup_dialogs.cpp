@@ -231,8 +231,23 @@ void IconDropZone::leaveEvent(QEvent*) {
 NupMetadataDialog::NupMetadataDialog(const std::filesystem::path& source,
                                      const std::filesystem::path& archive, u64 needed_bytes,
                                      u64 available_bytes, QWidget* parent)
-    : QDialog(parent), detected(FileSys::Nup::ProbeMetadata(source)) {
-    setWindowTitle(tr("Convert to NUP"));
+    : NupMetadataDialog(FileSys::Nup::ProbeMetadata(source), false,
+                        tr("<b>Source</b><br>%1<br><b>Target</b><br>%2")
+                            .arg(ToQString(source).toHtmlEscaped(),
+                                 ToQString(archive).toHtmlEscaped()),
+                        needed_bytes, available_bytes, parent) {}
+
+NupMetadataDialog::NupMetadataDialog(const FileSys::Nup::Metadata& current,
+                                     const std::filesystem::path& archive, QWidget* parent)
+    : NupMetadataDialog(current, true,
+                        tr("<b>Archive</b><br>%1").arg(ToQString(archive).toHtmlEscaped()), 0, 0,
+                        parent) {}
+
+NupMetadataDialog::NupMetadataDialog(FileSys::Nup::Metadata detected_, bool editing_,
+                                     const QString& paths_html, u64 needed_bytes,
+                                     u64 available_bytes, QWidget* parent)
+    : QDialog(parent), detected(std::move(detected_)), editing(editing_) {
+    setWindowTitle(editing ? tr("Edit NUP Metadata") : tr("Convert to NUP"));
     setMinimumWidth(520);
 
     icon_preview = new IconDropZone(PreviewSize);
@@ -242,7 +257,7 @@ NupMetadataDialog::NupMetadataDialog(const std::filesystem::path& source,
     icon_hint->setWordWrap(true);
     icon_hint->setEnabled(false);
     auto* choose_icon = new QPushButton(tr("Choose Icon..."));
-    reset_icon = new QPushButton(tr("Use Detected"));
+    reset_icon = new QPushButton(editing ? tr("Keep Current") : tr("Use Detected"));
     connect(choose_icon, &QPushButton::clicked, this, &NupMetadataDialog::ChooseIcon);
     connect(reset_icon, &QPushButton::clicked, this, &NupMetadataDialog::ResetIcon);
 
@@ -269,7 +284,12 @@ NupMetadataDialog::NupMetadataDialog(const std::filesystem::path& source,
     publisher_edit->setClearButtonEnabled(true);
 
     version_auto = new QRadioButton;
-    if (detected.display_version.empty()) {
+    if (editing) {
+        version_auto->setText(detected.display_version.empty()
+                                  ? tr("Keep current (none stored)")
+                                  : tr("Keep current: %1")
+                                        .arg(QString::fromStdString(detected.display_version)));
+    } else if (detected.display_version.empty()) {
         version_auto->setText(tr("Auto-detect (nothing found in the dump)"));
     } else {
         version_auto->setText(tr("Auto-detect: %1 (from %2)")
@@ -298,9 +318,7 @@ NupMetadataDialog::NupMetadataDialog(const std::filesystem::path& source,
     form->addRow(tr("Publisher"), publisher_edit);
     form->addRow(tr("Version"), version_box);
 
-    auto* paths = new QLabel(tr("<b>Source</b><br>%1<br><b>Target</b><br>%2")
-                                 .arg(ToQString(source).toHtmlEscaped(),
-                                      ToQString(archive).toHtmlEscaped()));
+    auto* paths = new QLabel(paths_html);
     paths->setTextFormat(Qt::RichText);
     paths->setWordWrap(true);
     paths->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -318,7 +336,8 @@ NupMetadataDialog::NupMetadataDialog(const std::filesystem::path& source,
                                    "(cannot be undone)"));
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
-    auto* convert = buttons->addButton(tr("Convert"), QDialogButtonBox::AcceptRole);
+    auto* convert =
+        buttons->addButton(editing ? tr("Save") : tr("Convert"), QDialogButtonBox::AcceptRole);
     convert->setDefault(true);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -333,6 +352,11 @@ NupMetadataDialog::NupMetadataDialog(const std::filesystem::path& source,
     layout->addLayout(form);
     layout->addWidget(separator);
     layout->addWidget(paths);
+    if (editing) {
+        // Saving rewrites only the metadata, so there is no space estimate or source to delete.
+        space->hide();
+        low_storage->hide();
+    }
     layout->addWidget(space);
     layout->addWidget(low_storage);
     layout->addSpacing(4);
@@ -405,9 +429,11 @@ void NupMetadataDialog::UpdateIconPreview() {
         icon_hint->setText(tr("Custom icon, stored as %1x%1 JPEG.").arg(IconSize));
     } else if (!detected.icon.empty()) {
         pixmap = PixmapFromBytes(detected.icon);
-        icon_hint->setText(tr("Icon found in the dump."));
+        icon_hint->setText(editing ? tr("Icon stored in the NUP.") : tr("Icon found in the dump."));
     } else {
-        icon_hint->setText(tr("No icon found in the dump. Add one, or the NUP will have none."));
+        icon_hint->setText(editing ? tr("No icon stored in the NUP.")
+                                   : tr("No icon found in the dump. Add one, or the NUP will "
+                                        "have none."));
     }
     current_icon = pixmap;
     reset_icon->setEnabled(!custom_icon.isEmpty());

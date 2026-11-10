@@ -14,6 +14,7 @@
 #include <span>
 #include <vector>
 #include <boost/container/small_vector.hpp>
+#include <deque>
 #include <queue>
 
 #include "common/bit_field.h"
@@ -241,11 +242,21 @@ public:
     bool FlushGpuWrittenCommands(GPUVAddr address, size_t size);
 
 private:
+    /// FlushGpuWrittenCommands under Nx2CheckCommandPagesFirst: entries checked since a page was
+    /// last marked GPU-written for the first time (g_nx2_gpu_written_generation), up to the
+    /// count after which they check the page bits before draining.
+    static constexpr u32 CommandChecksBeforeBitsFirst = 2048;
+    u64 command_check_generation{~u64{0}};
+    u32 command_checks_since_mark{};
+
+public:
+
+private:
 
 public:
     Common::ScratchBuffer<CommandHeader> command_headers; ///< Buffer for list of commands fetched at once
 
-    std::queue<CommandList> dma_pushbuffer; ///< Queue of command lists to be processed
+    std::deque<CommandList> dma_pushbuffer; ///< Queue of command lists to be processed
     std::size_t dma_pushbuffer_subindex{};  ///< Index within a command list within the pushbuffer
 
     struct DmaState {

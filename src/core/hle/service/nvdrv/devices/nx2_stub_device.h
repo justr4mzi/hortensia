@@ -11,6 +11,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -23,10 +25,24 @@ namespace Service::Nvidia::Devices {
 // answer ioctls they don't know with a logged, input-echoing success instead of NotImplemented.
 inline std::atomic<bool> g_nx2_driver{false};
 
+// Stubbed ioctls a game repeats (per frame) were logged every time, on the thread serving the
+// game's request: the first few of each kind, then one in 4096.
+inline bool Nx2LogStubbedIoctl(std::string_view device, u32 ioctl) {
+    static std::mutex mutex;
+    static std::unordered_map<u64, u32> counts;
+    const u64 key = (u64{std::hash<std::string_view>{}(device)} << 32) ^ ioctl;
+    std::scoped_lock lk{mutex};
+    const u32 count = counts[key]++;
+    return count < 8 || (count % 4096) == 0;
+}
+
 inline NvResult Nx2UnknownIoctl(const char* device, Ioctl command, std::span<const u8> input,
                                 std::span<u8> output) {
-    LOG_WARNING(Service_NVDRV, "(STUBBED) Switch 2 {} ioctl={:08X} group={:01X} command={:02X} in={:#x}",
-                device, command.raw, command.group, command.cmd, input.size());
+    if (Nx2LogStubbedIoctl(device, command.raw)) {
+        LOG_WARNING(Service_NVDRV,
+                    "(STUBBED) Switch 2 {} ioctl={:08X} group={:01X} command={:02X} in={:#x}",
+                    device, command.raw, command.group, command.cmd, input.size());
+    }
     std::fill(output.begin(), output.end(), u8{0});
     std::copy_n(input.begin(), std::min(input.size(), output.size()), output.begin());
     return NvResult::Success;
@@ -139,19 +155,6 @@ public:
         for (auto& [owner, listener] : listeners) {
             if (listener.back) {
                 listener.back(gpu_address, cpu_address, size);
-            }
-        }
-    }
-
-    // nx2:gpu 216 (sparse map requests): the tile [gpu_address, +size) of a sparse region now
-    // shows the process memory at cpu_address, the game's own memory (sub 101), or with
-    // cpu_address 0 it is unmapped and reads zero. The GPU mapping stays as it is; only the
-    // region's device pages change, in GPU-thread order.
-    void MapSparseTile(u64 gpu_address, u64 cpu_address, u64 size) {
-        std::scoped_lock lk{mutex};
-        for (auto& [owner, listener] : listeners) {
-            if (listener.tile) {
-                listener.tile(gpu_address, cpu_address, size);
             }
         }
     }
@@ -351,8 +354,11 @@ public:
 private:
     NvResult Stub(DeviceFD fd, Ioctl command, std::span<const u8> input, std::span<u8> output,
                   std::span<u8> inline_output) {
-        LOG_WARNING(Service_NVDRV, "(STUBBED) {} fd={} ioctl={:08X} group={:01X} command={:02X} in={:#x}",
-                    name, fd, command.raw, command.group, command.cmd, input.size());
+        if (Nx2LogStubbedIoctl(name, command.raw)) {
+            LOG_WARNING(Service_NVDRV,
+                        "(STUBBED) {} fd={} ioctl={:08X} group={:01X} command={:02X} in={:#x}",
+                        name, fd, command.raw, command.group, command.cmd, input.size());
+        }
         // Echo the input (in/out ioctls keep their fields), zero the rest.
         std::fill(output.begin(), output.end(), u8{0});
         std::copy_n(input.begin(), std::min(input.size(), output.size()), output.begin());

@@ -22,6 +22,7 @@
 #include "hid_core/resources/hid_firmware_settings.h"
 #include "hid_core/resources/keyboard/keyboard.h"
 #include "hid_core/resources/mouse/debug_mouse.h"
+#include "hid_core/resources/mouse/jcms.h"
 #include "hid_core/resources/mouse/mouse.h"
 #include "hid_core/resources/mouse/nmouse.h"
 #include "hid_core/resources/npad/npad.h"
@@ -237,6 +238,7 @@ void ResourceManager::InitializeHidCommonSampler() {
     mouse = std::make_shared<Mouse>(system.HIDCore());
     nmouse = std::make_shared<Nmouse>(system.HIDCore());
     debug_mouse = std::make_shared<DebugMouse>(system.HIDCore());
+    jcms = std::make_shared<Jcms>(system.HIDCore());
     keyboard = std::make_shared<Keyboard>(system.HIDCore());
     unique_pad = std::make_shared<UniquePad>(system.HIDCore());
     npad = std::make_shared<NPad>(system.HIDCore(), service_context);
@@ -259,6 +261,7 @@ void ResourceManager::InitializeHidCommonSampler() {
                            &input_mutex, settings);
 
     six_axis->SetAppletResource(applet_resource, &shared_mutex);
+    six_axis->SetJcms(jcms);
     mouse->SetAppletResource(applet_resource, &shared_mutex);
     debug_mouse->SetAppletResource(applet_resource, &shared_mutex);
     home_button->SetAppletResource(applet_resource, &shared_mutex);
@@ -512,6 +515,7 @@ void ResourceManager::UpdateMouseKeyboard(std::chrono::nanoseconds ns_late) {
     mouse->OnUpdate(core_timing);
     nmouse->OnUpdate(core_timing);
     debug_mouse->OnUpdate(core_timing);
+    jcms->OnUpdate(core_timing);
     keyboard->OnUpdate(core_timing);
 }
 

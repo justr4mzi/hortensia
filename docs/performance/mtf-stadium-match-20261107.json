@@ -1,0 +1,159 @@
+{
+  "run_id": "20261107-173656-4da6f700",
+  "qualification": "single diagnostic match with Hitch trace; randomized CPU choice recorded as Yoshi, point/serve transitions included; not repeatable A/B acceptance",
+  "scene": "Free Play singles Quick Play 7 points, Stadium Court Grass, Mario vs intermediate CPU Yoshi, personal rackets, standard ball; repeated A input; rally/point transitions included; opponent came from Random selection",
+  "start_ns": 57547035625885,
+  "end_ns": 57577035625885,
+  "identity": {
+    "game_identity": {
+      "path": "/home/leon/Switch2/Mario Tennis Fever.nup",
+      "size": 16048499819,
+      "mtime_ns": 1793746302542340573,
+      "prefix_1MiB_sha256": "59e9afc9744aabdb79bac13faf35ba2222106cfe9e36d5bdc1f813c93fb6077a"
+    },
+    "binary_sha256": "79edc189ab3474cdc50fb415c483958bceb87461a52c0731f25865ecfd98631c",
+    "seed_id": "e6a0abbcd764eeb2f8a4132cf1ed1274b8bd8d2a473242e8fc2cb6e682f99600",
+    "settings_sha256": "f1e413e18b3accbc4da22508000c3b70bf0123c8697bc605733664f9f7ceb354"
+  },
+  "measurement": {
+    "available": true,
+    "reason": null,
+    "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-173656-4da6f700/profile/data/eden/log/hitch-frames-0400d4201c6ea000-57313029921318.csv",
+    "sha256": "85350d33c568dd50f713b440392ab6f7af76fbaacac9b177f08c0ceeef452dcb",
+    "metric": "native_present_interval_ms",
+    "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+    "scope": "selected_window",
+    "fps_estimate_kind": "native_present_service_cadence_estimate",
+    "rows_read": 18740,
+    "excluded_intervals": 16949,
+    "window_start_ns": 57547035625885,
+    "window_end_ns": 57577035625885,
+    "stats": {
+      "available": true,
+      "count": 1791,
+      "sum_ms": 29980.023662,
+      "mean_ms": 16.73926502624232,
+      "p50_ms": 16.66029,
+      "p95_ms": 17.819902499999998,
+      "p99_ms": 22.098287699999975,
+      "min_ms": 8.462244,
+      "max_ms": 50.131789,
+      "inverse_mean_fps_estimate": 59.73977940084523,
+      "stutters_over_ms": {
+        "33.333333": 4,
+        "50.0": 1,
+        "100.0": 0
+      }
+    }
+  },
+  "statistics": {
+    "available": true,
+    "count": 1791,
+    "sum_ms": 29980.023662,
+    "mean_ms": 16.73926502624232,
+    "p50_ms": 16.66029,
+    "p95_ms": 17.819902499999998,
+    "p99_ms": 22.098287699999975,
+    "min_ms": 8.462244,
+    "max_ms": 50.131789,
+    "inverse_mean_fps_estimate": 59.73977940084523,
+    "stutters_over_ms": {
+      "16.666667": 880,
+      "33.333333": 4,
+      "50.0": 1,
+      "100.0": 0
+    }
+  },
+  "phase_statistics_nonzero_only": {
+    "external_us": {
+      "available": true,
+      "count": 1792,
+      "sum_ms": 8919.311,
+      "mean_ms": 4.977294084821429,
+      "p50_ms": 4.68,
+      "p95_ms": 6.200149999999999,
+      "p99_ms": 10.310109999999995,
+      "min_ms": 3.853,
+      "max_ms": 38.363,
+      "inverse_mean_fps_estimate": 200.91237989122703,
+      "stutters_over_ms": {
+        "33.333333": 3,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "fence_us": {
+      "available": true,
+      "count": 1792,
+      "sum_ms": 9460.991,
+      "mean_ms": 5.279570870535714,
+      "p50_ms": 5.124499999999999,
+      "p95_ms": 6.297149999999995,
+      "p99_ms": 9.115949999999978,
+      "min_ms": 3.567,
+      "max_ms": 21.565,
+      "inverse_mean_fps_estimate": 189.40933354655976,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "composite_us": {
+      "available": true,
+      "count": 1792,
+      "sum_ms": 11.493,
+      "mean_ms": 0.0064135044642857145,
+      "p50_ms": 0.006,
+      "p95_ms": 0.008,
+      "p99_ms": 0.011,
+      "min_ms": 0.004,
+      "max_ms": 0.17,
+      "inverse_mean_fps_estimate": 155920.99538849734,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "pace_us": {
+      "available": true,
+      "count": 1755,
+      "sum_ms": 11602.398,
+      "mean_ms": 6.611052991452991,
+      "p50_ms": 6.872,
+      "p95_ms": 7.863300000000001,
+      "p99_ms": 8.55058,
+      "min_ms": 0.168,
+      "max_ms": 9.03,
+      "inverse_mean_fps_estimate": 151.26183397604532,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    },
+    "service_us": {
+      "available": true,
+      "count": 1792,
+      "sum_ms": 21076.693,
+      "mean_ms": 11.761547433035714,
+      "p50_ms": 11.988,
+      "p95_ms": 12.47945,
+      "p99_ms": 12.650779999999997,
+      "min_ms": 4.378,
+      "max_ms": 21.571,
+      "inverse_mean_fps_estimate": 85.02282592435161,
+      "stutters_over_ms": {
+        "33.333333": 0,
+        "50.0": 0,
+        "100.0": 0
+      }
+    }
+  },
+  "errors": [
+    "[  43.427508] Common.Filesystem <Error> common/fs/file.cpp:285:Open: Failed to open the file at path=/home/user/.local/share/codex-orchid-mcp/state/runs/20261107-173656-4da6f700/profile/data/eden/nand/system/save/8000000000000010/su/avators/2fc92010-00dc-197b-92cd-3fa6ff4fc039.jpg, ec_message=No such file or directory",
+    "[ 316.260286] HW.Memory <Error> core/memory.cpp:364:operator(): Unmapped @ 0x00000082413000 (start address = 0x00000082413000, size = 48)"
+  ],
+  "telemetry_selection": "Only one native CSV overlaps the measured monotonic window; inherited seed trace excluded"
+}

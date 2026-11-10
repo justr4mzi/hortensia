@@ -9,6 +9,7 @@
 #include <thread>
 #include <chrono>
 #include <condition_variable>
+#include <fstream>
 #include <cstring>
 #include <set>
 #include <span>
@@ -28,6 +29,7 @@
 #include <mutex>
 #include <vector>
 
+#include "core/hle/service/nx2_gsv_server.h"
 #include "common/alignment.h"
 #include "common/div_ceil.h"
 #include "common/dkb_frame_trace.h"
@@ -105,10 +107,12 @@ inline Kernel::KClientSession* CreateRawSession(Core::System& system, HLERequest
     session->Initialize(kernel, nullptr, 0);
     Kernel::KSession::Register(kernel, session);
 
-    auto manager =
-        std::make_shared<SessionRequestManager>(kernel, ctx.GetManager()->GetServerManager());
+    // On the graphics system's own host thread when it runs (nx2_gsv_server.h).
+    ServerManager* const gsv_server = g_nx2_gsv_server.load(std::memory_order_acquire);
+    ServerManager& server = gsv_server != nullptr ? *gsv_server : ctx.GetManager()->GetServerManager();
+    auto manager = std::make_shared<SessionRequestManager>(kernel, server);
     manager->SetSessionHandler(std::move(iface));
-    ctx.GetManager()->GetServerManager().RegisterSession(&session->GetServerSession(), manager);
+    server.RegisterSession(&session->GetServerSession(), manager);
     return &session->GetClientSession();
 }
 
@@ -428,8 +432,8 @@ private:
         request.syncpoint = syncpoint;
         request.pending = true;
         auto& manager = system.Host1x().GetSyncpointManager();
-        // The action runs on the GPU thread under the manager's lock, or inline if the value is
-        // already reached.
+        // The action runs on the GPU thread (after the manager's lock; a cancel waits for it), or
+        // inline if the value is already reached.
         request.handle = manager.RegisterGuestAction(
             syncpoint, static_cast<u32>(value),
             [shared = m_shared, &kernel = system.Kernel(), &request, event, syncpoint] {
@@ -978,7 +982,15 @@ private:
                 Kernel::KMemoryManager::EncodeOption(Kernel::KMemoryManager::Pool::SystemNonSecure,
                                                      Kernel::KMemoryManager::Direction::FromBack)))) {
             if (log_failure) {
-                LOG_ERROR(Service, "nx2:gpu 214 could not allocate {:#x} bytes", size);
+                auto& manager = kernel_core.MemoryManager();
+                using Pool = Kernel::KMemoryManager::Pool;
+                LOG_ERROR(Service,
+                          "nx2:gpu 214 could not allocate {:#x} bytes (system non-secure pool {} of "
+                          "{} MiB free, application pool {} of {} MiB free)",
+                          size, manager.GetFreeSize(Pool::SystemNonSecure) >> 20,
+                          manager.GetSize(Pool::SystemNonSecure) >> 20,
+                          manager.GetFreeSize(Pool::Application) >> 20,
+                          manager.GetSize(Pool::Application) >> 20);
             }
             return std::nullopt;
         }
@@ -1040,6 +1052,20 @@ private:
 
     // Needs m_region_mutex.
     std::optional<u64> BackGpuOnlyRegion(u64 gpu_address, u64 size) {
+        // A title may create a region again from the same start with another size (Mario Kart
+        // World: 300 MB, 600 MB, 1 GB at one address) without destroying it. Overwriting the entry
+        // kept the old backing mapped and its pages out of the pool for good: release it as 215
+        // does, once the GPU thread is past it.
+        if (const auto it = m_gpu_only_regions.find(gpu_address); it != m_gpu_only_regions.end()) {
+            auto& registry = Nvidia::Devices::Nx2GpuMemoryRegistry::Get();
+            registry.Unmap(gpu_address, it->second.size);
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            registry.ReleaseBacking(it->second.cpu_address, it->second.size, [&sys = system, done] {
+                GpuCommands::Run(sys.GPU(), [done] { done->store(true, std::memory_order_release); });
+            });
+            m_released_regions.push_back({std::move(it->second), done});
+            m_gpu_only_regions.erase(it);
+        }
         auto backing = AllocateGpuOnlyBacking(size, true, false);
         if (!backing) {
             return std::nullopt;
@@ -1093,8 +1119,8 @@ private:
                         const u64 write_begin = (std::max)(gpu_address, block_begin);
                         const u64 write_end = (std::min)(
                             {end, block_begin + SparseBlockSize, start + region.size});
-                        if (data != nullptr &&
-                            IsAllZero(data + (write_begin - gpu_address), write_end - write_begin) &&
+                        const u8* const bytes = data + (write_begin - gpu_address);
+                        if (IsAllZero(bytes, write_end - write_begin) &&
                             !Tegra::Nx2SparseBlockIsWritten(start, block)) {
                             zero_bytes += write_end - write_begin;
                             continue;
@@ -1533,21 +1559,6 @@ private:
         std::shared_ptr<std::atomic<bool>> done; ///< Set by the GPU thread past the region's last use
     };
     std::map<u64, GpuOnlyRegion> m_gpu_only_regions; ///< By GPU address
-    std::map<u64, u64> m_gpu_only_ranges; ///< 214 regions without the sparse flag: GPU address -> size
-    struct GpuOnlyTile {
-        u64 size;
-        u64 region; ///< Start of its GPU-only region
-        u32 memory_handle;
-        u64 offset;
-    };
-    std::map<u64, GpuOnlyTile> m_gpu_only_tiles; ///< The game's memory 216 put in GPU-only regions
-    /// (memory handle, offset) -> (end offset, region) of those tiles, to find shared memory
-    std::map<std::pair<u32, u64>, std::pair<u64, u64>> m_gpu_only_memory;
-    /// Memory mapped into regions that keep their own (handle, offset) -> region
-    std::map<std::pair<u32, u64>, u64> m_shared_memory;
-    std::set<u64> m_shared_regions; ///< GPU-only regions sharing memory: they keep their own
-    u64 m_gpu_only_tile_max{};   ///< Largest such tile, bounds the search
-    u64 m_gpu_only_tile_bytes{}; ///< GPU-only region memory the game maps right now
     std::vector<ReleasedRegion> m_released_regions;
 
     struct GpuMemory {
@@ -1658,7 +1669,10 @@ struct Nx2NativeObjects {
 // GameChat's graphics side (nn::chat::gsv), handed out by gsv 1202. Read from the SDK's
 // nn::chat::gsv::Initialize: TIPC 1() returns a u32 id at word 3 (it aborts with 2162-0001 if
 // the id is over 0x3ff), then TIPC 11(u32 id) returns an event (copy handle at word 3, result at
-// word 4) that it attaches as a system event. Everything else falls through to the nx2 auto stub.
+// word 4) that it attaches as a system event. 103 (OpenVirtualDisplay: u64 name packed from up to
+// 8 chars, u32 slot id) and 121 (CreateMetadataPool: u64 pool cookie, u64 count, u32 slot id) only
+// read the result; the SDK picks the slot id itself. Everything else falls through to the nx2
+// auto stub.
 class INx2ChatGsvSession final : public ServiceFramework<INx2ChatGsvSession> {
 public:
     explicit INx2ChatGsvSession(Core::System& system_)
@@ -1666,6 +1680,8 @@ public:
         RegisterHandlersTipc({
             {1, &INx2ChatGsvSession::GetEventId, "GetEventId (guessed)"},
             {11, &INx2ChatGsvSession::GetEvent, "GetEvent (guessed)"},
+            {103, &INx2ChatGsvSession::Succeed, "OpenVirtualDisplay"},
+            {121, &INx2ChatGsvSession::Succeed, "CreateMetadataPool"},
         });
     }
 
@@ -1694,6 +1710,14 @@ private:
         rb.PushCopyObjects(ctx, event->GetReadableEvent());
     }
 
+    void Succeed(HLERequestContext& ctx) {
+        const auto* w = ctx.CommandBuffer();
+        LOG_DEBUG(Service, "nx2:chat:gsv TIPC {} [2]={:#x} [3]={:#x} [4]={:#x}", ctx.GetCommand(), w[2],
+                  w[3], w[4]);
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSuccess);
+    }
+
     KernelHelpers::ServiceContext m_context;
     std::map<u32, Kernel::KEvent*> m_events;
 };
@@ -1704,26 +1728,53 @@ private:
 // and the game runs on an empty success, so they answer that without a log line per call.
 class INx2CameraSession final : public ServiceFramework<INx2CameraSession> {
 public:
-    explicit INx2CameraSession(Core::System& system_) : ServiceFramework{system_, "nx2:camera"} {
-        RegisterHandlersTipc({
-            {3, &INx2CameraSession::Stub, "Unknown3 (camera name \"Default\")"},
-            {21, &INx2CameraSession::Stub, "Unknown21 (camera name \"Default\")"},
-            {29, &INx2CameraSession::Stub, "Unknown29 (u32 0x180, polled every frame)"},
+    explicit INx2CameraSession(Core::System& system_)
+        : ServiceFramework{system_, "nx2:camera"}, m_context{system_, "nx2:camera"} {
+        RegisterHandlers({
+            {3, &INx2CameraSession::OpenCamera, "OpenCamera"},
+            {21, &INx2CameraSession::GetCameraEvent, "GetCameraEvent"},
+            {29, &INx2CameraSession::CheckImagePreference, "CheckImagePreference"},
         });
+        m_event = m_context.CreateEvent("nx2:camera:Event");
+    }
+
+    ~INx2CameraSession() override {
+        m_context.CloseEvent(m_event);
     }
 
 private:
-    void Stub(HLERequestContext& ctx) {
-        const u32 command = ctx.GetCommand();
-        if (m_logged.insert(command).second) {
-            LOG_WARNING(Service, "(STUBBED) nx2:camera TIPC {} [2]={:#x} [3]={:#x}, returning success",
-                        command, ctx.CommandBuffer()[2], ctx.CommandBuffer()[3]);
+    void OpenCamera(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        const auto name = rp.PopRaw<std::array<char, 16>>();
+        LOG_WARNING(Service, "(STUBBED) nx2:camera 3 name={}, returning camera id 0",
+                    std::string_view{name.data(), strnlen(name.data(), name.size())});
+        IPC::ResponseBuilder rb{ctx, 4};
+        rb.Push(ResultSuccess);
+        rb.Push<u64>(0);
+    }
+
+    void GetCameraEvent(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        LOG_WARNING(Service, "(STUBBED) nx2:camera 21 id={}, returning an event", rp.Pop<u64>());
+        IPC::ResponseBuilder rb{ctx, 2, 1};
+        rb.Push(ResultSuccess);
+        rb.PushCopyObjects(ctx, m_event->GetReadableEvent());
+    }
+
+    // Polled every frame by Mario Kart World, so it is logged once.
+    void CheckImagePreference(HLERequestContext& ctx) {
+        if (!m_logged_29) {
+            m_logged_29 = true;
+            LOG_WARNING(Service, "(STUBBED) nx2:camera 29 [8]={:#x}, returning success",
+                        ctx.CommandBuffer()[8]);
         }
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
     }
 
-    std::set<u32> m_logged;
+    KernelHelpers::ServiceContext m_context;
+    Kernel::KEvent* m_event;
+    bool m_logged_29 = false;
 };
 
 // Video decoder output images (nn::codec image pools, gsv 991/911/961). The preference
@@ -1823,6 +1874,10 @@ public:
             {11, &INx2Vi2Session::ReturnEvent, "Unknown11"},
             {31, &INx2Vi2Session::AcquireNativeEvent, "AcquireNativeEvent"},
             {32, &INx2Vi2Session::DuplicateNativeEvent, "DuplicateNativeEvent"},
+            {101, &INx2Vi2Session::OpenDisplay, "OpenDisplay"},
+            {102, &INx2Vi2Session::CloseDisplay, "CloseDisplay"},
+            {201, &INx2Vi2Session::RegisterClientState, "RegisterClientState"},
+            {202, &INx2Vi2Session::UnregisterClientState, "UnregisterClientState"},
             {261, &INx2Vi2Session::BindVsync, "BindDisplayVsyncEvent"},
             {262, &INx2Vi2Session::UnbindNativeEvent, "UnbindDisplayVsyncEvent"},
             {263, &INx2Vi2Session::BindChange, "BindDisplayRefreshRateEvent"},
@@ -2068,7 +2123,7 @@ private:
                 const double seconds = static_cast<double>(m_stats.frame_us) / 1e6;
                 const bool ab = Core::Nx2AbExperiment() != Core::Nx2Experiment::None;
                 LOG_INFO(Service,
-                         "nx2:vi2 last 600 presents: frame {} us (max {}, {} over 100 ms), "
+                         "nx2:vi2 last {} presents: frame {} us (max {}, {} over 100 ms), "
                          "blocked on the GPU fence {} us (max {}), composite {} us, vblank "
                          "pacing {} us; {} of them 2+ vblanks, {} ran a frame ahead, game speed "
                          "{:.0f}%{}{}",
@@ -2169,6 +2224,8 @@ private:
     // next vblank instead (title 4 ran at up to 160 fps, its timing and audio with it).
     Nx2PresentPacer m_present_pacer;
     u32 m_swap_word{};
+    u32 m_swap_stable{};  ///< Presents since the swap word last changed (capped)
+    u32 m_swap_changes{}; ///< Logged swap word changes (the first 32)
 
     struct FrameTrace {
         Common::DkbFrameTrace::RateLimit rate;
@@ -2604,7 +2661,12 @@ private:
     // its output from it: 1 -> 1280x720, 2 -> 1920x1080, 4 and 8 -> 2560x1440; 0 (the auto stub's
     // reply), 3 and 5 fall back to 720p. Docked reports 4, handheld 2 (the screen is 1080p);
     // EDEN_VI2_MAX_RESOLUTION_MODE=<n> overrides.
+    // Hyrule Warriors: Age of Imprisonment takes only 1 or 2 and terminates with 0x1472 otherwise.
     void GetBufferMaxResolution(HLERequestContext& ctx) {
+        if (system.GetApplicationProcessProgramID() == 0x04003F40232DE000ULL) {
+            TipcReplyWords(ctx, {1, 0});
+            return;
+        }
         const auto* packet = ctx.CommandBuffer();
         const u64 name = u64{packet[2]} | (u64{packet[3]} << 32);
         constexpr u64 DefaultDisplay = 0x00746c7561666564ULL; // "default"
@@ -2854,6 +2916,7 @@ private:
         u32 height;
         u64 pts;
         bool end;
+        bool after_end; // no frame: an image released after the end of the stream, handed back
     };
     struct Fence {
         u32 syncpoint;
@@ -3055,6 +3118,10 @@ private:
                 m_handed = 0;
                 value = reached;
             } else {
+                m_free.push_back(image);
+                if (release_fence) {
+                    m_release_fences[image] = *release_fence;
+                }
                 value = m_sync_base + ++m_handed;
             }
             if (Nx2VideoTraceEnabled()) {
@@ -3361,7 +3428,9 @@ private:
                 const auto [width, height] = WriteImage(decoder.get(), image, frame, bytes);
                 lk.lock();
                 // Even an image written during a flush counts: the client waits for its value.
-                m_outputs.push_back({image, width, height, frame.pts, frame.end});
+                m_outputs.push_back({image, width, height, frame.pts, frame.end, false});
+                m_out_width = width;
+                m_out_height = height;
                 if (frame.end) {
                     m_stream_ended = true;
                     m_end_queued = false;
@@ -3449,8 +3518,11 @@ private:
             }
             if (input.end) {
                 // The client stops at the frame marked end of stream; give it one even when the
-                // last input held no picture.
-                if (m_decoded.empty()) {
+                // last input held no picture. Only a picture from this input may carry the mark:
+                // marking an earlier one still waiting for an image hands out one frame fewer
+                // than the client counts, and its next 213 finds the ring empty (0x1c286f), which
+                // Donkey Kong Bananza panics on as a video ends.
+                if (pictures.empty()) {
                     m_decoded.push_back({std::nullopt, input.pts, true});
                 } else {
                     m_decoded.back().end = true;
@@ -3646,6 +3718,8 @@ private:
     std::string m_codec;
     u32 m_width{};
     u32 m_height{};
+    u32 m_out_width{};  ///< Size of the last frame written
+    u32 m_out_height{};
     u32 m_handed{}; ///< Output images handed out (registered or released) so far
     u64 m_frames_out{};
     u64 m_decoded_frames{};
@@ -3707,6 +3781,9 @@ public:
             {991, &INx2GraphicsSystemSession::CalculateDecoderImagePoolBuffer,
              "CalculateDecoderImagePoolBuffer"},
             {901, &INx2GraphicsSystemSession::Stub, "VideoInitialize (guessed)"},
+            // nn::codec::video::detail::ipc::Finalize (FinalizeServerContext in newer SDKs) sends
+            // 903() after closing its sessions and reads only the result.
+            {903, &INx2GraphicsSystemSession::Stub, "VideoFinalize"},
             {902, &INx2GraphicsSystemSession::OpenVideoSession, "OpenVideoDecoderSession (guessed)"},
             {906, &INx2GraphicsSystemSession::OpenVideoSession, "OpenVideoDecoderSessionWithVersion"},
             {1001, &INx2GraphicsSystemSession::Stub, "VideoInitialize2 (guessed)"},
@@ -3724,7 +3801,6 @@ public:
             // Firmware commands without a known meaning: zeroed replies.
             {11, &INx2GraphicsSystemSession::RegisterClientHandle, "RegisterClientHandle"},
             {113, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown113"},
-            {115, &INx2GraphicsSystemSession::QueryGrantedFeatures, "QueryGrantedFeatures"},
             {120, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown120"},
             {121, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown121"},
             {122, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown122"},
@@ -3753,7 +3829,6 @@ public:
             {403, &INx2GraphicsSystemSession::CheckPermission, "CheckPermission403"},
             {424, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown424"},
             {425, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown425"},
-            {427, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown427"},
             {434, &INx2GraphicsSystemSession::AttachGpuAddressSpace, "AttachGpuAddressSpace"},
             {436, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown436"},
             {461, &INx2GraphicsSystemSession::StubReplyZeroed, "Unknown461"},

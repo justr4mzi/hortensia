@@ -141,6 +141,7 @@ add_executable(tests
     common/fibers.cpp
     common/fs_iterate.cpp
     common/game_presets.cpp
+    common/hitch_diagnostic.cpp
     common/host_memory.cpp
     common/host_memory_failure.cpp
     common/host_memory_test_access.h
@@ -150,6 +151,7 @@ add_executable(tests
     common/param_package.cpp
     common/path_defaults.cpp
     common/range_map.cpp
+    common/range_set_move.cpp
     common/ring_buffer.cpp
     common/scratch_buffer.cpp
     common/slot_vector.cpp
@@ -191,18 +193,40 @@ add_executable(tests
     video_core/ampere_tensor.cpp
     video_core/native_video.cpp
     video_core/ampere_f2i.cpp
+    video_core/ampere_i2f64.cpp
+    video_core/ampere_uniform_fset.cpp
     video_core/compute_storage_buffers.cpp
+    video_core/compute_binding_diagnostic.cpp
     video_core/cooperative_matrix.cpp
+    video_core/spirv_storage_images.cpp
+    video_core/texture_unswizzle.cpp
+    video_core/texture_row_upload.cpp
+    video_core/texture_depth_float.cpp
+    video_core/texture_descriptor_bounds.cpp
+    video_core/shader_snapshot.cpp
+    video_core/texture_r2ur_handle.cpp
+    video_core/texture_handles.cpp
     video_core/ampere_kirby.cpp
     video_core/ampere_geometry_lowering.cpp
+    video_core/geometry_layer_viewport_relative.cpp
+    video_core/demote_nested_returns.cpp
     video_core/ampere_geometry_exit.cpp
     video_core/ampere_uniform_lea.cpp
+    video_core/ampere_compute_forms.cpp
     video_core/ampere_integer_multiply.cpp
     video_core/ampere_integer_add.cpp
     video_core/ampere_program_override.cpp
     video_core/x8d24_conversion.cpp
     video_core/ampere_bindless_tex.cpp
     video_core/ampere_sured.cpp
+    video_core/ampere_yoshi_surface.cpp
+    video_core/ampere_yoshi_shift.cpp
+    video_core/ampere_yoshi_lea_carry.cpp
+    video_core/ampere_yoshi_uniform_carry.cpp
+    video_core/ampere_yoshi_uniform_shift.cpp
+    video_core/ampere_yoshi_uniform_gather.cpp
+    video_core/ampere_yoshi_cbuf_carry.cpp
+    video_core/maxwell_shr.cpp
     video_core/ampere_release_guards.cpp
     video_core/ampere_release_f2i.cpp
     video_core/usage_tracker.cpp

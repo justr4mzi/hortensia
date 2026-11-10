@@ -20,8 +20,9 @@ namespace Service::Audio {
 
 class IAudioOut : public ServiceFramework<IAudioOut> {
 public:
-    explicit IAudioOut(Core::System& system_, AudioCore::AudioOut::Manager& manager,
-                       size_t session_id, const std::string& device_name,
+    explicit IAudioOut(Core::System& system_,
+                       std::shared_ptr<AudioCore::AudioOut::Manager> manager, size_t session_id,
+                       const std::string& device_name,
                        const AudioCore::AudioOut::AudioOutParameter& in_params,
                        Kernel::KProcess* handle, u64 applet_resource_user_id);
     ~IAudioOut() override;
@@ -55,6 +56,8 @@ private:
     KernelHelpers::ServiceContext service_context;
     Kernel::KEvent* event;
     Kernel::KProcess* process;
+    // impl->Free() locks the manager, also when the manager service closed first.
+    std::shared_ptr<AudioCore::AudioOut::Manager> manager;
     std::shared_ptr<AudioCore::AudioOut::Out> impl;
 };
 

@@ -28,6 +28,7 @@
 #include "core/file_sys/fs_filesystem.h"
 #include "core/file_sys/nca_metadata.h"
 #include "core/file_sys/patch_manager.h"
+#include "core/file_sys/program_metadata.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/submission_package.h"
 #include "core/loader/loader.h"
@@ -175,6 +176,13 @@ QString FormatGameName(const std::string& physical_name) {
 // <game>/updates/<title id>/exefs/main) have no control data, so they are named after their
 // game folder.
 QString LooseExeFSName(const std::string& physical_name) {
+    const std::filesystem::path path{Common::FS::ToU8String(physical_name)};
+    if (const auto game_root = Loader::LooseGameRootFromMain(path)) {
+        if (const auto selected = Loader::ResolveLooseProgramPath(*game_root);
+            selected && GameListDiscovery::IsUpgradeProgramMain(*selected)) {
+            return QString::fromStdString(Common::FS::PathToUTF8String(game_root->filename()));
+        }
+    }
     QDir dir = QFileInfo(QString::fromStdString(physical_name)).dir();
     if (dir.dirName().compare(QStringLiteral("exefs"), Qt::CaseInsensitive) != 0 || !dir.cdUp()) {
         return {};
@@ -250,9 +258,9 @@ QString FormatPatchNameVersions(const FileSys::PatchManager& patch_manager,
     QString out;
     FileSys::VirtualFile update_raw;
     loader.ReadUpdateRaw(update_raw);
-    for (const auto& patch : patch_manager.GetPatches(update_raw)) {
+    for (const auto& patch : patch_manager.GetPatches(update_raw, loader.ReadEmbeddedPatches())) {
         const bool is_update = patch.name == "Update";
-        if (!updatable && is_update) {
+        if (!updatable && is_update && patch.source != FileSys::PatchSource::Embedded) {
             continue;
         }
 
@@ -285,10 +293,14 @@ QList<QStandardItem*> MakeGameListEntry(const std::string& path, const std::stri
     auto const file_type = loader.GetFileType();
     auto const file_type_string = QString::fromStdString(Loader::GetFileTypeString(file_type));
 
-    QString patch_versions = GetGameListCachedObject(
-        fmt::format("{:016X}", patch.GetTitleID()), "pv.txt", [&patch, &loader] {
-            return FormatPatchNameVersions(patch, loader, loader.IsRomFSUpdatable());
-        });
+    // NUP metadata belongs to the file, not the title-ID-only persistent cache.
+    QString patch_versions =
+        file_type == Loader::FileType::NUP
+            ? FormatPatchNameVersions(patch, loader, loader.IsRomFSUpdatable())
+            : GetGameListCachedObject(
+                  fmt::format("{:016X}", patch.GetTitleID()), "pv.txt", [&patch, &loader] {
+                      return FormatPatchNameVersions(patch, loader, loader.IsRomFSUpdatable());
+                  });
 
     FileSys::NACP nacp{};
     // An NX tree snapshot, like a NUP, is already the updated game: no patch manager update.
@@ -493,6 +505,26 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                     if (const QString loose = LooseExeFSName(physical_name); !loose.isEmpty()) {
                         name = loose.toStdString();
                     }
+                    // A Switch 2 program dumped as an "update" of a Switch 1 base (Red Dead
+                    // Redemption) is the game's Switch 2 Edition; say so instead of "(update)".
+                    constexpr std::string_view UpdateSuffix = " (update)";
+                    const auto game_dir =
+                        std::filesystem::path{physical_name}.parent_path().parent_path().parent_path().parent_path();
+                    FileSys::ProgramMetadata base_meta;
+                    const auto base_npdm = vfs->OpenFile(
+                        Common::FS::PathToUTF8String(game_dir / "base" / "exefs" / "main.npdm"),
+                        FileSys::OpenMode::Read);
+                    if ((id >> 56) == 0x04 && name.ends_with(UpdateSuffix) && base_npdm != nullptr &&
+                        base_meta.Load(base_npdm) == Loader::ResultStatus::Success &&
+                        (base_meta.GetTitleID() >> 56) == 0x01) {
+                        name.replace(name.size() - UpdateSuffix.size(), UpdateSuffix.size(),
+                                     " (Switch 2 Edition)");
+                    }
+                }
+                if (name.empty() || name == " ") {
+                    name = QFileInfo(QString::fromStdString(physical_name))
+                               .completeBaseName()
+                               .toStdString();
                 }
                 if ((res3 != Loader::ResultStatus::Success || name.empty() || name == " ") &&
                     (app_loader->GetFileType() == Loader::FileType::NX ||

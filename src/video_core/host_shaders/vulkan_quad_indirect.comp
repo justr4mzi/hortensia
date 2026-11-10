@@ -1,0 +1,52 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+
+// Checks a non-indexed indirect draw record (vertex count, instance count, first vertex, first
+// instance) and copies it, or for quads turns it into an indexed draw over the quad index buffer
+// bound at its start.
+
+layout(local_size_x = 1) in;
+
+layout(std430, binding = 0) readonly buffer Input {
+    uint input_words[];
+};
+
+layout(std430, binding = 1) writeonly buffer Output {
+    uint args[5];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint max_vertices; // 0: not quads, the record is copied
+    uint first_word;
+};
+
+// The limits of the direct draw check in RasterizerVulkan::Draw. A record the guest GPU did not
+// write (in time) holds any words, and drawing them runs for seconds or faults: a device loss.
+const uint MAX_VERTEX = 1u << 26;
+const uint MAX_INSTANCES = 1u << 20;
+
+void main() {
+    uint count = input_words[first_word];
+    uint instances = input_words[first_word + 1u];
+    const uint first = input_words[first_word + 2u];
+    const uint first_instance = input_words[first_word + 3u];
+    if (count > MAX_VERTEX || first > MAX_VERTEX - count || instances > MAX_INSTANCES ||
+        first_instance > MAX_INSTANCES) {
+        count = 0u;
+        instances = 0u;
+    }
+    if (max_vertices == 0u) {
+        args[0] = count;
+        args[1] = instances;
+        args[2] = first;
+        args[3] = first_instance;
+        return;
+    }
+    args[0] = min(count, max_vertices) / 4u * 6u;
+    args[1] = instances;
+    args[2] = 0u;
+    args[3] = first; // vertex offset: the first vertex
+    args[4] = first_instance;
+}

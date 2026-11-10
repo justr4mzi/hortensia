@@ -159,6 +159,10 @@ public:
             return false;
         }
         if (sensor_timestamp < last_motion_update) {
+            // Sensor timestamps are relative to the device session and restart from zero when
+            // the controller reconnects; take a new baseline instead of dropping motion until
+            // the old value is passed again.
+            last_motion_update = sensor_timestamp;
             return false;
         }
 
@@ -323,6 +327,14 @@ public:
     }
 
     void SetSDLJoystick(SDL_Joystick* joystick, SDL_Gamepad* controller) {
+        if (joystick != nullptr) {
+            // A reopened device starts a new sensor timestamp session.
+            std::scoped_lock lock{mutex};
+            last_motion_update = 0;
+            motion = {};
+            motion_error_count = 0;
+            motion_restart_threshold = InitialMotionRestartThreshold;
+        }
         sdl_joystick.reset(joystick);
         sdl_controller.reset(controller);
     }

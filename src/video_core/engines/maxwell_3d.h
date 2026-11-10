@@ -3216,6 +3216,10 @@ public:
                          u32 argument, bool is_last_call);
     void FrontCallMultiMethod(Core::System& system, VideoCommon::GpuSplit& split, u32 method,
                               const u32* base_start, u32 amount, u32 methods_pending);
+    /// Split front: whether the macro waiting for its remaining parameters takes them, written
+    /// by the GPU at `address`, as an indirect draw record, so they need no flush.
+    bool FrontTakesIndirectParameters(Core::System& system, GPUVAddr address, u32 entry_words,
+                                      u32 method_count);
 
     bool ShouldExecute() const {
         return execute_on;

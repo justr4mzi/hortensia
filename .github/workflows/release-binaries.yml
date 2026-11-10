@@ -1,5 +1,10 @@
 name: release-binaries
 
+# Releases are manual: Actions > release-binaries > Run workflow, or
+# `gh workflow run release-binaries.yml --ref <branch>`. A push to main builds every platform
+# without publishing, only to keep the compiler caches warm: a release built right after it hits
+# the cache for nearly every object, so the Windows jobs take minutes instead of most of an hour.
+# Pull requests never start a build.
 on:
   workflow_dispatch:
     inputs:
@@ -33,13 +38,12 @@ permissions:
 # and an older reader refuses it, so this has to stay at or above whatever produced
 # eglantine.profdata; bump it when a refreshed profile needs a newer LLVM.
 env:
-  PGO_LLVM_VERSION: "23"
+  PGO_LLVM_VERSION: "23.1.4"
 
-# A running build is never cancelled: it finishes and publishes. A push meanwhile queues one build;
-# a later push replaces it, so the newest commit builds as soon as the running one is done.
+# A newer push cancels the older cache build; a release never cancels or waits for one.
 concurrency:
-  group: release-binaries-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-binaries-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
 
 jobs:
   prepare-release:
@@ -70,6 +74,9 @@ jobs:
     name: ${{ matrix.platform }} binary
     needs: prepare-release
     runs-on: ${{ matrix.runner }}
+    # A stalled step otherwise holds the release for GitHub's 6 hour default. The slowest job, the
+    # Windows MSVC build without a usable cache, takes about an hour.
+    timeout-minutes: 90
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 3000M
@@ -127,19 +134,45 @@ jobs:
         id: linux-deps
         if: runner.os == 'Linux'
         shell: bash
+        # Each attempt is timed out, and the retries switch to Ubuntu's own archive. Qt comes from
+        # install-qt-action (6.8.3), which CMake and linuxdeploy use, so Ubuntu's Qt 6.4 packages
+        # are not installed.
+        timeout-minutes: 25
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev \
-            libpulse-dev libtool libudev-dev libxkbcommon-x11-0 \
-            mesa-common-dev nasm ninja-build qt6-base-private-dev \
-            qt6-charts-dev qt6-tools-dev libavfilter-dev libavcodec-dev \
-            libswscale-dev pkg-config zlib1g-dev libva-dev libvdpau-dev \
-            spirv-tools spirv-headers libusb-1.0-0-dev \
-            libboost-dev libboost-fiber-dev libboost-context-dev \
-            libopus-dev libasound2-dev ccache \
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+          set -euo pipefail
+          debs="$RUNNER_TEMP/apt-debs"
+          mkdir -p "$debs"
+          if compgen -G "$debs/*.deb" > /dev/null; then
+            sudo cp "$debs"/*.deb /var/cache/apt/archives/
+          fi
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          packages=(
+            autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev mold
+            libpulse-dev libtool libudev-dev libxkbcommon-x11-0
+            mesa-common-dev nasm ninja-build libavfilter-dev libavcodec-dev
+            libswscale-dev pkg-config zlib1g-dev libva-dev libvdpau-dev
+            spirv-tools spirv-headers libusb-1.0-0-dev
+            libboost-dev libboost-fiber-dev libboost-context-dev
+            libopus-dev libasound2-dev ccache
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+          )
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+                /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2> /dev/null || true
+            fi
+            if sudo timeout 180 apt-get "${apt_opts[@]}" update &&
+               sudo timeout 420 apt-get "${apt_opts[@]}" install -y --no-install-recommends "${packages[@]}"; then
+              # Keep exactly the packages of this install for the cache.
+              rm -f "$debs"/*.deb
+              cp /var/cache/apt/archives/*.deb "$debs"/
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt failed or timed out"
+            sleep 15
+          done
+          exit 1
 
       # The packages docs/Deps.md lists for macOS, plus ccache.
       - name: Install macOS dependencies
@@ -184,14 +217,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
-            sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-$PGO_LLVM_VERSION main" |
-            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            "clang-$PGO_LLVM_VERSION" "lld-$PGO_LLVM_VERSION"
-          "clang-$PGO_LLVM_VERSION" --version
+          llvm="$RUNNER_TEMP/llvm"
+          if [ ! -x "$llvm/bin/clang" ] || [ ! -x "$llvm/bin/ld.lld" ]; then
+            case "$RUNNER_ARCH" in
+              X64) arch=X64 ;;
+              ARM64) arch=ARM64 ;;
+              *) echo "::error::no LLVM release build for runner arch $RUNNER_ARCH"; exit 1 ;;
+            esac
+            name="LLVM-$PGO_LLVM_VERSION-Linux-$arch"
+            url="https://github.com/llvm/llvm-project/releases/download/llvmorg-$PGO_LLVM_VERSION/$name.tar.xz"
+            # Into a file first: a retried download piped straight into tar would hand it a broken
+            # stream.
+            curl -fL --retry 5 --retry-all-errors --retry-delay 10 -o "$RUNNER_TEMP/llvm.tar.xz" "$url"
+            rm -rf "$llvm" && mkdir -p "$llvm"
+            tar -xJf "$RUNNER_TEMP/llvm.tar.xz" -C "$llvm" --strip-components=1 --wildcards \
+              "$name/bin/clang" "$name/bin/clang++" "$name/bin/clang-[0-9]*" \
+              "$name/bin/lld" "$name/bin/ld.lld" "$name/lib/clang/*/include/*"
+            rm "$RUNNER_TEMP/llvm.tar.xz"
+          fi
+          echo "PGO_LLVM_ROOT=$llvm" >> "$GITHUB_ENV"
+          "$llvm/bin/clang" --version
+          "$llvm/bin/ld.lld" --version
 
       # The profiles are in the source tree, where the Linux and Windows configure steps read them.
       - name: Check PGO profile
@@ -231,7 +277,7 @@ jobs:
         shell: pwsh
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'sccache.zip'
-          Invoke-WebRequest -OutFile $zip https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-pc-windows-msvc.zip
+          Invoke-WebRequest -MaximumRetryCount 5 -RetryIntervalSec 10 -OutFile $zip https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-pc-windows-msvc.zip
           Expand-Archive $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'sccache')
           $bin = (Get-ChildItem -Recurse -Filter sccache.exe (Join-Path $env:RUNNER_TEMP 'sccache')).DirectoryName
           $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
@@ -303,12 +349,16 @@ jobs:
             profile="-fprofile-use=$PWD/eglantine.profdata -Wno-backend-plugin \
               -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date"
             flags+=(
-              "-DCMAKE_C_COMPILER=clang-$PGO_LLVM_VERSION"
-              "-DCMAKE_CXX_COMPILER=clang++-$PGO_LLVM_VERSION"
-              "-DCMAKE_EXE_LINKER_FLAGS=-B/usr/lib/llvm-$PGO_LLVM_VERSION/bin -fuse-ld=lld"
+              "-DCMAKE_C_COMPILER=$PGO_LLVM_ROOT/bin/clang"
+              "-DCMAKE_CXX_COMPILER=$PGO_LLVM_ROOT/bin/clang++"
+              "-DCMAKE_EXE_LINKER_FLAGS=-B$PGO_LLVM_ROOT/bin -fuse-ld=lld"
               "-DCMAKE_C_FLAGS=$profile"
               "-DCMAKE_CXX_FLAGS=$profile"
             )
+          else
+            # Keep Release optimization, but avoid the slower default BFD link.
+            # PGO retains the matching LLVM toolchain's lld above.
+            flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold")
           fi
           cmake -S . -B build/release -G Ninja "${flags[@]}"
 
@@ -377,6 +427,17 @@ jobs:
         with:
           path: .cache/cpm
           key: ${{ steps.cpm-cache.outputs.cache-primary-key }}
+
+      - name: Verify MinGW AV1 decoder
+        if: matrix.mingw
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          probe_dir="$(cygpath -u "$RUNNER_TEMP")/orchid-ffmpeg-probe"
+          mkdir -p "$probe_dir"
+          clang tools/ci/ffmpeg_av1_probe.c -o "$probe_dir/ffmpeg-av1-probe.exe" \
+            $(pkg-config --cflags --libs libavcodec libavutil)
+          "$probe_dir/ffmpeg-av1-probe.exe"
 
       - name: Build
         shell: bash
@@ -454,8 +515,11 @@ jobs:
             --executable build/release/bin/hortensia-cli \
             --desktop-file dist/io.github.justr4mzi.hortensia.desktop \
             --icon-file "$icon" \
+            --exclude-library 'libvulkan.so*' \
             --plugin qt \
             --output appimage
+          # PGO retains FFmpeg -> libplacebo -> Vulkan; use the host loader for its layers.
+          test -z "$(find AppDir -name 'libvulkan.so*' -print -quit)"
           test -s "$LDAI_OUTPUT"
           ls -la "$LDAI_OUTPUT"
 
@@ -637,6 +701,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the channel's changelog (.github/release-notes/<channel>.md).
+      - name: Check out release notes
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/release-notes
+          path: source
+
       - name: Download binaries
         uses: actions/download-artifact@v7
         with:
@@ -648,9 +719,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir dist
-          # Asset names drop the commit sha: the release tag already identifies the build, and
-          # stable names let the notes table link to them.
-          strip_sha() { sed "s/-${GITHUB_SHA}//" <<< "$1"; }
           for artifact in artifacts/*/; do
             name=$(basename "$artifact")
             if compgen -G "$artifact*.AppImage" > /dev/null; then
@@ -663,10 +731,9 @@ jobs:
                 [[ -e "$file" ]] && cp "$file" "dist/$(strip_sha "$(basename "$file")")"
               done
             else
-              (cd "$artifact" && zip -qr "${GITHUB_WORKSPACE}/dist/$(strip_sha "$name").zip" .)
+              (cd "$artifact" && zip -qr "${GITHUB_WORKSPACE}/dist/${name}.zip" .)
             fi
           done
-          ls -la dist
 
       - name: Create release
         shell: bash

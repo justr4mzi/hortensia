@@ -57,7 +57,7 @@ struct ImageBufferDefinition {
     Id image_type;
     Id pointer_type;
     u32 count;
-    bool is_integer;
+    Id texel_type;
 };
 
 struct ImageDefinition {
@@ -287,6 +287,7 @@ public:
 
     Id workgroup_id{};
     Id local_invocation_id{};
+    bool uses_software_tensor{};
     Id invocation_id{};
     Id patch_vertices_in{};
     Id sample_id{};
@@ -333,6 +334,7 @@ public:
     u32 render_are_member_index{};
 
     Id local_memory{};
+    u32 local_memory_words{};
 
     bool uses_explicit_workgroup_layout{};
     Id shared_memory_u8{};

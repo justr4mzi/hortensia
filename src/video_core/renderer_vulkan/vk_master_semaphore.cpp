@@ -4,12 +4,15 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <cstdlib>
 #include <thread>
 
 #include <ranges>
 #include "common/settings.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
+#include "video_core/stall_diagnostics.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
@@ -69,7 +72,12 @@ void MasterSemaphore::Refresh() {
     u64 counter{};
     do {
         this_tick = gpu_tick.load(std::memory_order_acquire);
-        counter = semaphore.GetCounter();
+        {
+            VideoCommon::StallDiagnostics::Scope diagnostic{
+                {VideoCommon::StallDiagnostics::Phase::SemaphoreCounter, "gpu-counter-caller", 0, 0,
+                 -1, this_tick}};
+            counter = semaphore.GetCounter();
+        }
         if (counter < this_tick) {
             return;
         }
@@ -78,6 +86,25 @@ void MasterSemaphore::Refresh() {
 }
 
 void MasterSemaphore::Wait(u64 tick) {
+    const bool trace = Common::HitchDiagnostic::Enabled();
+    const u64 begin_ns = trace ? Common::HitchDiagnostic::NowNs() : 0;
+    const u64 logical_begin = trace ? CurrentTick() : 0;
+    const u64 submitted_begin = trace ? DiagnosticSubmittedTick() : 0;
+    const u64 gpu_begin = trace ? KnownGpuTick() : 0;
+    SCOPE_EXIT {
+        if (trace) {
+            const u64 end_ns = Common::HitchDiagnostic::NowNs();
+            if (HitchTrace::Claim(HitchTrace::Event::GpuWait, end_ns - begin_ns)) {
+                LOG_INFO(Render_Vulkan,
+                         "VulkanHitch gpu_wait begin_ns={} end_ns={} wait_ns={} tick={} "
+                         "logical_begin={} logical_end={} submitted_begin={} submitted_end={} "
+                         "gpu_begin={} gpu_end={} unsubmitted_at_entry={} timeline={}",
+                         begin_ns, end_ns, end_ns - begin_ns, tick, logical_begin, CurrentTick(),
+                         submitted_begin, DiagnosticSubmittedTick(), gpu_begin, KnownGpuTick(),
+                         tick > submitted_begin, static_cast<bool>(semaphore));
+            }
+        }
+    };
     if (!semaphore) {
         // Fast check: already reached the requested tick?
         if (gpu_tick.load(std::memory_order_acquire) >= tick) {
@@ -105,14 +132,39 @@ void MasterSemaphore::Wait(u64 tick) {
         return;
     }
 
+    // EDEN_NX2_GPU_WAIT_SPIN_US=<microseconds>: poll that long before the driver's wait. Titles
+    // that read GPU-written command lists wait here over a thousand times a second, often for work
+    // that ends within microseconds, and a sleep in the driver wakes up late. Off by default.
+    static const auto spin = std::chrono::microseconds{[] {
+        const char* value = std::getenv("EDEN_NX2_GPU_WAIT_SPIN_US");
+        return value != nullptr ? std::atoi(value) : 0;
+    }()};
+    if (spin.count() > 0) {
+        const auto end = std::chrono::steady_clock::now() + spin;
+        do {
+            std::this_thread::yield();
+            Refresh();
+            if (IsFree(tick)) {
+                return;
+            }
+        } while (std::chrono::steady_clock::now() < end);
+    }
+
     // If none of the above is hit, fallback to a regular wait
     const VideoCommon::Nx2Profile::Scope scope{VideoCommon::Nx2Profile::Zone::GpuWait};
     try {
+        VideoCommon::StallDiagnostics::Scope diagnostic{
+            {VideoCommon::StallDiagnostics::Phase::SemaphoreWait, "gpu-wait-caller", 0, 0, -1, tick,
+             diagnostic_submitted_tick.load(std::memory_order_relaxed), KnownGpuTick()}};
         while (!semaphore.Wait(tick)) {
         }
     } catch (const vk::Exception& exception) {
         // The throw ends the process; say why first (a device loss reached nothing else here).
         LOG_CRITICAL(Render_Vulkan, "Waiting for GPU tick {} failed: {}", tick, exception.what());
+        if (exception.GetResult() == VK_ERROR_DEVICE_LOST) {
+            // Keep the same log flush and Aftermath dump grace period as queue submission.
+            device.ReportLoss();
+        }
         throw;
     }
 
@@ -129,6 +181,7 @@ VkResult MasterSemaphore::SubmitQueue(vk::CommandBuffer& cmdbuf, vk::CommandBuff
     } else {
         return SubmitQueueFence(cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore, host_tick);
     }
+    return result;
 }
 
 static constexpr VkPipelineStageFlags wait_stage_mask = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
@@ -201,6 +254,9 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
             .signalSemaphoreInfoCount = num_signal_semaphores,
             .pSignalSemaphoreInfos = signal_infos.data(),
         };
+        VideoCommon::StallDiagnostics::Scope diagnostic{
+            {VideoCommon::StallDiagnostics::Phase::QueueSubmit, "vulkan-submit-caller", 0, 0, -1,
+             host_tick}};
         return device.GetGraphicsQueue().Submit2(submit_info2);
     }
 
@@ -239,6 +295,9 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
         .pSignalSemaphores = p_signal_sems,
     };
 
+    VideoCommon::StallDiagnostics::Scope diagnostic{
+        {VideoCommon::StallDiagnostics::Phase::QueueSubmit, "vulkan-submit-caller", 0, 0, -1,
+         host_tick}};
     return device.GetGraphicsQueue().Submit(submit_info);
 }
 
@@ -295,7 +354,12 @@ VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
         };
 
         auto fence = GetFreeFence();
-        auto result = device.GetGraphicsQueue().Submit2(submit_info2, *fence);
+        auto result = [&] {
+            VideoCommon::StallDiagnostics::Scope diagnostic{
+                {VideoCommon::StallDiagnostics::Phase::QueueSubmit, "vulkan-submit-caller", 0, 0,
+                 -1, host_tick}};
+            return device.GetGraphicsQueue().Submit2(submit_info2, *fence);
+        }();
 
         if (result == VK_SUCCESS) {
             std::scoped_lock lock{wait_mutex};
@@ -330,7 +394,12 @@ VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
     };
 
     auto fence = GetFreeFence();
-    auto result = device.GetGraphicsQueue().Submit(submit_info, *fence);
+    auto result = [&] {
+        VideoCommon::StallDiagnostics::Scope diagnostic{
+            {VideoCommon::StallDiagnostics::Phase::QueueSubmit, "vulkan-submit-caller", 0, 0, -1,
+             host_tick}};
+        return device.GetGraphicsQueue().Submit(submit_info, *fence);
+    }();
 
     if (result == VK_SUCCESS) {
         std::scoped_lock lock{wait_mutex};
@@ -355,7 +424,13 @@ void MasterSemaphore::WaitThread(std::stop_token token) {
             wait_queue.pop();
         }
 
-        fence.Wait();
+        {
+            VideoCommon::StallDiagnostics::Scope diagnostic{
+                {VideoCommon::StallDiagnostics::Phase::FenceWait, "fence-wait-worker", 0, 0, -1,
+                 host_tick, diagnostic_submitted_tick.load(std::memory_order_relaxed),
+                 KnownGpuTick()}};
+            fence.Wait();
+        }
         fence.Reset();
 
         {

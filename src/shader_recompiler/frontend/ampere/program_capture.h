@@ -67,6 +67,14 @@ public:
             if (opcode == 0x947 && computed_branch && instruction.Bits(12, 4) == 7 &&
                 target == s64{index} * 16)
                 return Result::Complete;
+            // A closing self-branch past every branch target also ends programs whose RET pairs
+            // with a CALL.REL.NOINC, which the EXIT/RET rules below can't see. Only taken when the
+            // capture then runs into an invalid branch (FallbackEnd); ending every capture there
+            // broke Donkey Kong Bananza's level loading.
+            if (opcode == 0x947 && instruction.Bits(12, 4) == 7 && instruction.Bits(87, 4) == 7 &&
+                target == s64{index} * 16 && index >= last_forward_target &&
+                index >= last_call_target && fallback_end == 0)
+                fallback_end = index + 1;
         }
         if (opcode == 0x949 || opcode == 0x958) computed_branch = true;
         if (computed_branch) return Result::Continue;
@@ -82,10 +90,16 @@ public:
         return Result::Continue;
     }
 
+    /// Instruction count up to the first closing self-branch, or 0 if none was seen.
+    u32 FallbackEnd() const {
+        return fallback_end;
+    }
+
 private:
     std::array<Instruction, 5> prefix{};
     std::optional<u32> atexit_target;
     std::array<Instruction, 5> exit_setup{};
+    u32 fallback_end{};
     u32 last_call_target{};
     u32 last_forward_target{};
     bool main_exited{};

@@ -220,6 +220,14 @@ ResultStatus AppLoader_NSP::ReadUpdateRaw(FileSys::VirtualFile& out_file) {
     return ResultStatus::Success;
 }
 
+ResultStatus AppLoader_NSP::ReadProgramMetadata(FileSys::ProgramMetadata& out) {
+    if (secondary_loader == nullptr) {
+        return ResultStatus::ErrorNotInitialized;
+    }
+
+    return secondary_loader->ReadProgramMetadata(out);
+}
+
 ResultStatus AppLoader_NSP::ReadProgramId(u64& out_program_id) {
     out_program_id = nsp->GetProgramTitleID();
     if (out_program_id == 0) {

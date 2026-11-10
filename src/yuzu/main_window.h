@@ -6,8 +6,10 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 
 #include <filesystem>
 #include <QElapsedTimer>
@@ -352,6 +354,7 @@ private slots:
     void OnMenuReportCompatibility();
     void OnOpenModsPage();
     void OnOpenUserHandbook();
+    void OnReportCrash();
 
     /// Called whenever a user selects a game in the game list widget.
     void OnGameListLoadFile(QString game_path, u64 program_id);
@@ -517,8 +520,6 @@ private:
 #endif
 
     MultiplayerState* multiplayer_state = nullptr;
-    bool use_recommended_mkw_settings = false;
-    bool asked_recommended_mkw_settings = false;
 
     GRenderWindow* render_window = nullptr;
     GameList* game_list = nullptr;
@@ -611,6 +612,15 @@ private:
     QPointer<ShaderWarmDialog> shader_warm_dialog;
     NxTools* nx_tools = nullptr;
     std::string nup_source_path;
+
+    using NupJob = std::function<FileSys::Nup::PackResult(
+        const std::function<void(const FileSys::Nup::PackProgress&)>&, const std::atomic_bool*,
+        std::string*)>;
+    // Runs one NUP job at a time in the background behind a progress window. `game_path` cannot
+    // be booted meanwhile; `done` receives the result and error on the GUI thread.
+    void RunNupJob(const QString& window_title, const QString& title, const QPixmap& icon,
+                   const std::string& game_path, NupJob job,
+                   std::function<void(FileSys::Nup::PackResult, const QString&)> done);
 
     // Last game booted, used for multi-process apps
     QString last_filename_booted;

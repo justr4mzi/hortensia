@@ -22,7 +22,7 @@ Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
     R_UNLESS(Common::IsAligned(size, HeapSizeAlignment), ResultInvalidSize);
     // Switch 2 titles size their heap from the total memory, which exceeds Switch 1's 8 GiB.
     const size_t max_heap_size =
-        (std::max)(MainMemorySizeMax, KSystemControl::Init::GetIntendedMemorySize());
+        (std::max)(memory_size_max, KSystemControl::Init::GetIntendedMemorySize());
     R_UNLESS(size < max_heap_size, ResultInvalidSize);
 
     // Set the heap size.

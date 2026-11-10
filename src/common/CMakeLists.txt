@@ -81,6 +81,8 @@ add_library(
     host_memory.h
     input.h
     intrusive_red_black_tree.h
+    game_fps.h
+    hitch_diagnostic.h
     literals.h
     logging.cpp
     logging.h
@@ -94,6 +96,7 @@ add_library(
     overflow.h
     page_table.cpp
     page_table.h
+    paged_scalar.h
     param_package.cpp
     param_package.h
     parent_of_member.h
@@ -144,6 +147,7 @@ add_library(
     tiny_mt.h
     tree.h
     typed_address.h
+    unmapped_read_diagnostic.h
     uint128.h
     unique_function.h
     random.cpp

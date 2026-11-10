@@ -16,6 +16,8 @@ endif()
 add_library(video_core STATIC
     buffer_cache/buffer_base.h
     buffer_cache/buffer_cache_base.h
+    buffer_cache/sparse_uniform_upload.h
+    buffer_cache/storage_buffer_size.h
     buffer_cache/buffer_cache.cpp
     buffer_cache/buffer_cache.h
     buffer_cache/memory_tracker_base.h
@@ -28,6 +30,8 @@ add_library(video_core STATIC
     cdma_pusher.h
     compatible_formats.cpp
     compatible_formats.h
+    compute_binding_diagnostic.cpp
+    compute_binding_diagnostic.h
     control/channel_state.cpp
     control/channel_state.h
     control/channel_state_cache.cpp
@@ -234,6 +238,7 @@ add_library(video_core STATIC
     renderer_vulkan/vk_present_manager.h
     renderer_vulkan/vk_query_cache.cpp
     renderer_vulkan/vk_query_cache.h
+    renderer_vulkan/vk_query_copy.h
     renderer_vulkan/vk_rasterizer.cpp
     renderer_vulkan/vk_rasterizer.h
     renderer_vulkan/submission_policy.h
@@ -299,6 +304,8 @@ add_library(video_core STATIC
     shader_cache_v2/records.h
     shader_environment.cpp
     shader_environment.h
+    native_shader_hitch_trace.h
+    shader_snapshot.h
     shader_handle_program.h
     shader_jobs.cpp
     shader_jobs.h

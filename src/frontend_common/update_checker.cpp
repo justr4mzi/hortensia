@@ -28,6 +28,16 @@ std::optional<u64> ParseBuildNumber(std::string_view tag) {
     return number;
 }
 
+static_assert(ParseBuildTag("v0.4.12")->channel == "stable");
+static_assert(ParseBuildTag("v0.4.12")->version == std::array<u64, 3>{0, 4, 12});
+static_assert(ParseBuildTag("v0.4.0-experimental")->channel == "experimental");
+static_assert(ParseBuildTag("v1.10.3")->version > ParseBuildTag("v1.9.30")->version);
+static_assert(!ParseBuildTag("mario-tennis-fever-build-7"));
+static_assert(!ParseBuildTag("v0.4"));
+static_assert(!ParseBuildTag("v0..4"));
+static_assert(!ParseBuildTag("v0.4.1-"));
+static_assert(!ParseBuildTag(""));
+
 } // namespace
 
 Failure ClassifyFailure(int status) {

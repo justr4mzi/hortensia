@@ -235,6 +235,7 @@
     <addaction name="action_Report_Compatibility"/>
     <addaction name="action_Open_Mods_Page"/>
     <addaction name="action_Open_UserHandbook"/>
+    <addaction name="action_Report_Crash"/>
     <addaction name="separator"/>
     <addaction name="action_About"/>
     <addaction name="action_Eden_Dependencies"/>
@@ -405,6 +406,11 @@
   <action name="action_Open_Mods_Page">
    <property name="text">
     <string>Open &amp;Mods Page</string>
+   </property>
+  </action>
+  <action name="action_Report_Crash">
+   <property name="text">
+    <string>Report an &amp;Issue on GitHub...</string>
    </property>
   </action>
   <action name="action_Open_UserHandbook">

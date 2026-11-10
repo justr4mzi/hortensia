@@ -102,6 +102,8 @@ public:
     void PrepareRegionWrite(DAddr addr, u64 size, VideoCommon::CacheType which) override;
     void OnCacheInvalidation(PAddr addr, u64 size) override;
     bool OnCPUWrite(PAddr addr, u64 size) override;
+    void BeginCachedWrites() override;
+    void EndCachedWrites() override;
     void InvalidateGPUCache() override;
     void UnmapMemory(DAddr addr, u64 size) override;
     void ModifyGPUMemory(size_t as_id, GPUVAddr addr, u64 size) override;

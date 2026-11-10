@@ -470,7 +470,7 @@ void QtControllerSelectorDialog::SetEmulatedControllers(std::size_t player_index
         add_item(Core::HID::NpadStyleIndex::Fullkey, tr("Pro Controller"));
     }
 
-    if (npad_style_set.joycon_dual == 1) {
+    if (npad_style_set.joycon_dual == 1 || npad_style_set.joycon2_dual == 1) {
         add_item(Core::HID::NpadStyleIndex::JoyconDual, tr("Dual Joycons"));
     }
 

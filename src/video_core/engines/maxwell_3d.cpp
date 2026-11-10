@@ -10,6 +10,9 @@
 #include <bit>
 #include <chrono>
 #include <cstring>
+#include <fstream>
+#include <span>
+#include <fmt/ranges.h>
 #include <limits>
 #include <optional>
 #include <span>
@@ -270,6 +273,8 @@ bool Maxwell3D::IsMethodExecutable(u32 method) {
     case MAXWELL3D_REG_INDEX(launch_dma):
     case MAXWELL3D_REG_INDEX(inline_data):
     case MAXWELL3D_REG_INDEX(fragment_barrier):
+    case MAXWELL3D_REG_INDEX(invalidate_shader_cache):
+    case MAXWELL3D_REG_INDEX(invalidate_shader_cache_no_wfi):
     case MAXWELL3D_REG_INDEX(invalidate_texture_data_cache):
     case MAXWELL3D_REG_INDEX(tiled_cache_barrier):
         return true;
@@ -560,6 +565,12 @@ void Maxwell3D::ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argume
         return;
     case MAXWELL3D_REG_INDEX(fragment_barrier):
         return rasterizer->FragmentBarrier();
+    case MAXWELL3D_REG_INDEX(invalidate_shader_cache):
+    case MAXWELL3D_REG_INDEX(invalidate_shader_cache_no_wfi):
+        if ((argument & 1U) != 0) {
+            rasterizer->InvalidateShaderCache();
+        }
+        return;
     case MAXWELL3D_REG_INDEX(invalidate_texture_data_cache):
         rasterizer->InvalidateGPUCache();
         return rasterizer->WaitForIdle();
@@ -1265,6 +1276,35 @@ struct Maxwell3D::FrontState {
 
 namespace {
 
+// Hyrule Warriors' instanced draw macro, [topology, vertex count, instances, first vertex, base
+// instance]: the last four can be an NVN DrawArraysIndirect record the GPU wrote, read back
+// with a full GPU wait each (about 30 per combat frame) when the macro runs on them.
+constexpr std::array<u32, 27> DRAW_ARRAYS_INSTANCED_MACRO{
+    0x00000003, 0x1D100000, 0x31C18300, 0x00940003, 0x18C000D7, 0x71C08300, 0x0C74638F,
+    0x18C00143, 0xB1C00300, 0x20C01913, 0x00C00001, 0x301C5F00, 0x2C340D7B, 0x02C00161,
+    0xB03C0300, 0x01140003, 0x18C00161, 0x718C0300, 0x00000007, 0x18C01A10, 0x3431C300,
+    0x0D14638F, 0x18C00143, 0xB18C0301, 0x60A00003, 0x18C00191, 0x318C0300,
+};
+// Its indexed sibling, [topology, index count, instances, first index, base vertex, base
+// instance], the last five an NVN DrawElementsIndirect record.
+constexpr std::array<u32, 42> DRAW_INDEXED_INSTANCED_MACRO{
+    0x00000003, 0x1D180000, 0x31C20300, 0x00940003, 0x18C0017D, 0xF1C10300, 0x3C745437,
+    0x1D000111, 0xB1C08300, 0x6A201903, 0x18C00638, 0xF00C0300, 0x20200003, 0x00C00000,
+    0x301C0300, 0x00000003, 0x18C02001, 0x702C7700, 0x2C3417E3, 0x03C00161, 0xB04C0300,
+    0x01140003, 0x18C00161, 0x718C0300, 0x00000007, 0x22109A10, 0x34424300, 0x00000003,
+    0x18C007FF, 0x702C7700, 0x9D141437, 0x18C00111, 0xB18C0300, 0x0D14638F, 0x18C00143,
+    0xB18C0300, 0x60A00003, 0x18C00190, 0x318C0301, 0x00A00003, 0x18C00000, 0x318C0300,
+};
+
+// EDEN_NX2_INDIRECT_MACRO=0: flush the record and run the macro on it instead.
+bool FrontIndirectDrawsEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_INDIRECT_MACRO");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+
 // EDEN_NX2_SPLIT_VERIFY=1: every 4096 front macro calls, wait for the back and compare the
 // front's registers with the back's (logs and resynchronizes differences).
 bool FrontVerifyEnabled() {
@@ -1346,6 +1386,8 @@ bool FrontHandledOutsideDrawManager(u32 method) {
     case MAXWELL3D_REG_INDEX(launch_dma):
     case MAXWELL3D_REG_INDEX(inline_data):
     case MAXWELL3D_REG_INDEX(fragment_barrier):
+    case MAXWELL3D_REG_INDEX(invalidate_shader_cache):
+    case MAXWELL3D_REG_INDEX(invalidate_shader_cache_no_wfi):
     case MAXWELL3D_REG_INDEX(invalidate_texture_data_cache):
     case MAXWELL3D_REG_INDEX(tiled_cache_barrier):
         return true;
@@ -2185,7 +2227,7 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
     }
     u32 changed{};
     for (u32 i = 0; i < words; ++i) {
-        const u32 word = memory_manager.Read<u32>(source + u64{i} * sizeof(u32));
+        const u32 word = dma_words[i];
         if (method == 0x158) {
             fs.parameters.push_back(word);
         } else if (ram + i < native_data_ram.size()) {

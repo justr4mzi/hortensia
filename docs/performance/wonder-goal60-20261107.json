@@ -1,0 +1,311 @@
+{
+  "run_id": "20261107-174453-4a021840",
+  "qualification": "single boot, two light scene windows with Hitch trace; no heavy traversal or repeat acceptance",
+  "target_fps": 60,
+  "patch_log": [
+    "[   0.771794] Loader <Info> core/file_sys/patch_manager.cpp:496:operator():     - Applying built-in Wonder 60 FPS patch"
+  ],
+  "identity": {
+    "game_identity": {
+      "path": "/home/leon/Switch2/Wonder.nup",
+      "size": 6492909895,
+      "mtime_ns": 1793987730623059968,
+      "prefix_1MiB_sha256": "b868a75ba6b89249bd23e5a5e7c380bbff210d779b65ca9ca125ed1f773e9cf6"
+    },
+    "binary_sha256": "79edc189ab3474cdc50fb415c483958bceb87461a52c0731f25865ecfd98631c",
+    "seed_id": "b6812036c4b24dac9a4134145a1a18f639c48ce6688752d559adf3661f7ff68b",
+    "settings_sha256": "17605157b954fd2dd5dbb1aaf13e5e270ff72474512446a82782018c815c35a4"
+  },
+  "windows": [
+    {
+      "scene": "World 1 Pipe-Rock Plateau at Badge House node, Rosalina, target 60; idle",
+      "start_ns": 57951404570190,
+      "end_ns": 57981404570190,
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-174453-4a021840/profile/data/eden/log/hitch-frames-040015100b514001-57794497458953.csv",
+        "sha256": "8432fc8663839a53eb71da8f6d0003b4842cc57accfddd423e7ab761e1ddb407",
+        "metric": "native_present_interval_ms",
+        "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "native_present_service_cadence_estimate",
+        "rows_read": 28752,
+        "excluded_intervals": 26953,
+        "window_start_ns": 57951404570190,
+        "window_end_ns": 57981404570190,
+        "stats": {
+          "available": true,
+          "count": 1799,
+          "sum_ms": 29986.807504,
+          "mean_ms": 16.66859783435242,
+          "p50_ms": 16.666046,
+          "p95_ms": 20.226428,
+          "p99_ms": 20.8539746,
+          "min_ms": 10.365269,
+          "max_ms": 23.023732,
+          "inverse_mean_fps_estimate": 59.99304860179023,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1799,
+        "sum_ms": 29986.807504,
+        "mean_ms": 16.66859783435242,
+        "p50_ms": 16.666046,
+        "p95_ms": 20.226428,
+        "p99_ms": 20.8539746,
+        "min_ms": 10.365269,
+        "max_ms": 23.023732,
+        "inverse_mean_fps_estimate": 59.99304860179023,
+        "stutters_over_ms": {
+          "16.666667": 896,
+          "33.333333": 0,
+          "50.0": 0,
+          "100.0": 0
+        }
+      },
+      "phase_statistics_nonzero_only": {
+        "external_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 4094.999,
+          "mean_ms": 2.274999444444444,
+          "p50_ms": 0.749,
+          "p95_ms": 4.33905,
+          "p99_ms": 5.49832,
+          "min_ms": 0.469,
+          "max_ms": 10.217,
+          "inverse_mean_fps_estimate": 439.5605469012325,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "fence_us": {
+          "available": true,
+          "count": 966,
+          "sum_ms": 3011.576,
+          "mean_ms": 3.1175734989648034,
+          "p50_ms": 3.172,
+          "p95_ms": 3.177,
+          "p99_ms": 3.1837,
+          "min_ms": 0.001,
+          "max_ms": 3.392,
+          "inverse_mean_fps_estimate": 320.7622852619359,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "composite_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 8.295,
+          "mean_ms": 0.004608333333333333,
+          "p50_ms": 0.004,
+          "p95_ms": 0.008,
+          "p99_ms": 0.011,
+          "min_ms": 0.001,
+          "max_ms": 0.161,
+          "inverse_mean_fps_estimate": 216998.191681736,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "pace_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 22881.84,
+          "mean_ms": 12.712133333333334,
+          "p50_ms": 12.815,
+          "p95_ms": 12.942,
+          "p99_ms": 12.999,
+          "min_ms": 6.442,
+          "max_ms": 13.202,
+          "inverse_mean_fps_estimate": 78.66500246483675,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "service_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 25903.194,
+          "mean_ms": 14.390663333333332,
+          "p50_ms": 15.903,
+          "p95_ms": 16.116,
+          "p99_ms": 16.148,
+          "min_ms": 6.448,
+          "max_ms": 16.196,
+          "inverse_mean_fps_estimate": 69.48950002073104,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      }
+    },
+    {
+      "scene": "Piranha Plants on Parade, Rosalina, 60 target, idle after short right+jump input near entry",
+      "start_ns": 58121966292728,
+      "end_ns": 58151966292728,
+      "measurement": {
+        "available": true,
+        "reason": null,
+        "source": "/home/leon/.local/share/codex-orchid-mcp/state/runs/20261107-174453-4a021840/profile/data/eden/log/hitch-frames-040015100b514001-57794497458953.csv",
+        "sha256": "8432fc8663839a53eb71da8f6d0003b4842cc57accfddd423e7ab761e1ddb407",
+        "metric": "native_present_interval_ms",
+        "semantics": "Intervals between native present-service entries (entered_ns/gap_us), including guest/host pacing and stalls; not GPU execution time or physical display scanout.",
+        "scope": "selected_window",
+        "fps_estimate_kind": "native_present_service_cadence_estimate",
+        "rows_read": 28752,
+        "excluded_intervals": 26953,
+        "window_start_ns": 58121966292728,
+        "window_end_ns": 58151966292728,
+        "stats": {
+          "available": true,
+          "count": 1799,
+          "sum_ms": 29986.265676,
+          "mean_ms": 16.66829665147304,
+          "p50_ms": 16.667315,
+          "p95_ms": 19.696186,
+          "p99_ms": 20.45720518,
+          "min_ms": 11.085733,
+          "max_ms": 21.81334,
+          "inverse_mean_fps_estimate": 59.99413262852064,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      },
+      "statistics": {
+        "available": true,
+        "count": 1799,
+        "sum_ms": 29986.265676,
+        "mean_ms": 16.66829665147304,
+        "p50_ms": 16.667315,
+        "p95_ms": 19.696186,
+        "p99_ms": 20.45720518,
+        "min_ms": 11.085733,
+        "max_ms": 21.81334,
+        "inverse_mean_fps_estimate": 59.99413262852064,
+        "stutters_over_ms": {
+          "16.666667": 900,
+          "33.333333": 0,
+          "50.0": 0,
+          "100.0": 0
+        }
+      },
+      "phase_statistics_nonzero_only": {
+        "external_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 3656.477,
+          "mean_ms": 2.031376111111111,
+          "p50_ms": 0.76,
+          "p95_ms": 3.7622,
+          "p99_ms": 4.922269999999999,
+          "min_ms": 0.509,
+          "max_ms": 6.385,
+          "inverse_mean_fps_estimate": 492.2771290507229,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "fence_us": {
+          "available": true,
+          "count": 950,
+          "sum_ms": 2745.058,
+          "mean_ms": 2.8895347368421054,
+          "p50_ms": 2.8884999999999996,
+          "p95_ms": 3.175,
+          "p99_ms": 3.19502,
+          "min_ms": 0.001,
+          "max_ms": 3.395,
+          "inverse_mean_fps_estimate": 346.0764763440335,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "composite_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 13.796,
+          "mean_ms": 0.007664444444444444,
+          "p50_ms": 0.006,
+          "p95_ms": 0.012,
+          "p99_ms": 0.017,
+          "min_ms": 0.002,
+          "max_ms": 0.265,
+          "inverse_mean_fps_estimate": 130472.6007538417,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "pace_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 23581.392,
+          "mean_ms": 13.100773333333333,
+          "p50_ms": 13.159,
+          "p95_ms": 13.383,
+          "p99_ms": 13.434009999999999,
+          "min_ms": 10.272,
+          "max_ms": 13.519,
+          "inverse_mean_fps_estimate": 76.33137178670368,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        },
+        "service_us": {
+          "available": true,
+          "count": 1800,
+          "sum_ms": 26341.735,
+          "mean_ms": 14.634297222222223,
+          "p50_ms": 15.906500000000001,
+          "p95_ms": 16.106,
+          "p99_ms": 16.132,
+          "min_ms": 10.281,
+          "max_ms": 16.159,
+          "inverse_mean_fps_estimate": 68.3326288112761,
+          "stutters_over_ms": {
+            "33.333333": 0,
+            "50.0": 0,
+            "100.0": 0
+          }
+        }
+      }
+    }
+  ],
+  "errors": [
+    "[   4.078289] Debug <Critical> core/hle/service/service.cpp:178:operator(): ../src/core/hle/service/service.cpp: assert Unknown / unimplemented function '1(<unknown>)': port='IUserShimScopedObject' cmd_buf={[0]=0x6, [1]=0xa, [2]=0x0, [3]=0x0, [4]=0x49434653, [5]=0x1, [6]=0x1, [7]=0x0, [8]=0x0}",
+    "[   7.929063] Common.Filesystem <Error> common/fs/file.cpp:285:Open: Failed to open the file at path=/home/user/.local/share/codex-orchid-mcp/state/runs/20261107-174453-4a021840/profile/data/eden/nand/system/save/8000000000000010/su/avators/2fc92010-00dc-197b-92cd-3fa6ff4fc039.jpg, ec_message=No such file or directory",
+    "[   7.930185] Common.Filesystem <Error> common/fs/file.cpp:285:Open: Failed to open the file at path=/home/user/.local/share/codex-orchid-mcp/state/runs/20261107-174453-4a021840/profile/data/eden/nand/system/save/8000000000000010/su/avators/2fc92010-00dc-197b-92cd-3fa6ff4fc039.jpg, ec_message=No such file or directory",
+    "[  80.037024] Common.Filesystem <Error> common/fs/file.cpp:285:Open: Failed to open the file at path=/home/user/.local/share/codex-orchid-mcp/state/runs/20261107-174453-4a021840/profile/data/eden/nand/system/save/8000000000000010/su/avators/2fc92010-00dc-197b-92cd-3fa6ff4fc039.jpg, ec_message=No such file or directory",
+    "[  80.037243] Common.Filesystem <Error> common/fs/file.cpp:285:Open: Failed to open the file at path=/home/user/.local/share/codex-orchid-mcp/state/runs/20261107-174453-4a021840/profile/data/eden/nand/system/save/8000000000000010/su/avators/2fc92010-00dc-197b-92cd-3fa6ff4fc039.jpg, ec_message=No such file or directory",
+    "[ 486.377952] HW.Memory <Error> core/memory.cpp:364:operator(): Unmapped @ 0x00000085c22c00 (start address = 0x00000085c22c00, size = 48)"
+  ]
+}

@@ -34,6 +34,9 @@ namespace Service {
 class Port;
 class Session;
 
+// ponytail: diagnostics only (EDEN_PKP_BT sampler). Server session -> service name, "?" if unknown.
+const char* DiagSessionServiceName(const Kernel::KServerSession* session);
+
 class ServerManager {
 public:
     /// Called on a server thread with the context of a deferred request that is retired because

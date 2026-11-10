@@ -13,6 +13,7 @@
 class QCheckBox;
 class QLineEdit;
 class QComboBox;
+class QLabel;
 class QDateTimeEdit;
 namespace Core {
 class System;
@@ -33,7 +34,7 @@ public:
     explicit ConfigureSystem(Core::System& system_,
                              std::shared_ptr<std::vector<ConfigurationShared::Tab*>> group,
                              const ConfigurationShared::Builder& builder,
-                             QWidget* parent = nullptr);
+                             QWidget* parent = nullptr, u64 program_id = 0);
     ~ConfigureSystem() override;
 
     void ApplyConfiguration() override;
@@ -42,6 +43,7 @@ public:
 private:
     void changeEvent(QEvent* event) override;
     void RetranslateUI();
+    void UpdateTennisWarning();
 
     void Setup(const ConfigurationShared::Builder& builder);
 
@@ -53,7 +55,9 @@ private:
     bool enabled = false;
 
     Core::System& system;
+    const u64 program_id;
 
+    QLabel* tennis_fps_warning{};
     QComboBox* combo_region;
     QComboBox* combo_language;
     QCheckBox* checkbox_rtc;

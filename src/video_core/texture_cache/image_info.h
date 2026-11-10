@@ -49,6 +49,10 @@ struct ImageInfo {
     u32 num_samples = 1;
     u32 tile_width_spacing = 0;
     bool native_tiling = false;
+    // Switch 2 texture header word 2 bit 24: the surface keeps the Maxwell GOB layout. Xenoblade
+    // Chronicles' headers all set it (its LUTs, fonts and textures decode only that way); Mario
+    // Tennis Fever's and Donkey Kong Bananza's never do.
+    bool maxwell_gobs = false;
     bool rescaleable = false;
     bool downscaleable = false;
     bool forced_flushed = false;

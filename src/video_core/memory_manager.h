@@ -20,9 +20,9 @@
 #include "common/range_map.h"
 #include "common/scratch_buffer.h"
 #include "common/sparse_large_vector.h"
-#include "video_core/invalidation_accumulator.h"
 #include "video_core/cache_types.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
+#include "video_core/invalidation_accumulator.h"
 #include "video_core/pte_kind.h"
 
 namespace VideoCore {
@@ -135,6 +135,12 @@ public:
      * Checks if a gpu region is mapped by a single range of device addresses.
      */
     [[nodiscard]] bool IsContinuousRange(GPUVAddr gpu_addr, std::size_t size) const;
+
+    /// Invalidates cached GPU translations/range checks after any address-space mapping change.
+    /// This shared epoch also changes when an address space is constructed or destroyed.
+    [[nodiscard]] u64 GpuMappingGeneration() const noexcept {
+        return kind_generation.load(std::memory_order_acquire);
+    }
 
     /**
      * Checks if a gpu region is mapped entirely.

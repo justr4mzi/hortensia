@@ -589,7 +589,7 @@ Result IApplicationFunctions::Unknown320(Out<u16> out) {
 
 Result IApplicationFunctions::Unknown321(Out<u8> out) {
     // Called by Switch 2 titles right after 320; returns one byte (meaning unknown).
-    LOG_WARNING(Service_AM, "(STUBBED) called");
+    LOG_WARNING(Service_AM, "(STUBBED) called, in_val={}", in_val);
     *out = 0;
     R_SUCCEED();
 }

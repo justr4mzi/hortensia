@@ -18,6 +18,7 @@
 #include "common/settings.h"
 #include "common/string_util.h"
 #include "core/core.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
@@ -274,7 +275,8 @@ std::string RomFSProductVersion(const FileSys::VirtualDir& romfs_dir) {
 // Loose ExeFS dumps carry no control data, but icon/nacp sidecars can be dropped next to the
 // ExeFS or in the game folder above it (<game>/exefs/main, <game>/base/exefs/main and
 // <game>/updates/<title id>/exefs/main layouts).
-std::vector<FileSys::VirtualDir> FindSidecarDirs(const FileSys::VirtualDir& exefs_dir) {
+std::vector<FileSys::VirtualDir> FindSidecarDirs(const FileSys::VirtualDir& exefs_dir,
+                                              bool prefer_edition = false) {
     const auto equals_ignore_case = [](const std::string& a, std::string_view b) {
         return a.size() == b.size() &&
                std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
@@ -284,16 +286,26 @@ std::vector<FileSys::VirtualDir> FindSidecarDirs(const FileSys::VirtualDir& exef
     };
 
     std::vector<FileSys::VirtualDir> dirs{exefs_dir};
-    for (auto dir = exefs_dir; dirs.size() < 4;) {
+    auto dir = exefs_dir;
+    for (std::size_t depth = 0; depth < 8; ++depth) {
         const auto parent = dir->GetParentDirectory();
         if (parent == nullptr) {
             break;
         }
         const auto& name = parent->GetName();
+        if (const auto control = parent->GetSubdirectory("control")) {
+            if (prefer_edition) {
+                if (const auto edition = control->GetSubdirectory("Acd_1")) {
+                    dirs.push_back(edition);
+                }
+            }
+            dirs.push_back(control);
+        }
         dirs.push_back(parent);
         const bool storage_level =
             equals_ignore_case(name, "base") || equals_ignore_case(name, "update") ||
-            equals_ignore_case(name, "updates") ||
+            equals_ignore_case(name, "updates") || equals_ignore_case(name, "upgrade") ||
+            equals_ignore_case(name, "program") ||
             (!name.empty() && name.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos);
         if (!storage_level) {
             break;
@@ -305,13 +317,120 @@ std::vector<FileSys::VirtualDir> FindSidecarDirs(const FileSys::VirtualDir& exef
 
 } // namespace
 
+// Extracted add-on content of a loose dump: <game>/dlc/<aoc title id>/<version>/romfs. Switch 2
+// Edition upgrade packs ship this way (often just a placeholder file), and the game only unlocks
+// once aoc:u lists them. Dumpers name the pack after the NX application (0100...) even when the
+// program is the Switch 2 build (0400...), so the platform byte follows the running program.
+std::vector<std::pair<u64, FileSys::VirtualDir>> FindLooseAOC(const FileSys::VirtualDir& exefs_dir,
+                                                              u64 program_id) {
+    std::vector<std::pair<u64, FileSys::VirtualDir>> out;
+    const auto game_dir = FindSidecarDirs(exefs_dir).back();
+    const auto dlc_dir = game_dir != nullptr ? game_dir->GetSubdirectory("dlc") : nullptr;
+    if (dlc_dir == nullptr) {
+        return out;
+    }
+    for (const auto& aoc_dir : dlc_dir->GetSubdirectories()) {
+        const auto& name = aoc_dir->GetName();
+        if (name.size() != 16 || name.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+            continue;
+        }
+        const u64 aoc_id = FileSys::WithPlatformOf(std::stoull(name, nullptr, 16), program_id);
+        if (FileSys::GetBaseTitleID(aoc_id) != FileSys::GetBaseTitleID(program_id)) {
+            continue;
+        }
+        // The newest version folder wins.
+        FileSys::VirtualDir romfs_dir;
+        u64 best_version = 0;
+        for (const auto& version_dir : aoc_dir->GetSubdirectories()) {
+            const auto& version = version_dir->GetName();
+            if (version.empty() || version.find_first_not_of("0123456789") != std::string::npos) {
+                continue;
+            }
+            auto candidate = version_dir->GetSubdirectory("romfs");
+            if (candidate == nullptr) {
+                const auto base = version_dir->GetSubdirectory("base");
+                for (const auto& package : {version_dir, base}) {
+                    if (package == nullptr) {
+                        continue;
+                    }
+                    candidate = package->GetSubdirectory("romfs");
+                    if (candidate == nullptr) {
+                        const auto programs = package->GetSubdirectory("program");
+                        const auto zero = programs != nullptr ? programs->GetSubdirectory("0")
+                                                              : nullptr;
+                        candidate = zero != nullptr ? zero->GetSubdirectory("romfs") : nullptr;
+                    }
+                    if (candidate != nullptr) {
+                        break;
+                    }
+                }
+            }
+            // A patched add-on ships next to its base as <version>/updates/<patch>/program/0/romfs
+            // (Xenoblade 2 keeps its whole game data in one). Dumps hold the full patched RomFS,
+            // so the newest patch replaces the base instead of layering on it.
+            if (const auto updates = version_dir->GetSubdirectory("updates")) {
+                u64 best_patch = 0;
+                for (const auto& patch_dir : updates->GetSubdirectories()) {
+                    const auto& patch = patch_dir->GetName();
+                    if (patch.empty() || patch.find_first_not_of("0123456789") != std::string::npos) {
+                        continue;
+                    }
+                    const auto programs = patch_dir->GetSubdirectory("program");
+                    const auto zero = programs != nullptr ? programs->GetSubdirectory("0") : nullptr;
+                    const auto patched = zero != nullptr ? zero->GetSubdirectory("romfs") : nullptr;
+                    if (patched != nullptr && std::stoull(patch) >= best_patch) {
+                        candidate = patched;
+                        best_patch = std::stoull(patch);
+                    }
+                }
+            }
+            if (candidate != nullptr && (romfs_dir == nullptr || std::stoull(version) >= best_version)) {
+                romfs_dir = candidate;
+                best_version = std::stoull(version);
+            }
+        }
+        if (romfs_dir == nullptr) {
+            continue;
+        }
+        LOG_INFO(Loader, "Loose add-on content {:016X} (v{}) from {}", aoc_id, best_version,
+                 aoc_dir->GetFullPath());
+        out.emplace_back(aoc_id, romfs_dir);
+    }
+    return out;
+}
+
+// The sibling programs of a loose multi-program dump: <...>/program/<n>/exefs is running, every
+// other <...>/program/<m>/romfs is program index m of the same application.
+std::vector<std::pair<u64, FileSys::VirtualDir>> FindLooseSiblingPrograms(
+    const FileSys::VirtualDir& exefs_dir, u64 program_id) {
+    std::vector<std::pair<u64, FileSys::VirtualDir>> out;
+    const auto is_index = [](const std::string& name) {
+        return !name.empty() && name.size() <= 3 &&
+               name.find_first_not_of("0123456789") == std::string::npos;
+    };
+    const auto own = exefs_dir != nullptr ? exefs_dir->GetParentDirectory() : nullptr;
+    const auto programs = own != nullptr ? own->GetParentDirectory() : nullptr;
+    if (programs == nullptr || programs->GetName() != "program" || !is_index(own->GetName())) {
+        return out;
+    }
+    for (const auto& sibling : programs->GetSubdirectories()) {
+        const auto& name = sibling->GetName();
+        if (!is_index(name) || name == own->GetName()) {
+            continue;
+        }
+        if (const auto romfs = FindLooseRomFSDirectory(sibling)) {
+            out.emplace_back(FileSys::GetBaseTitleIDWithProgramIndex(program_id, std::stoull(name)),
+                             romfs);
+        }
+    }
+    return out;
+}
+
 AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(FileSys::VirtualFile file_, bool override_update_)
     : AppLoader(std::move(file_))
     , override_update(override_update_)
 {
     const auto file_dir = file->GetContainingDirectory();
-    const auto sidecar_dirs = FindSidecarDirs(file_dir);
-
     // Title ID
     const auto npdm = file_dir->GetFile("main.npdm");
     if (npdm != nullptr) {
@@ -319,6 +438,8 @@ AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(FileSys
         if (res == ResultStatus::Success)
             title_id = metadata.GetTitleID();
     }
+
+    const auto sidecar_dirs = FindSidecarDirs(file_dir, metadata.IsSwitch2());
 
     // Icon
     FileSys::VirtualFile icon_file = nullptr;
@@ -423,6 +544,20 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     if (result != ResultStatus::Success) {
         return {result, {}};
     }
+
+    const u64 addon_application_id = control && control->GetDLCBaseTitleId() != 0
+                                         ? control->GetDLCBaseTitleId()
+                                         : metadata.GetTitleID();
+    std::vector<FileSys::BootContent> boot_content;
+    if (standalone) {
+        for (auto& [id, data] : FindLooseAOC(dir, addon_application_id)) {
+            boot_content.push_back({id, FileSys::ContentRecordType::Data, std::move(data)});
+        }
+        for (auto& [id, program] : FindLooseSiblingPrograms(dir, metadata.GetTitleID())) {
+            boot_content.push_back({id, FileSys::ContentRecordType::Program, std::move(program)});
+        }
+    }
+    FileSys::SetBootContent(std::move(boot_content));
 
     if (override_update) {
         const FileSys::PatchManager patch_manager(
@@ -587,6 +722,20 @@ ResultStatus AppLoader_DeconstructedRomDirectory::ReadIcon(std::vector<u8>& out_
     }
 
     out_buffer = icon_data;
+    return ResultStatus::Success;
+}
+
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadProgramMetadata(FileSys::ProgramMetadata& out) {
+    const auto npdm = dir != nullptr ? dir->GetFile("main.npdm") : nullptr;
+    if (npdm == nullptr) {
+        return ResultStatus::ErrorMissingNPDM;
+    }
+
+    if (const auto result = metadata.Load(npdm); result != ResultStatus::Success) {
+        return result;
+    }
+
+    out = metadata;
     return ResultStatus::Success;
 }
 

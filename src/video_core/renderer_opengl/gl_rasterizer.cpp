@@ -592,6 +592,18 @@ bool RasterizerOpenGL::OnCPUWrite(DAddr addr, u64 size) {
     return false;
 }
 
+// The buffer cache keeps CPU writes it held back out of GPU downloads until the round of
+// applies that took them ends; without this bracket the held pages are never released.
+void RasterizerOpenGL::BeginCachedWrites() {
+    std::scoped_lock lock{buffer_cache.mutex};
+    buffer_cache.BeginCachedWrites();
+}
+
+void RasterizerOpenGL::EndCachedWrites() {
+    std::scoped_lock lock{buffer_cache.mutex};
+    buffer_cache.EndCachedWrites();
+}
+
 void RasterizerOpenGL::OnCacheInvalidation(DAddr addr, u64 size) {
     if (addr == 0 || size == 0) {
         return;

@@ -26,7 +26,7 @@ struct StagingBufferRef {
     VkDeviceSize offset;
     std::span<u8> mapped_span;
     MemoryUsage usage;
-    u32 log2_level;
+    u32 size_class;
     u64 index;
 };
 
@@ -61,10 +61,11 @@ private:
         VkDeviceAddress device_address;
         std::span<u8> mapped_span;
         MemoryUsage usage;
-        u32 log2_level;
+        u32 size_class;
         u64 index;
         size_t capacity;
         u64 tick = 0;
+        u64 frame = 0; ///< Last frame a request got this buffer.
         bool deferred{};
 
         StagingBufferRef Ref(size_t requested) const noexcept {
@@ -74,7 +75,7 @@ private:
                 .offset = 0,
                 .mapped_span = StagingBufferMappedRange(mapped_span, requested),
                 .usage = usage,
-                .log2_level = log2_level,
+                .size_class = size_class,
                 .index = index,
             };
         }
@@ -82,12 +83,18 @@ private:
 
     struct StagingBuffers {
         std::vector<StagingBuffer> entries;
-        size_t delete_index = 0;
         size_t iterate_index = 0;
     };
 
-    static constexpr size_t NUM_LEVELS = sizeof(size_t) * CHAR_BIT;
+    /// Size classes up to this power of two are powers of two; above it there are four per
+    /// doubling.
+    static constexpr u32 FINE_SIZE_CLASSES_FROM_LOG2 = 20;
+    static constexpr size_t NUM_LEVELS =
+        FINE_SIZE_CLASSES_FROM_LOG2 + (sizeof(size_t) * CHAR_BIT - FINE_SIZE_CLASSES_FROM_LOG2) * 4 + 1;
     using StagingBuffersCache = std::array<StagingBuffers, NUM_LEVELS>;
+
+    static u32 SizeClass(size_t size);
+    static size_t ClassSize(u32 size_class);
 
     StagingBufferRef GetStreamBuffer(size_t size);
 
@@ -95,7 +102,7 @@ private:
 
     StagingBufferRef GetStagingBuffer(size_t size, MemoryUsage usage, bool deferred = false);
 
-    std::optional<StagingBufferRef> TryGetReservedBuffer(size_t size, MemoryUsage usage,
+    std::optional<StagingBufferRef> TryGetReservedBuffer(u32 size_class, MemoryUsage usage,
                                                          bool deferred);
 
     StagingBufferRef CreateStagingBuffer(size_t size, MemoryUsage usage, bool deferred);
@@ -130,7 +137,7 @@ private:
     StagingBuffersCache upload_cache;
     StagingBuffersCache download_cache;
 
-    size_t current_delete_level = 0;
+    u64 frame = 0;
     u64 buffer_index = 0;
     u64 unique_ids{};
     u64 frame_count{};

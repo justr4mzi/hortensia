@@ -104,7 +104,7 @@ void ConfigurePerGameAddons::OnItemChanged(QStandardItem* item) {
 }
 
 void ConfigurePerGameAddons::ApplyConfiguration() {
-    std::vector<std::string> disabled_addons;
+    std::vector<std::string> disabled_addons = embedded_disabled_keys;
 
     for (const auto& item : list_items) {
         const auto disabled = item.front()->checkState() == Qt::Unchecked;
@@ -269,6 +269,9 @@ void ConfigurePerGameAddons::showContextMenu(const QPoint& pos) {
     QMenu menu(this);
 
     QAction* remove = menu.addAction(tr("&Delete"));
+    remove->setEnabled(std::any_of(selected.begin(), selected.end(), [](const auto& row) {
+        return !row.data(PATCH_LOCATION).toString().isEmpty();
+    }));
     connect(remove, &QAction::triggered, this,
             [this, selected]() { AddonDeleteRequested(selected); });
 
@@ -310,11 +313,12 @@ void ConfigurePerGameAddons::LoadConfiguration() {
 
     const auto& disabled = Settings::values.disabled_addons[title_id];
 
+    embedded_disabled_keys.clear();
     update_items.clear();
     list_items.clear();
     item_model->removeRows(0, item_model->rowCount());
 
-    std::vector<FileSys::Patch> patches = pm.GetPatches(update_raw);
+    std::vector<FileSys::Patch> patches = pm.GetPatches(update_raw, loader->ReadEmbeddedPatches());
 
     bool has_enabled_update = false;
 
@@ -323,6 +327,20 @@ void ConfigurePerGameAddons::LoadConfiguration() {
 
         auto* const first_item = new QStandardItem;
         first_item->setText(name);
+        if (patch.source == FileSys::PatchSource::Embedded) {
+            // Informational rows must not rewrite installed-content preferences.
+            for (const auto& key : disabled) {
+                if (key == patch.name || (patch.type == FileSys::PatchType::Update &&
+                                          key == fmt::format("Update@{}", patch.numeric_version))) {
+                    embedded_disabled_keys.push_back(key);
+                }
+            }
+            first_item->setText(name + tr(" (embedded)"));
+            first_item->setEditable(false);
+            item_model->appendRow(
+                {first_item, new QStandardItem{QString::fromStdString(patch.version)}});
+            continue;
+        }
         first_item->setCheckable(true);
 
         const bool is_external_update = patch.type == FileSys::PatchType::Update &&

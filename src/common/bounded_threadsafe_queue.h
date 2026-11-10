@@ -5,11 +5,13 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <memory>
 #include <new>
@@ -90,6 +92,22 @@ public:
         T t{};
         Pop<PopMode::WaitWithStopToken>(t, stop_token);
         return t;
+    }
+
+    /// Pops an element, waiting at most `timeout` for one to be pushed.
+    template <typename Rep, typename Period>
+    bool PopWaitFor(T& t, const std::chrono::duration<Rep, Period>& timeout) noexcept {
+        const std::size_t read_index = consumer.index.load(std::memory_order::relaxed);
+        if (read_index == producer.index.load(std::memory_order::acquire)) {
+            // Emplace notifies under cv_mutex after publishing the index: no lost wake-up.
+            std::unique_lock lock{consumer.cv_mutex};
+            if (!consumer.cv.wait_for(lock, timeout, [this, read_index] {
+                    return read_index != producer.index.load(std::memory_order::acquire);
+                })) {
+                return false;
+            }
+        }
+        return Pop<PopMode::Try>(t);
     }
 
 private:

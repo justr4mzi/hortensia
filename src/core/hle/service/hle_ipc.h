@@ -67,6 +67,8 @@ class SessionRequestHandler : public std::enable_shared_from_this<SessionRequest
 public:
     SessionRequestHandler(Kernel::KernelCore& kernel_, const char* service_name_);
     virtual ~SessionRequestHandler();
+    // ponytail: diagnostics only (EDEN_PKP_BT sampler). Name of the service; no RTTI in this build.
+    const char* diag_service_name{};
 
     /**
      * Handles a sync request from the emulated application.

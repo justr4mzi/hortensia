@@ -2169,6 +2169,7 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
             analysis->second.AddStore(*storage_inst.inst, extents[storage_inst.storage_buffer]);
         }
     }
+    program.info.native_global_bounds |= info.native_runtime_bounds;
     for (const StorageBufferAddr& storage_buffer : info.set) {
         const bool is_written{info.writes.contains(storage_buffer)};
         const auto extent{extents.find(storage_buffer)};

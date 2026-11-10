@@ -14,6 +14,7 @@
 #include "common/assert.h"
 #include "common/bit_util.h"
 #include "common/common_types.h"
+#include "common/div_ceil.h"
 #include "common/literals.h"
 #include "video_core/nx2_stutter_trace.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -28,6 +29,16 @@ using namespace Common::Literals;
 
 // Maximum potential alignment of a Vulkan buffer
 constexpr VkDeviceSize MAX_ALIGNMENT = 256;
+
+// Staging buffers no request took for this many frames are freed once the GPU is done with them.
+constexpr u64 STAGING_KEEP_FRAMES = 60;
+
+// At most this many staging buffers are freed per frame, so a burst does not stall one frame.
+constexpr size_t STAGING_DELETIONS_PER_FRAME = 32;
+
+// A request may take a free buffer up to this many fine size classes larger than its own
+// (at most 1.5 times its size), instead of allocating a new one.
+constexpr u32 STAGING_REUSE_LARGER_CLASSES = 2;
 
 // Stream buffer size in bytes
 // *NIX drivers are more sensitive to increased buffers for streaming.
@@ -49,18 +60,17 @@ constexpr VkDeviceSize STREAM_BUFFER_TAIL = 64_KiB;
 
 size_t GetStreamBufferSize(const Device& device) {
     if (!device.HasDebuggingToolAttached()) {
-        if (device.IsIntegrated()) {
-            // An integrated GPU's device-local host-visible heap can be no bigger than the stream
-            // buffer (Radeon 780M: 256 MiB, 243 MiB budget), which then sat over that budget.
-            // Leave a quarter of it free.
-            VkDeviceSize heap_size = 0;
-            ForEachDeviceLocalHostVisibleHeap(
-                device, [&heap_size](size_t, VkMemoryHeap& heap) {
-                    heap_size = (std::max)(heap_size, heap.size);
-                });
-            if (heap_size != 0 && heap_size <= MAX_STREAM_BUFFER_SIZE) {
-                return Common::AlignUp(heap_size * 3 / 4, MAX_ALIGNMENT);
-            }
+        // The device-local host-visible heap can be no bigger than the stream buffer: an
+        // integrated GPU's (Radeon 780M: 256 MiB, 243 MiB budget), or a discrete GPU's BAR
+        // without Resizable BAR (256 MiB). A buffer that size doesn't fit the heap's budget, so
+        // VMA put it in system memory and the GPU read every uniform and index buffer from it
+        // over PCIe. Leave a quarter of the heap free so it stays in video memory.
+        VkDeviceSize heap_size = 0;
+        ForEachDeviceLocalHostVisibleHeap(device, [&heap_size](size_t, VkMemoryHeap& heap) {
+            heap_size = (std::max)(heap_size, heap.size);
+        });
+        if (heap_size != 0 && heap_size <= MAX_STREAM_BUFFER_SIZE) {
+            return Common::AlignUp(heap_size * 3 / 4, MAX_ALIGNMENT);
         }
         return MAX_STREAM_BUFFER_SIZE;
     }
@@ -129,7 +139,7 @@ StagingBufferRef StagingBufferPool::Request(size_t size, MemoryUsage usage, bool
 }
 
 void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
-    auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
+    auto& entries = GetCache(ref.usage)[ref.size_class].entries;
     const auto is_this_one = [&ref](const StagingBuffer& entry) {
         return entry.index == ref.index;
     };
@@ -137,11 +147,18 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
     ASSERT(it != entries.end());
     ASSERT(it->deferred);
     it->tick = scheduler.CurrentTick();
+    it->frame = frame;
     it->deferred = false;
 }
 
 void StagingBufferPool::TickFrame() {
-    current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
+    ++frame;
+    // Every size class is checked each frame: buffers requests keep taking stay, idle ones go.
+    size_t deletions_left = STAGING_DELETIONS_PER_FRAME;
+    ReleaseCache(upload_cache, deletions_left);
+    ReleaseCache(download_cache, deletions_left);
+    ReleaseCache(device_local_cache, deletions_left);
+}
 
     ReleaseCache(MemoryUsage::DeviceLocal);
     ReleaseCache(MemoryUsage::Upload);
@@ -170,7 +187,8 @@ void StagingBufferPool::TickFrame() {
 }
 
 StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
-    if (AreRegionsActive(Region(free_iterator) + 1,
+    // free_iterator 0: nothing is known free yet, region 0 included (see the wrap below).
+    if (AreRegionsActive(free_iterator == 0 ? 0 : Region(free_iterator) + 1,
                          (std::min)(Region(iterator + size) + 1, NUM_SYNCS))) {
         // Avoid waiting for the previous usages to be free
         return GetStagingBuffer(size, MemoryUsage::Upload);
@@ -189,7 +207,10 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
         free_iterator = size;
 
         if (AreRegionsActive(0, Region(size) + 1)) {
-            // Avoid waiting for the previous usages to be free
+            // Avoid waiting for the previous usages to be free. Region 0 is still in use: with
+            // free_iterator at `size`, a next request this size or smaller skipped the check and
+            // got offset 0 while the GPU still read it. The next request checks region 0 again.
+            free_iterator = 0;
             return GetStagingBuffer(size, MemoryUsage::Upload);
         }
     }
@@ -201,7 +222,7 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
         .offset = static_cast<VkDeviceSize>(offset),
         .mapped_span = stream_pointer.subspan(offset, size),
         .usage{},
-        .log2_level{},
+        .size_class{},
         .index{},
     };
 }
@@ -214,13 +235,21 @@ bool StagingBufferPool::AreRegionsActive(size_t region_begin, size_t region_end)
 
 StagingBufferRef StagingBufferPool::GetStagingBuffer(size_t size, MemoryUsage usage,
                                                      bool deferred) {
-    if (const std::optional<StagingBufferRef> ref = TryGetReservedBuffer(size, usage, deferred)) {
-        return *ref;
+    const u32 size_class = SizeClass(size);
+    const u32 last_class =
+        size_class > FINE_SIZE_CLASSES_FROM_LOG2
+            ? (std::min)(size_class + STAGING_REUSE_LARGER_CLASSES, static_cast<u32>(NUM_LEVELS - 1))
+            : size_class;
+    for (u32 reuse_class = size_class; reuse_class <= last_class; ++reuse_class) {
+        if (const std::optional<StagingBufferRef> ref =
+                TryGetReservedBuffer(reuse_class, usage, deferred)) {
+            return *ref;
+        }
     }
     return CreateStagingBuffer(size, usage, deferred);
 }
 
-std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t size,
+std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(u32 size_class,
                                                                         MemoryUsage usage,
                                                                         bool deferred) {
     StagingBuffers& cache_level = GetCache(usage)[Common::Log2Ceil((std::max)(size, size_t{1}))];
@@ -239,6 +268,7 @@ std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t s
     }
     cache_level.iterate_index = std::distance(entries.begin(), it) + 1;
     it->tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick();
+    it->frame = frame;
     ASSERT(!it->deferred);
     it->deferred = deferred;
     ++buffers_reused;
@@ -277,15 +307,16 @@ StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage
         device.IsBufferDeviceAddressSupported()
             ? device.GetLogical().GetBufferDeviceAddress(*buffer)
             : VkDeviceAddress{};
-    StagingBuffer& entry = GetCache(usage)[log2_size].entries.emplace_back(StagingBuffer{
+    StagingBuffer& entry = GetCache(usage)[size_class].entries.emplace_back(StagingBuffer{
         .buffer = std::move(buffer),
         .device_address = buffer_address,
         .mapped_span = mapped_span,
         .usage = usage,
-        .log2_level = log2_size,
+        .size_class = size_class,
         .index = unique_ids++,
         .capacity = capacity,
         .tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick(),
+        .frame = frame,
         .deferred = deferred,
     });
     ++buffers_created;
@@ -349,19 +380,20 @@ void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2) {
     const auto is_deletable = [this](const StagingBuffer& entry) {
         return !entry.deferred && scheduler.IsFree(entry.tick);
     };
-    const size_t begin_offset = staging.delete_index;
-    const size_t end_offset = (std::min)(begin_offset + deletions_per_tick, old_size);
-    const auto begin = entries.begin() + begin_offset;
-    const auto end = entries.begin() + end_offset;
-    entries.erase(std::remove_if(begin, end, is_deletable), end);
-
-    const size_t new_size = entries.size();
-    staging.delete_index += deletions_per_tick;
-    if (staging.delete_index >= new_size) {
-        staging.delete_index = 0;
-    }
-    if (staging.iterate_index > new_size) {
-        staging.iterate_index = 0;
+    // Largest first: they hold the most memory.
+    for (auto level = cache.rbegin(); level != cache.rend(); ++level) {
+        if (deletions_left == 0) {
+            return;
+        }
+        StagingBuffers& staging = *level;
+        auto& entries = staging.entries;
+        if (entries.empty()) {
+            continue;
+        }
+        std::erase_if(entries, is_deletable);
+        if (staging.iterate_index > entries.size()) {
+            staging.iterate_index = 0;
+        }
     }
 }
 

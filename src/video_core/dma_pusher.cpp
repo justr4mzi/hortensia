@@ -157,14 +157,34 @@ bool DmaPusher::Step() {
     if (!puller.ResumeAcquire(*this)) {
         return false;
     }
+    // Lists queued while the channel waited were read from memory, not as submitted: the game
+    // writes the commands a list runs before it releases the acquire, so the words at submit time
+    // could be older. Reading them as late as the parse is too late in Hyrule Warriors: Age of
+    // Imprisonment fights: a command ring the game had already refilled for a later frame, read
+    // as this frame's commands (methods on unbound subchannels, garbage QMDs, then a channel
+    // waiting forever on a release it never got). The acquire is released now, so the commands
+    // are written and the memory not yet reused: copy them here. EDEN_NX2_RESNAPSHOT=0: off.
+    if (static const bool resnapshot = [] {
+            const char* value = std::getenv("EDEN_NX2_RESNAPSHOT");
+            return value == nullptr || value[0] != '0';
+        }();
+        resnapshot && suspensions.load(std::memory_order_relaxed) != suspensions_before) {
+        const u64 now = suspensions.load(std::memory_order_acquire);
+        for (CommandList& list : dma_pushbuffer) {
+            if (!list.submitted_offsets.empty()) {
+                RefreshSnapshot(list, now);
+            }
+        }
+    }
 
     CommandList& command_list = dma_pushbuffer.front();
+    Nx2NoteRunningList(command_list);
 
     const size_t prefetch_size = command_list.prefetch_command_list.size();
     const size_t command_list_size = command_list.command_lists.size();
 
     if (prefetch_size == 0 && command_list_size == 0) {
-        dma_pushbuffer.pop();
+        dma_pushbuffer.pop_front();
         dma_pushbuffer_subindex = 0;
         return true;
     }
@@ -177,7 +197,7 @@ bool DmaPusher::Step() {
             return false;
         }
         command_resume_offset = 0;
-        dma_pushbuffer.pop();
+        dma_pushbuffer.pop_front();
         return true;
     }
 
@@ -334,7 +354,9 @@ bool DmaPusher::Step() {
             command_resume_offset +=
                 ProcessCommands(commands.subspan(command_resume_offset), command_resume_offset);
         } else {
-            FlushGpuWrittenCommands(dma_state.dma_get, size_t{header.size} * sizeof(u32));
+            if (!takes_gpu_parameters) {
+                FlushGpuWrittenCommands(dma_state.dma_get, size_t{header.size} * sizeof(u32));
+            }
             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::UnsafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
             const std::span<const CommandHeader> commands{headers.data(), headers.size()};
             RecordParsedEntry(header, commands);
@@ -368,7 +390,7 @@ bool DmaPusher::Step() {
             }
         }
         parked_methods.clear();
-        dma_pushbuffer.pop();
+        dma_pushbuffer.pop_front();
         dma_pushbuffer_subindex = 0;
     } else {
         signal_sync = command_list.command_lists[dma_pushbuffer_subindex].sync && Settings::values.sync_memory_operations.GetValue();
@@ -746,8 +768,9 @@ bool DmaPusher::IsGpuWrittenCommands(GPUVAddr address, size_t size) {
             device && Tegra::Nx2IsGpuWritten(*device)) {
             return true;
         }
+        memory_manager.ReadBlockUnsafe(entry.addr, list.submitted_words.data() + offset,
+                                       entry.size * sizeof(u32));
     }
-    return false;
 }
 
 bool DmaPusher::ReadGpuWrittenCommands(GPUVAddr address, u32 count, bool* pending) {

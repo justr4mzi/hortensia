@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -54,6 +55,28 @@ struct ShaderCacheTestAccess {
 } // namespace VideoCommon
 
 using VideoCommon::ShaderCacheTestAccess;
+
+TEST_CASE("Instruction cache invalidation snapshots accepted and rejected shader regions",
+          "[shader_invalidation]") {
+    Core::DeviceMemory memory;
+    Tegra::MaxwellDeviceMemoryManager device_memory{memory};
+    auto cache = ShaderCacheTestAccess::Create(device_memory);
+    constexpr VAddr accepted = 0x100000;
+    constexpr VAddr rejected = 0x200000;
+    ShaderCacheTestAccess::Register(*cache, accepted, 0x8000, 123);
+    ShaderCacheTestAccess::Reject(*cache, rejected, 0x2000);
+    auto ranges = cache->GetShaderCodeRanges();
+    std::ranges::sort(ranges);
+    REQUIRE(ranges == std::vector<std::pair<DAddr, size_t>>{
+                          {accepted, 0x8000}, {rejected, 0x2000}});
+
+    // Readback takes place outside the shader cache's locks. Its owned range list
+    // remains valid while the cache retires old metadata and clears rejections.
+    cache->InvalidateRegions(ranges);
+    REQUIRE(cache->GetShaderCodeRanges().empty());
+    REQUIRE_FALSE(ShaderCacheTestAccess::Find(*cache, accepted));
+    REQUIRE(ranges.size() == 2);
+}
 
 TEST_CASE("Shader batch invalidation matches sequential cache contents", "[shader_invalidation]") {
     Core::DeviceMemory memory;

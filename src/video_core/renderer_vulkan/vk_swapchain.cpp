@@ -14,9 +14,11 @@
 #endif
 
 #include "common/logging.h"
+#include "common/game_fps.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_hitch_diagnostic.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/vulkan_common/vk_enum_string_helper.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -48,6 +50,11 @@ static VkPresentModeKHR ChooseSwapPresentMode(bool has_imm, bool has_mailbox,
     Settings::VSyncMode setting = [has_imm, has_mailbox]() {
         // Choose Mailbox or Immediate if unlocked and those modes are supported
         const auto mode = Settings::values.vsync_mode.GetValue();
+        // The explicit game-patch target owns frame pacing. FIFO would cap high targets at the
+        // monitor's refresh rate even though the patched game uses a smaller simulation step.
+        if (Settings::GetActiveGameFps(Settings::GetCurrentProgramID()) > 60) {
+            return has_mailbox ? Settings::VSyncMode::Mailbox : Settings::VSyncMode::Immediate;
+        }
         if (Settings::values.frame_gen.GetValue()) {
             return mode == Settings::VSyncMode::FifoRelaxed ? mode : Settings::VSyncMode::Fifo;
         }
@@ -169,9 +176,13 @@ void Swapchain::Create(
 }
 
 bool Swapchain::AcquireNextImage(bool may_flush) {
-    const VkResult result = device.GetLogical().AcquireNextImageKHR(
-        *swapchain, (std::numeric_limits<u64>::max)(), *present_semaphores[frame_index],
-        VK_NULL_HANDLE, &image_index);
+    VkResult result;
+    {
+        HitchTrace::Scope trace{HitchTrace::Event::AcquireImage, frame_index};
+        result = device.GetLogical().AcquireNextImageKHR(
+            *swapchain, (std::numeric_limits<u64>::max)(), *present_semaphores[frame_index],
+            VK_NULL_HANDLE, &image_index);
+    }
     switch (result) {
     case VK_SUCCESS:
         break;
@@ -194,6 +205,10 @@ bool Swapchain::AcquireNextImage(bool may_flush) {
     }
 
     const auto wait_with_frame_pacing = [this, may_flush] {
+    if (Settings::GetActiveGameFps(Settings::GetCurrentProgramID()) != 0) {
+        scheduler.Wait(resource_ticks[image_index], 0.0, may_flush);
+        return;
+    }
     switch (Settings::values.frame_pacing_mode.GetValue()) {
     case Settings::FramePacingMode::Target_Auto:
         scheduler.Wait(resource_ticks[image_index], 0.0, may_flush);
@@ -242,8 +257,17 @@ void Swapchain::Present(VkSemaphore render_semaphore) {
         .pImageIndices = &image_index,
         .pResults = nullptr,
     };
-    std::scoped_lock lock{scheduler.submit_mutex};
-    switch (const VkResult result = present_queue.Present(present_info)) {
+    std::unique_lock lock{scheduler.submit_mutex, std::defer_lock};
+    {
+        HitchTrace::Scope trace{HitchTrace::Event::QueuePresentMutex, image_index};
+        lock.lock();
+    }
+    VkResult result;
+    {
+        HitchTrace::Scope trace{HitchTrace::Event::QueuePresent, image_index};
+        result = present_queue.Present(present_info);
+    }
+    switch (result) {
     case VK_SUCCESS:
         break;
     case VK_SUBOPTIMAL_KHR:

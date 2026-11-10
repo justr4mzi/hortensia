@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 
@@ -24,6 +25,7 @@
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/ips_layer.h"
 #include "core/file_sys/patch_manager.h"
+#include "core/file_sys/wonder_fps_patch.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/vfs/vfs_cached.h"
@@ -502,6 +504,10 @@ std::vector<VirtualFile> PatchManager::CollectPatches(const std::vector<VirtualD
 }
 
 std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::string& name) const {
+    if (title_id == Settings::WonderSwitch2ProgramId && name == "main") {
+        Settings::wonder_fps_active.store(0, std::memory_order_relaxed);
+        Settings::wonder_dynamic_fps_active.store(false, std::memory_order_relaxed);
+    }
     if (nso.size() < sizeof(Loader::NSOHeader)) {
         return nso;
     }
@@ -531,10 +537,47 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
 
     LOG_INFO(Loader, "Patching NSO for name={}, build_id={}", name, build_id);
 
+    auto base = nso;
+    if (const auto* patch = FindFps30Patch(build_id)) {
+        const size_t at = sizeof(Loader::NSOHeader) + patch->offset;
+        u32 word{};
+        if (at + sizeof(word) <= base.size()) {
+            std::memcpy(&word, base.data() + at, sizeof(word));
+        }
+        if (word == patch->expected) {
+            std::memcpy(base.data() + at, &patch->replacement, sizeof(word));
+            LOG_INFO(Loader, "    - Applying built-in 30 FPS patch");
+        } else {
+            LOG_WARNING(Loader, "    - Built-in 30 FPS patch skipped: {:#010x} at {:#x}, expected {:#010x}",
+                        word, patch->offset, patch->expected);
+        }
+    }
+
+    const auto patch_wonder = [&](std::vector<u8>& out) {
+        // Apply after external mods so the earlier standalone Wonder test patch cannot pin this
+        // selector to 60 FPS. Validate every instruction before changing any of them.
+        if (title_id == Settings::WonderSwitch2ProgramId && name == "main") {
+            const auto target = Settings::values.wonder_fps.GetValue();
+            const char* dynamic_env = std::getenv("EDEN_WONDER_DYNAMIC_FPS");
+            const bool dynamic = dynamic_env && std::string_view{dynamic_env} == "1";
+            if (ApplyWonderFpsPatch(out, title_id, build_id, target, dynamic)) {
+                const u32 fps = target;
+                Settings::wonder_fps_active.store(fps, std::memory_order_relaxed);
+                Settings::wonder_dynamic_fps_generation.fetch_add(1, std::memory_order_relaxed);
+                Settings::wonder_dynamic_fps_active.store(dynamic, std::memory_order_release);
+                LOG_INFO(Loader, "Wonder experimental dynamic simulation: {}", dynamic);
+                LOG_INFO(Loader, "    - Applying built-in Wonder {} FPS patch", fps);
+            } else {
+                LOG_WARNING(Loader, "Wonder FPS patch skipped: unsupported build or instructions ({})",
+                            build_id);
+            }
+        }
+    };
     const auto load_dir = GetModificationLoadRoot();
     if (load_dir == nullptr) {
         LOG_ERROR(Loader, "Cannot load mods for invalid title_id={:016X}", title_id);
-        return nso;
+        patch_wonder(base);
+        return base;
     }
 
     auto patch_dirs = load_dir->GetSubdirectories();
@@ -542,7 +585,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
               [](const VirtualDir& l, const VirtualDir& r) { return l->GetName() < r->GetName(); });
     const auto patches = CollectPatches(patch_dirs, build_id);
 
-    auto out = nso;
+    auto out = base;
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
             LOG_INFO(Loader, "    - Applying IPS patch from mod \"{}\"",
@@ -666,6 +709,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
         return nso;
     }
 
+    patch_wonder(out);
     std::memcpy(out.data(), &header, sizeof(header));
     return out;
 }
@@ -941,7 +985,32 @@ VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs
     return romfs;
 }
 
-std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
+bool PatchManager::AppendEmbeddedPatches(std::vector<Patch>& out,
+                                         std::vector<ContentProviderEntry>& dlc_match,
+                                         const std::vector<Patch>& embedded) {
+    bool has_embedded_dlc = false;
+    for (const auto& patch : embedded) {
+        if (patch.type == PatchType::Update) {
+            std::erase_if(out, [&patch](const Patch& existing) {
+                return existing.type == PatchType::Update &&
+                       existing.numeric_version == patch.numeric_version;
+            });
+            out.push_back(patch);
+        } else if (patch.type == PatchType::DLC) {
+            has_embedded_dlc = true;
+            if (std::none_of(dlc_match.begin(), dlc_match.end(), [&patch](const auto& entry) {
+                    return entry.title_id == patch.title_id;
+                })) {
+                dlc_match.push_back({.title_id = patch.title_id, .type = ContentRecordType::Data});
+            }
+        }
+    }
+
+    return has_embedded_dlc;
+}
+
+std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw,
+                                            const std::vector<Patch>& embedded) const {
     if (title_id == 0) {
         return {};
     }
@@ -1299,6 +1368,8 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
         dlc_match.push_back(entry);
     }
 
+    const bool has_embedded_dlc = AppendEmbeddedPatches(out, dlc_match, embedded);
+
     if (!dlc_match.empty()) {
         // Ensure sorted so DLC IDs show in order.
         std::sort(dlc_match.begin(), dlc_match.end());
@@ -1320,7 +1391,10 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
             dlc_source = PatchSource::SDMC;
         }
 
-        out.push_back({.enabled = !dlc_disabled,
+        if (has_embedded_dlc) {
+            dlc_source = PatchSource::Embedded;
+        }
+        out.push_back({.enabled = has_embedded_dlc || !dlc_disabled,
                        .name = "DLC",
                        .version = std::move(list),
                        .type = PatchType::DLC,

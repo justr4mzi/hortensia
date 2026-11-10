@@ -19,7 +19,7 @@ namespace Loader {
 
 /// Loads a NUP (NX Package) container: loose ExeFS/RomFS trees for a base
 /// program plus its updates in one file. The newest update package is layered
-/// over the base; add-on content packages are recognized but not yet mounted.
+/// over the base; add-on content RomFS trees are registered with the DLC service.
 class AppLoader_NUP final : public AppLoader {
 public:
     explicit AppLoader_NUP(FileSys::VirtualFile file_);
@@ -42,12 +42,15 @@ public:
 
     ResultStatus VerifyIntegrity(std::function<bool(size_t, size_t)> progress_callback) override;
 
+    std::vector<FileSys::Patch> ReadEmbeddedPatches() const override;
+
     ResultStatus ReadRomFS(FileSys::VirtualFile& out_file) override;
     bool IsRomFSUpdatable() const override;
     ResultStatus ReadProgramId(u64& out_program_id) override;
     ResultStatus ReadProgramIds(std::vector<u64>& out_program_ids) override;
     ResultStatus ReadIcon(std::vector<u8>& buffer) override;
     ResultStatus ReadTitle(std::string& title) override;
+    ResultStatus ReadDisplayVersion(std::string& version) override;
     ResultStatus ReadControlData(FileSys::NACP& control) override;
     ResultStatus ReadNSOModules(Modules& modules) override;
 
@@ -64,6 +67,7 @@ private:
     u64 base_title_id{};
     std::string display_title;
     std::string display_version;
+    std::string title_override;
     bool has_program{};
 };
 

@@ -1,0 +1,46 @@
+name: update-release-notes
+
+# Manually started: gives existing releases a name and puts the changelog from
+# .github/release-notes/<tag>.md above the release's current description.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed for "gh release edit"
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update release names and changelogs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Tag -> new release title
+          declare -A TITLES=(
+            ["build-1"]="Mario Tennis Fever – First Boot & Playable Matches (Build 1)"
+            ["build-2"]="Mario Tennis Fever – Boot Hang Fix (Build 2)"
+            ["mario-tennis-fever-build-3"]="Mario Tennis Fever – NVIDIA Match Crash Fix (Build 3)"
+          )
+
+          for tag in "${!TITLES[@]}"; do
+            notes=".github/release-notes/${tag}.md"
+            [ -f "$notes" ] || { echo "::warning::no notes for $tag"; continue; }
+
+            # Current description (install instructions etc.) stays below the changelog
+            current="$(gh release view "$tag" --json body --jq .body)"
+
+            if grep -q "^## What's new" <<<"$current"; then
+              # Changelog already present: only set the title, so running twice doesn't duplicate it
+              gh release edit "$tag" --title "${TITLES[$tag]}"
+            else
+              { cat "$notes"; printf '\n---\n\n%s\n' "$current"; } > body.md
+              gh release edit "$tag" --title "${TITLES[$tag]}" --notes-file body.md
+            fi
+            echo "updated $tag"
+          done

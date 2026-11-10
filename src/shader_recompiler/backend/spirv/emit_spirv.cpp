@@ -366,13 +366,12 @@ void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
         }
         ctx.AddExecutionMode(main, spv::ExecutionMode::OutputVertices, program.output_vertices);
         ctx.AddExecutionMode(main, spv::ExecutionMode::Invocations, program.invocations);
-        if (program.is_geometry_passthrough) {
-            if (ctx.profile.support_geometry_shader_passthrough) {
-                ctx.AddExtension("SPV_NV_geometry_shader_passthrough");
-                ctx.AddCapability(spv::Capability::GeometryShaderPassthroughNV);
-            } else {
-                LOG_WARNING(Shader_SPIRV, "Geometry shader passthrough used with no support");
-            }
+        // TranslateProgram lowers passthrough to explicit vertex copies and emits on hosts
+        // without the NV extension. The flag still describes the guest shader in that case;
+        // it does not mean that the emitted SPIR-V requires native passthrough support.
+        if (program.is_geometry_passthrough && ctx.profile.support_geometry_shader_passthrough) {
+            ctx.AddExtension("SPV_NV_geometry_shader_passthrough");
+            ctx.AddCapability(spv::Capability::GeometryShaderPassthroughNV);
         }
         break;
     case Stage::Fragment:

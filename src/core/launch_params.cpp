@@ -58,7 +58,9 @@ LaunchParams ParseLaunchParams(Core::System& system, int argc, char *argv[], wch
         if (int arg = getopt_long(argc, argv, "d:c:fhg:m:p:u:vi:nsx", long_options, &option_index); arg != -1) {
             switch (arg) {
             case 'd':
-                p.override_gdb_port = uint16_t(atoi(optarg));
+                p.override_gdb_port = optarg != nullptr
+                                          ? uint16_t(atoi(optarg))
+                                          : Settings::values.gdbstub_port.GetValue();
                 break;
             case 'c':
                 p.config_path = optarg;
