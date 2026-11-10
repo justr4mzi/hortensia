@@ -150,6 +150,16 @@ public:
                     const std::array<u32, 3>& block, std::optional<GPUVAddr> indirect,
                     std::optional<std::array<u32, 3>> indirect_grid);
 
+    [[nodiscard]] bool CapturingSampled() const noexcept {
+        return capturing && sampled;
+    }
+
+    /// Reads back the textures of the current draw not yet seen in this pass. Returns true when
+    /// copies were recorded, which ends the current render pass.
+    bool NoteSampled(std::span<const Sampled> textures);
+    /// Reads back the textures of the dispatch about to run not yet seen for this shader.
+    void NoteDispatchSampled(u64 shader_hash, std::span<const Sampled> textures);
+
     /// Starts a pass when the framebuffer changes and captures the previous one.
     /// Returns true when copies were recorded, which ends the current render pass.
     bool BeginPass(const void* framebuffer, std::span<ImageView* const> colors);

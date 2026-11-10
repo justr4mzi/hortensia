@@ -192,7 +192,7 @@ bool Scheduler::DeferFlush() {
         }
         return s64{500};
     }();
-    if (interval_us <= 0 || !VideoCommon::GpuSplit::OnBackThread() ||
+    if (interval_us <= 0 || !defer_flush_allowed || !VideoCommon::GpuSplit::OnBackThread() ||
         std::chrono::steady_clock::now() - last_flush >= std::chrono::microseconds{interval_us}) {
         return false;
     }

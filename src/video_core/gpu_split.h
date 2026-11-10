@@ -352,6 +352,27 @@ public:
     /// maps drain the split first (GPU::MapInOrder), the unmaps it is sent count as anywhere.
     bool WaitForWrites(const Tegra::MemoryManager& memory, GPUVAddr address, u64 size);
 
+    /// An entry just sent may write guest memory at [address, address + size) (GPU addresses).
+    void NoteMemoryWrite(GPUVAddr address, u64 size) {
+        const u64 first = address >> PendingPageBits;
+        const u64 last = (address + (size != 0 ? size : 1) - 1) >> PendingPageBits;
+        if (last - first >= MaxPendingPages) {
+            last_unknown_write = write_position;
+            return;
+        }
+        for (u64 page = first; page <= last; ++page) {
+            pending_writes[PendingSlot(page)] = write_position;
+        }
+    }
+    /// An entry just sent may write guest memory anywhere.
+    void NoteUnknownWrite() {
+        last_unknown_write = write_position;
+    }
+    /// Waits until the back executed the work sent so far that may write [address, address +
+    /// size): the noted writes, and with `writers` the compute and copy work (NoteWriter).
+    /// Returns whether any of it was still queued.
+    bool WaitForMemoryWrites(GPUVAddr address, u64 size, bool writers, DrainSite site);
+
 private:
     friend struct GpuSplitTestAccess;
 

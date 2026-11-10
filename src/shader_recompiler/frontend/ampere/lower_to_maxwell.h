@@ -2494,10 +2494,13 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // for TEX); Maxwell TLD4 takes it as AOFFI (bits 54-55) from Rb.
             const bool offsets = insn.Bits(76, 1) != 0;
             // Bits 76-77 = 2: per-tap offsets (PTP), x and y in Ra, Ra+1 and the packed offsets in
-            // Rb, Rb+1. The host gather needs them as constants, so they must be proven immediates.
+            // Rb, Rb+1.
             const bool per_tap = insn.Bits(76, 2) == 2;
             const bool depth = insn.Bits(78, 1) != 0;
             const bool half = insn.Bits(79, 1) != 0;
+            // Bit 78: depth compare, the reference after the coordinates and offset (x, y in Ra,
+            // Ra+1, then the offset and the reference in Rb..), as for TEX.
+            const bool depth_compare = insn.Bits(78, 1) != 0;
             const u32 register_limit = uses_uniform_bank ? high_uniform_base : 246U;
             const bool array = insn.Bits(61, 3) == 5;
             if (bindless && array) {
@@ -2586,7 +2589,10 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                                 (high != 255 && reg >= high && reg < high + second_count))
                                 return fail(index, "native per-tap gather offset clobber");
                         }
-                        continue;
+                        if (op != 0x326 && op != 0x802 && op != 0x307 && op != 0x421 &&
+                            op != 0xa20 && op != 0xb63 && op != 0x221 && op != 0x823 &&
+                            op != 0x423 && op != 0x223 && op != 0x308 && op != 0x220 && op != 0x820)
+                            return std::nullopt;
                     }
                     auto count = write_count(definition);
                     switch (op) {
@@ -2615,6 +2621,23 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                         imad_offsets |= imad;
                         packed_offsets[i] = definition.words[1];
                     }
+                    for (const auto& packed : packed_offsets) {
+                        if (!packed) return std::nullopt;
+                        // Each byte is a signed 6-bit offset; the gather reads only the low six bits.
+                        for (u32 shift = 0; shift < 32; shift += 8) {
+                            const u32 value = (*packed >> shift) & 255;
+                            if (value > 31 && value < 224)
+                                return std::nullopt;
+                        }
+                    }
+                    return std::array<u32, 2>{*packed_offsets[0], *packed_offsets[1]};
+                };
+                if (const auto packed = prove_offsets()) {
+                    for (u32 i = 0; i < 2; ++i) mov_imm(248 + i, (*packed)[i]);
+                } else {
+                    for (u32 i = 0; i < 2; ++i)
+                        emit(0x5c98000000000000ULL | predicate | (248 + i) | (u64{15} << 39) |
+                             (u64{source_b + i} << 20));
                 }
                 if (!half && !imad_offsets) {
                     bool terminal = false;
@@ -3853,6 +3876,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             if (insn.Bits(80, 1)) {
                 // LEA.HI Rd, Ra, Rb (or an immediate, 0x811), Rc, s: Rb + high word of (Rc:Ra << s);
                 // bit 73 sign-extends Ra (Rc is RZ) and .X (bit 74) adds the carry predicate in bits 87-90.
+                // Bit 63 negates Rb, as in the low form.
                 const bool extended = insn.Bits(74, 1) != 0;
                 const u32 high = insn.Bits(64, 8);
                 if (insn.Bits(72, 1) || insn.Bits(81, 3) != 7 ||
@@ -3880,9 +3904,21 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 } else {
                     high_word(predicate | 250);
                     if (extended) {
+                        // A uniform carry-in UPn is swapped in from R239 bit 6-n.
+                        const u32 condition = insn.Bits(87, 3);
+                        const bool uniform_carry = rewritten_uniform && condition != 7;
+                        const u32 source = uniform_carry ? 6 - condition : condition;
+                        const u32 mask = 1U << source;
                         mov_imm(252, 1);
+                        if (uniform_carry) {
+                            emit(0x38e8000000070000ULL | 253 | (u64{255} << 8) | (u64{mask} << 20));
+                            emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{mask} << 20));
+                        }
                         emit(0x5ca0000000000000ULL | predicate | 252 | (u64{252} << 8) | (u64{255} << 20) |
-                             (u64{insn.Bits(87, 3)} << 39) | (u64{insn.Bits(90, 1)} << 42));
+                             (u64{source} << 39) | (u64{insn.Bits(90, 1)} << 42));
+                        if (uniform_carry) {
+                            emit(0x38f0000000070000ULL | (u64{253} << 8) | (u64{mask} << 20));
+                        }
                         emit(0x5c10000000000000ULL | predicate | 250 | (u64{250} << 8) | (u64{252} << 20));
                     }
                     emit(base(0x5c10000000000000ULL) | (u64{250} << 8) | (u64{b} << 20) |

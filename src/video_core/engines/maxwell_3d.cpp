@@ -1342,6 +1342,59 @@ bool FrontHandledOutsideDrawManager(u32 method) {
     }
 }
 
+// EDEN_NX2_DMA_READ_WAIT: what the front's MME DMA reads wait for. 1 (default) only the queued
+// work that may write the words (noted writes, compute dispatches and DMA copies); 0 drains the
+// back; 2 leaves compute dispatches and DMA copies out. Words on GPU-written pages always drain.
+// A 'v' after the digit compares each read with a full drain.
+struct DmaReadWait {
+    u32 mode;
+    bool verify;
+};
+const DmaReadWait& DmaReadWaitMode() {
+    static const DmaReadWait mode = [] {
+        DmaReadWait result{.mode = 1};
+        const char* value = std::getenv("EDEN_NX2_DMA_READ_WAIT");
+        if (value != nullptr && value[0] >= '0' && value[0] <= '2') {
+            result.mode = static_cast<u32>(value[0] - '0');
+            result.verify = value[1] == 'v';
+        }
+        return result;
+    }();
+    return mode;
+}
+
+// The guest memory the back writes for an executable method (the front's MME DMA reads wait for it).
+struct GuestWrite {
+    GPUVAddr address{};
+    u64 size{};
+    bool unknown{};
+};
+GuestWrite FrontGuestWrite(const Maxwell3D::Regs& regs, u32 method, u32 amount) {
+    constexpr u32 cb_data = MAXWELL3D_REG_INDEX(const_buffer.buffer);
+    if (method >= cb_data && method < cb_data + 16) {
+        return {regs.const_buffer.Address() + regs.const_buffer.offset, u64{amount} * sizeof(u32)};
+    }
+    if (method == MAXWELL3D_REG_INDEX(inline_data)) {
+        if (regs.launch_dma.memory_layout.Value() != Maxwell3D::Regs::LaunchDMA::Layout::Pitch) {
+            return {.unknown = true};
+        }
+        const u64 lines = std::max<u32>(regs.upload.line_count, 1);
+        return {regs.upload.dest.Address(),
+                (lines - 1) * regs.upload.dest.pitch + regs.upload.line_length_in};
+    }
+    if (method == MAXWELL3D_REG_INDEX(report_semaphore.query)) {
+        return {regs.report_semaphore.Address(), 16};
+    }
+    return {};
+}
+void NoteGuestWrite(VideoCommon::GpuSplit& split, const GuestWrite& write) {
+    if (write.unknown) {
+        split.NoteUnknownWrite();
+    } else if (write.size != 0) {
+        split.NoteMemoryWrite(write.address, write.size);
+    }
+}
+
 // EDEN_NX2_SPLIT_SKIP=0: send state writes that keep the register's value too.
 const bool g_front_skip_same = [] {
     const char* value = std::getenv("EDEN_NX2_SPLIT_SKIP");
@@ -1564,6 +1617,7 @@ void Maxwell3D::FrontNoteReport(VideoCommon::GpuSplit& split, const FrontState& 
         // 64 bits (a timestamp follows).
         split.NoteSemaphoreWrite(*device + 4, 0, payload);
     }
+    NoteGuestWrite(split, guest_write);
 }
 
 void Maxwell3D::FrontCallMethod(Core::System& system, VideoCommon::GpuSplit& split, u32 method,
@@ -2094,6 +2148,28 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
             write_out();
         }
         checked.reserve(words);
+    }
+    if (selective && wait.verify) [[unlikely]] {
+        std::vector<u32> waited(words);
+        memory_manager.ReadBlockUnsafe(source, waited.data(), read_bytes);
+        split.Drain(VideoCommon::DrainSite::FrontVerify);
+        u32 differ{};
+        for (u32 i = 0; i < words; ++i) {
+            differ += waited[i] != memory_manager.Read<u32>(source + u64{i} * sizeof(u32));
+        }
+        static u64 reads{};
+        static u64 mismatches{};
+        ++reads;
+        if (differ != 0 && (++mismatches <= 32 || (mismatches & 1023) == 0)) {
+            LOG_WARNING(HW_GPU,
+                        "MME DMA read of {} words at {:#x}: {} differ from a full drain ({} of {} "
+                        "reads)",
+                        words, source, differ, mismatches, reads);
+        }
+        if ((reads & 0x3ffff) == 0) {
+            LOG_INFO(HW_GPU, "MME DMA read verify: {} of {} reads differ from a full drain",
+                     mismatches, reads);
+        }
     }
     u32 changed{};
     for (u32 i = 0; i < words; ++i) {
