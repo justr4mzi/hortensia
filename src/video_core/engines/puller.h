@@ -72,7 +72,8 @@ public:
         BitField<8, 24, u32> syncpoint_id;
     };
 
-    /// Switch 2: a semaphore acquire this channel is suspended on.
+    /// Switch 2: a semaphore acquire this channel is suspended on, or (syncpoint set) a fence
+    /// acquire waiting for another channel to raise that syncpoint to value.
     struct PendingAcquire {
         GPUVAddr address;
         u32 value;

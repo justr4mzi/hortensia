@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <unordered_map>
@@ -229,6 +230,24 @@ bool WaitRejectApplied(u64 generation, std::chrono::milliseconds timeout) {
     return state.changed.wait_for(lock, timeout, [generation] {
         return !state.open || state.applied_generation >= generation;
     }) && state.applied_generation >= generation;
+}
+
+namespace {
+std::atomic<bool>& RenderPassBarriers() noexcept {
+    static std::atomic<bool> enabled{[] {
+        const char* const value = std::getenv("EDEN_NX2_RP_BARRIER");
+        return value != nullptr && value[0] == '1';
+    }()};
+    return enabled;
+}
+} // Anonymous namespace
+
+bool FullRenderPassBarriers() noexcept {
+    return RenderPassBarriers().load(std::memory_order_relaxed);
+}
+
+void SetFullRenderPassBarriers(bool enabled) noexcept {
+    RenderPassBarriers().store(enabled, std::memory_order_relaxed);
 }
 
 } // namespace VideoCore::Nx2Debug

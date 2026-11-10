@@ -17,6 +17,26 @@ EDEN_NX2_SPLIT=2
 # Batch GPU fence syncpoints to reduce host driver overhead and smooth frametimes.
 EDEN_NX2_FENCE_BATCH=1
 
+# --- Lichii-AMD defaults (tested with Ocarina of Time on an RX 9070 XT) ---
+# Submit native work to the GPU every 128 draws instead of 4096.
+EDEN_NX2_FLUSH_DRAWS=128
+
+# Full memory barrier before and after every render pass: Ocarina's minimap, hearts and dialogs
+# vanished on about half of the frames on AMD without it. Costs about 0.05 ms a frame.
+EDEN_NX2_RP_BARRIER=1
+
+# No emulated 40 MB/s card speed for game file reads (PR #278): Ocarina's movies keep up with
+# their sound.
+EDEN_NX2_FS_READ_MBPS=0
+
+# Leave off on AMD: preflushing GPU writes turns Ocarina's water and grass black.
+#EDEN_NX2_PREFLUSH=1
+
+# Draws of Switch 2 shaders with 4000+ instructions are skipped while the shader compiles, unless
+# that could lose data (on by default, also without asynchronous shaders). =0 turns it off if an
+# effect stays missing; a number sets another size threshold.
+#EDEN_NX2_HEAVY_SKIP=0
+
 # Leave buffer downloads disabled on Switch 2 (default): forcing downloads (=1) copies back
 # 90-220 MB/s of buffers CPU never touches, causing heavy mutex contention and dropping FPS by ~38-63%.
 #EDEN_NX2_BUFFER_DOWNLOADS=1

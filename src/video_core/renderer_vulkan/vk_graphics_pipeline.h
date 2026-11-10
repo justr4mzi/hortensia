@@ -399,6 +399,7 @@ private:
     std::vector<GraphicsPipeline*> transitions;
     u64 last_use_frame{};
     bool used{};
+    size_t source_words{};
 
     std::array<vk::ShaderModule, NUM_STAGES> spv_modules;
 

@@ -49,6 +49,7 @@
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
 #include "video_core/renderer_vulkan/mesh_fallback_limits.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/pipeline_eviction_policy.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 #include "video_core/renderer_vulkan/pipeline_shader_emission.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
@@ -384,6 +385,18 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
 /// compute on workers (shader cache v2)
 std::array<std::atomic<std::chrono::nanoseconds::rep>, 3> runtime_spirv_ns{};
 
+/// EDEN_NX2_HEAVY_SKIP counters for the 10 s report (GPU thread only): draws skipped, pipelines
+/// that had draws skipped, and heavy unbuilt draws held instead because the pipeline writes
+/// storage or the render target is not redrawn every frame.
+struct HeavySkipCounters {
+    u32 draws{};
+    u32 pipelines{};
+    u32 held_storage{};
+    u32 held_not_cleared{};
+    u32 held_new_target{};
+};
+HeavySkipCounters heavy_skip_counters;
+
 void AddRuntimeSpirvTime(size_t thread, std::chrono::steady_clock::time_point begin) {
     const auto elapsed = std::chrono::steady_clock::now() - begin;
     runtime_spirv_ns[thread].fetch_add(
@@ -662,6 +675,14 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         !profile.support_cooperative_hmma && device.IsCooperativeHmma16x16x16Supported();
     if (profile.support_cooperative_hmma_16x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
+    }
+    if (const size_t heavy_words = HeavySkipWords(); heavy_words != 0) {
+        LOG_INFO(Render_Vulkan,
+                 "Draws of Switch 2 pipelines with {} or more instructions are skipped while "
+                 "they build (EDEN_NX2_HEAVY_SKIP=0 turns it off)",
+                 heavy_words);
+    } else {
+        LOG_INFO(Render_Vulkan, "Heavy pipeline skip off (EDEN_NX2_HEAVY_SKIP=0)");
     }
 
     host_info = Shader::HostTranslateInfo{
@@ -1031,7 +1052,7 @@ int PipelineSkipMode() noexcept {
 } // Anonymous namespace
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
-
+    heavy_skipped_lookup = false;
     if (!RefreshStages(graphics_key.unique_hashes)) {
         current_pipeline = nullptr;
         current_pipeline_is_variant = false;
@@ -2276,6 +2297,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
         "precache_end", fmt::format("built={} seconds={:.3f}", total_built, seconds));
 }
 
+
 void PipelineCache::QueueVulkanPipelineCacheFlush() {
     if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty()) {
         return;
@@ -2514,6 +2536,12 @@ void PipelineCache::TickFrame() {
     constexpr u64 EvictCheckFrames = 600;
     if (frame_count % EvictCheckFrames == 0) {
         EvictUnusedPipelines();
+        std::erase_if(target_frames, [this](const auto& entry) {
+            return entry.second.last + EvictCheckFrames < frame_count;
+        });
+        std::erase_if(cleared_frames, [this](const auto& entry) {
+            return entry.second + EvictCheckFrames < frame_count;
+        });
     }
 }
 
@@ -2541,23 +2569,23 @@ void PipelineCache::EvictUnusedPipelines() {
     const u64 tick = scheduler.CurrentTick();
     // ~0.9 GB of driver memory at ~0.45 MB each.
     constexpr size_t MaxUnusedPrebuiltPipelines = 2000;
-    size_t kept_prebuilt = 0;
+    const std::vector<size_t> selected =
+        SelectPipelinesToEvict(candidates, MaxUnusedPrebuiltPipelines, max_evicted);
+    if (selected.empty()) {
+        return;
+    }
+    std::vector<GraphicsPipeline*> doomed;
+    doomed.reserve(selected.size());
+    for (const size_t index : selected) {
+        doomed.push_back(pipelines[index]);
+    }
+    std::ranges::sort(doomed);
+    const u64 tick = scheduler.CurrentTick();
     size_t evicted = 0;
     size_t busy = 0;
     for (auto it = graphics_cache.begin(); it != graphics_cache.end();) {
         GraphicsPipeline* const pipeline = it->second.get();
-        if (pipeline == nullptr || pipeline == current_pipeline || !pipeline->IsBuilt() ||
-            pipeline->LastUse() >= cutoff) {
-            ++it;
-            continue;
-        }
-        // A pipeline built from the disk cache at boot that no draw has used yet stays, up to a
-        // budget: evicting it throws the prebuild away, and the game translates it again on the
-        // GPU thread when it reaches that content (OoT: 1174 of 1346 evicted on the title screen,
-        // 684 rebuilt in 10 s on entering the field). Past the budget they go like the rest, so a
-        // large cache can't hold their driver memory for the whole session.
-        if (!pipeline->WasUsed() && kept_prebuilt < MaxUnusedPrebuiltPipelines) {
-            ++kept_prebuilt;
+        if (!std::ranges::binary_search(doomed, pipeline)) {
             ++it;
             continue;
         }
@@ -2591,11 +2619,71 @@ void PipelineCache::EvictUnusedPipelines() {
 }
 
 /// Returns `pipeline` when it is built or the current draw must wait for it, and nullptr when the
-/// draw may be skipped while it builds (asynchronous shaders; native draws only with
-/// EDEN_NX2_ASYNC_DISCARD=1). Each nullptr returned for an unbuilt pipeline is counted for the log.
-GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexcept {
+/// draw may be skipped while it builds: a heavy native pipeline (HeavySkipWords), or with
+/// asynchronous shaders the legacy heuristic and native draws by the native_async_draws setting or
+/// EDEN_NX2_ASYNC_DISCARD=1. Each nullptr returned for an unbuilt pipeline is counted for the log.
+GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) {
+    static const size_t heavy_skip_words = HeavySkipWords();
+    const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
+    // Tracked on every native draw so a target's history is known before a heavy pipeline needs
+    // it.
+    const bool redrawn = heavy_skip_words != 0 && native && CurrentTargetIsRedrawn();
     if (pipeline->IsBuilt()) {
+        if (pipeline->heavy_skipped_draws != 0) {
+            LOG_INFO(Render_Vulkan,
+                     "Nx2Perf heavy_skip: {:016x} ({} instructions) built, {} draws skipped over "
+                     "{:.0f} ms",
+                     pipeline->KeyHash(), pipeline->SourceWords(), pipeline->heavy_skipped_draws,
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - pipeline->heavy_skip_begin)
+                         .count());
+            pipeline->heavy_skipped_draws = 0;
+        }
         return pipeline;
+    }
+    pipeline->hold_reason = !native || heavy_skip_words == 0 ? 0 : 1;
+    {
+        const auto& regs = maxwell3d->regs;
+        const bool color = regs.rt_control.count > 0 &&
+                           regs.rt[0].format != Tegra::RenderTargetFormat::NONE;
+        pipeline->hold_target_color = color;
+        pipeline->hold_target_width = color ? regs.rt[0].width : regs.zeta_size.width;
+        pipeline->hold_target_height = color ? regs.rt[0].height : regs.zeta_size.height;
+    }
+    // A heavy pipeline takes the driver 0.5-5 s to build. Its draws are skipped meanwhile, with or
+    // without asynchronous shaders, unless skipping would lose data for good. A draw kept that way
+    // waits, or with asynchronous shaders goes to the native_async_draws setting like any other.
+    switch (DecideHeavyPending(
+        {
+            .native = native,
+            .source_words = pipeline->SourceWords(),
+            .keeps_data = pipeline->WritesStorage() || pipeline->UsesTransformFeedback(),
+            .target_redrawn = redrawn,
+            .target_not_cleared = last_target_reason == TargetReason::NotCleared,
+        },
+        heavy_skip_words)) {
+    case HeavyPendingAction::NotHeavy:
+        break;
+    case HeavyPendingAction::HoldStorage:
+        pipeline->hold_reason = 2;
+        ++heavy_skip_counters.held_storage;
+        break;
+    case HeavyPendingAction::HoldNotCleared:
+        pipeline->hold_reason = 3;
+        ++heavy_skip_counters.held_not_cleared;
+        break;
+    case HeavyPendingAction::HoldNewTarget:
+        pipeline->hold_reason = 4;
+        ++heavy_skip_counters.held_new_target;
+        break;
+    case HeavyPendingAction::Skip:
+        if (pipeline->heavy_skipped_draws++ == 0) {
+            pipeline->heavy_skip_begin = std::chrono::steady_clock::now();
+            ++heavy_skip_counters.pipelines;
+        }
+        ++heavy_skip_counters.draws;
+        heavy_skipped_lookup = true;
+        return nullptr;
     }
     if (!use_asynchronous_shaders) {
         return pipeline;
@@ -2612,7 +2700,6 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
         return enabled;
     }();
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
-    const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
     // The environment variable wins over the setting; the setting is read per call.
     NativePendingMode mode = NativePendingMode::Wait;
     if (native) {
@@ -2749,6 +2836,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         }
         Shader::Environment& env{*envs[env_index]};
         ++env_index;
+        source_words += env.CodeWords();
         if (index == static_cast<size_t>(Maxwell::ShaderType::Geometry) &&
             !device.IsGeometryShaderSupported() && env.IsNativeProgram()) {
             // A native (Switch 2) geometry program on a device without geometry shaders: the

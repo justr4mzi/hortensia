@@ -67,6 +67,7 @@ add_executable(tests
     video_core/maxwell_permute_lod.cpp
     video_core/submission_policy.cpp
     video_core/native_pending_policy.cpp
+    video_core/heavy_skip_policy.cpp
     video_core/framebuffer_clear_layers.cpp
     video_core/framebuffer_limits.cpp
     video_core/unbacked_fallback.cpp
@@ -249,6 +250,17 @@ target_link_libraries(tests PRIVATE common core audio_core input_common video_co
 target_link_libraries(tests PRIVATE ${PLATFORM_LIBRARIES} Catch2::Catch2WithMain Threads::Threads)
 if (TARGET dynarmic)
     target_link_libraries(tests PRIVATE dynarmic)
+endif()
+
+if (MSVC)
+    # src/CMakeLists.txt makes these MSVC warnings errors for the emulator. The tests are only
+    # checked with clang and GCC, so they stay warnings here.
+    target_compile_options(tests PRIVATE
+        /w44062 /w44189 /w44265 /w44388 /w44389 /w44456 /w44457 /w44458 /w44459
+        /w44547 /w44549 /w44555 /w44826 /w45038 /w45233 /w45245)
+    # Fixtures such as maxwell_fast_method.cpp's hold a whole system and two Maxwell3D engines on
+    # the stack, past the 1 MiB main thread stack Windows gives by default.
+    target_link_options(tests PRIVATE /STACK:16777216)
 endif()
 
 if (TARGET dynarmic::dynarmic)

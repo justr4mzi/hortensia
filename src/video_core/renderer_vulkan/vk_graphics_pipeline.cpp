@@ -1503,11 +1503,26 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         scheduler.Record([this](vk::CommandBuffer) {
             const VideoCommon::Nx2Profile::Scope scope{VideoCommon::Nx2Profile::Zone::PipelineWait};
             const auto begin = std::chrono::steady_clock::now();
-            build->Wait(!worker_only_build);
-            hold_time_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                       std::chrono::steady_clock::now() - begin)
-                                       .count(),
-                                   std::memory_order::relaxed);
+            // Claim the build here even for worker-only builds: the queue is FIFO, so a held
+            // draw otherwise waits behind every pipeline queued before it (title 1: 1-2 s), and
+            // with EDEN_NX2_HEAVY_SKIP the workers are busy with skipped heavy builds.
+            build->Wait(true);
+            const auto held = std::chrono::steady_clock::now() - begin;
+            hold_time_ns.fetch_add(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(held).count(),
+                std::memory_order::relaxed);
+            if (held > std::chrono::milliseconds{100}) {
+                // Which held draws still freeze the game, and why they were not skipped.
+                static constexpr std::array<const char*, 6> reasons{
+                    "not native or skip off", "under the size limit", "writes storage",
+                    "target not cleared this frame", "new small target", "skipped earlier"};
+                LOG_INFO(Render_Vulkan,
+                         "Nx2Perf held_draw: {:016x} ({} instructions) held {:.0f} ms: {} ({} {}x{})",
+                         key.Hash(), source_words,
+                         std::chrono::duration<double, std::milli>(held).count(),
+                         reasons[std::min<size_t>(reason, reasons.size() - 1)],
+                         target_color ? "color" : "depth", target_width, target_height);
+            }
         });
     }
     const bool is_rescaling{texture_cache.IsRescaling()};

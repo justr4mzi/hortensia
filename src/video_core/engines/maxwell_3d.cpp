@@ -965,6 +965,13 @@ void Maxwell3D::ProcessQueryGet() {
 }
 
 void Maxwell3D::ProcessQueryCondition() {
+    // Diagnostic (EDEN_NX2_IGNORE_RENDER_ENABLE=1): run every draw, whatever the guest's
+    // render-enable condition says.
+    static const bool ignore_condition = std::getenv("EDEN_NX2_IGNORE_RENDER_ENABLE") != nullptr;
+    if (ignore_condition) {
+        execute_on = true;
+        return;
+    }
     if (rasterizer->AccelerateConditionalRendering()) {
         execute_on = true;
         return;
@@ -1224,6 +1231,11 @@ struct Maxwell3D::FrontState {
     bool sink_pending{};
     u32 split_start{}; ///< GpuSplit::Starts() when this copy was made
     bool skip_same{}; ///< SkipSameValueWrites() && FrontSkipSame(), read once
+    /// The inline upload being sent, when its words land linearly (FrontDmaRead).
+    bool upload_known{};
+    u64 upload_device{};
+    u32 upload_size{};
+    u32 upload_offset{};
     /// The back's draw manager is in an instance loop (DrawMode::Instance): draw.end does nothing.
     bool instance_loop{};
 

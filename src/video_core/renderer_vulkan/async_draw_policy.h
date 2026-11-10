@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdlib>
 
 #include "common/common_types.h"
 
@@ -18,9 +19,10 @@ namespace Vulkan {
 /// @return True when the draw may be skipped.
 constexpr bool CanDiscardPendingDraw(bool native, bool depth_enabled, u32 index_count,
                                     u32 vertex_count, bool discard_native = false) {
-    // Native draws can produce persistent resources, even with depth enabled. They are only
-    // skipped when the user opts in (EDEN_NX2_ASYNC_DISCARD=1), trading a possible missing
-    // effect for no stall while a new pipeline builds.
+    // Native draws can produce persistent resources, even with depth enabled. This heuristic only
+    // skips them when the user opts in (EDEN_NX2_ASYNC_DISCARD=1 or the native_async_draws
+    // setting), trading a possible missing effect for no stall while a new pipeline builds.
+    // Heavy pipelines are judged first by DecideHeavyPending, with its own guards.
     if (native && !discard_native) {
         return false;
     }

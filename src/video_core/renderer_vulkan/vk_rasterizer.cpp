@@ -78,6 +78,10 @@
 #include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
 
+namespace Tegra::Engines {
+extern std::atomic<u32> g_nx2_suppressed_draws;
+}
+
 namespace Vulkan {
 
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
@@ -86,6 +90,27 @@ using VideoCommon::ImageViewType;
 
 
 namespace {
+
+/// Diagnostic (EDEN_NX2_WATCH_SHADERS=<hash>,...): logs, per presented frame, how many draws ran
+/// with one of these shaders and how many draws the render-enable condition suppressed.
+const std::vector<u64>& WatchedShaders() {
+    static const std::vector<u64> hashes = [] {
+        std::vector<u64> result;
+        const char* value = std::getenv("EDEN_NX2_WATCH_SHADERS");
+        while (value != nullptr && *value != '\0') {
+            char* end = nullptr;
+            const u64 hash = std::strtoull(value, &end, 16);
+            if (end == value) {
+                break;
+            }
+            result.push_back(hash);
+            value = *end == ',' ? end + 1 : end;
+        }
+        return result;
+    }();
+    return hashes;
+}
+std::atomic<u32> g_watched_draws{0};
 
 /// read_gpu_memory: the first address space (the bound channel's first) that maps the whole range,
 /// read as the GPU reads it, without flushing GPU caches.
@@ -821,7 +846,12 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         fast_draw_stats.pipeline_mismatches += verify_pipeline != pipeline ? 1 : 0;
     }
     if (!pipeline) {
-        report_failure("no pipeline");
+        if (pipeline_cache.HeavySkippedLookup()) {
+            // Skipped on purpose while a heavy pipeline builds (counted by Nx2Perf heavy_skip).
+            TraceDrawFailure("heavy pipeline building");
+        } else {
+            report_failure("no pipeline");
+        }
         TraceRenderState(is_indexed, "no-pipeline", nullptr);
         // Mesh emulation survey: how many task/mesh draws a device without
         // VK_EXT_mesh_shader drops, how many are indirect and how many groups they launch.
@@ -1916,6 +1946,15 @@ void RasterizerVulkan::Clear(u32 layer_count) {
     const bool use_stencil = regs.clear_surface.S;
     if (!use_color && !use_depth && !use_stencil) {
         return;
+    }
+    {
+        const u32 clear_rt = regs.clear_surface.RT;
+        const u64 color_address = use_color && clear_rt < Maxwell::NumRenderTargets
+                                      ? regs.rt[clear_rt].Address()
+                                      : 0;
+        const u64 depth_address =
+            (use_depth || use_stencil) && regs.zeta_enable != 0 ? regs.zeta.Address() : 0;
+        pipeline_cache.NoteClear(color_address, depth_address);
     }
 
     std::scoped_lock lock{texture_cache.mutex};
@@ -3260,6 +3299,12 @@ void RasterizerVulkan::FrameDumpPass(const Framebuffer* framebuffer) {
 }
 
 void RasterizerVulkan::TickFrame() {
+    if (!WatchedShaders().empty()) {
+        static u64 watch_frame{};
+        LOG_INFO(Render_Vulkan, "Watch frame {}: {} watched draws, {} draws suppressed",
+                 ++watch_frame, g_watched_draws.exchange(0, std::memory_order_relaxed),
+                 Tegra::Engines::g_nx2_suppressed_draws.exchange(0, std::memory_order_relaxed));
+    }
     if (VideoCore::Nx2Debug::HasRequests()) {
         if (auto capture = VideoCore::Nx2Debug::TakeCapture()) {
             frame_dump.Arm(std::move(capture->directory), capture->sampled, capture->buffers,
