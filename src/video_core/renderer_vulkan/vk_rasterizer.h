@@ -6,6 +6,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
@@ -393,6 +394,11 @@ private:
     bool frame_present_skipped{};
     u64 frameskip_dropped_draws = 0;
     u32 frameskip_logged_interval = 0;
+    /// EDEN_NX2_FRAMESKIP_AUTO=<fps>: drop a frame only after one that missed that rate, never
+    /// two in a row.
+    std::chrono::steady_clock::time_point frameskip_last_tick{};
+    bool frameskip_previous_dropped{};
+    u64 frameskip_dropped_frames = 0;
     u32 render_trace_draws = 0;
     u32 render_trace_clears = 0;
     bool pending_native_work{};

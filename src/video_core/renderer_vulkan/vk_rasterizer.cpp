@@ -3985,16 +3985,26 @@ void RasterizerVulkan::TickFrame() {
                     skipped[1], skipped[2]);
         return skipped;
     }();
-    frame_draws_skipped = frame_clears_skipped = frame_present_skipped = false;
+    const u32 frameskip_auto_fps = Settings::PerTitleEnv("EDEN_NX2_FRAMESKIP_AUTO");
+    const auto frame_end = std::chrono::steady_clock::now();
+    const auto frame_time = frame_end - std::exchange(frameskip_last_tick, frame_end);
+    bool dropped = false;
     if (frameskip_interval > 1) {
-        const bool dropped = render_trace_frame % frameskip_interval != 0;
-        frame_draws_skipped = dropped && frameskip_parts[0];
-        frame_clears_skipped = dropped && frameskip_parts[1];
-        frame_present_skipped = dropped && frameskip_parts[2];
-        if (render_trace_frame % 600 == 0) {
-            LOG_INFO(Render_Vulkan, "Frameskip: {} draws dropped over the last 600 frames",
-                     std::exchange(frameskip_dropped_draws, 0));
-        }
+        dropped = render_trace_frame % frameskip_interval != 0;
+    } else if (frameskip_auto_fps != 0) {
+        // A drawn frame that took 5 % longer than the target rate lets the next one go undrawn.
+        const std::chrono::nanoseconds late{1'050'000'000LL / frameskip_auto_fps};
+        dropped = !frameskip_previous_dropped && frame_time > late;
+    }
+    frameskip_previous_dropped = dropped;
+    frameskip_dropped_frames += dropped ? 1 : 0;
+    frame_draws_skipped = dropped && frameskip_parts[0];
+    frame_clears_skipped = dropped && frameskip_parts[1];
+    frame_present_skipped = dropped && frameskip_parts[2];
+    if ((frameskip_interval > 1 || frameskip_auto_fps != 0) && render_trace_frame % 600 == 0) {
+        LOG_INFO(Render_Vulkan, "Frameskip: {} frames and {} draws dropped over the last 600",
+                 std::exchange(frameskip_dropped_frames, 0),
+                 std::exchange(frameskip_dropped_draws, 0));
     }
     draw_counter = 0;
     pending_native_work = false;
