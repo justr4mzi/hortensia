@@ -395,10 +395,11 @@ private:
     bool frame_present_skipped{};
     u64 frameskip_dropped_draws = 0;
     u32 frameskip_logged_interval = 0;
-    /// EDEN_NX2_FRAMESKIP_AUTO=<fps>: drop a frame only after one that missed that rate, never
-    /// two in a row.
+    /// EDEN_NX2_FRAMESKIP_AUTO=<fps>: drop a frame only after one that missed that rate, timed
+    /// from a drawn frame, so at most one frame in three.
     std::chrono::steady_clock::time_point frameskip_last_tick{};
     bool frameskip_previous_dropped{};
+    bool frameskip_timed_from_dropped{};
     u64 frameskip_dropped_frames = 0;
     /// Frame each render target (address, size and format) was last drawn to. A dropped frame
     /// only drops work on targets drawn the frame before: a target drawn once (a texture the
