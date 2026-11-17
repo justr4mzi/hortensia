@@ -283,6 +283,17 @@ void MaxwellDMA::CopyBlockLinearToPitch() {
     copy_info.length_y = regs.line_count;
     auto& accelerate = rasterizer->AccessAccelerateDMA();
     if (accelerate.ImageToBuffer(copy_info, src_operand, dst_operand)) {
+        // After an accelerated image-to-buffer copy on Switch 2, flush the destination to guest
+        // memory before releasing the copy engine semaphore unless EDEN_NX2_DMA_READBACK_FLUSH=0.
+        static const bool flush_readbacks = [] {
+            const char* value = std::getenv("EDEN_NX2_DMA_READBACK_FLUSH");
+            return value == nullptr || value[0] != '0';
+        }();
+        if (flush_readbacks && Tegra::g_nx2_ampere.load(std::memory_order_relaxed)) {
+            memory_manager.FlushRegion(dst_operand.address,
+                                       static_cast<size_t>(dst_operand.pitch) * regs.line_count,
+                                       VideoCommon::CacheType::BufferCache);
+        }
         return;
     }
 
