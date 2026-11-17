@@ -6,6 +6,8 @@
 #include <version>
 #if __cpp_lib_chrono >= 201907L
 #include <chrono>
+#include <cstdlib>
+#include <string>
 #include <exception>
 #include <stdexcept>
 #endif
@@ -269,6 +271,31 @@ void SetCurrentProgramID(u64 program_id) {
 
 u64 GetCurrentProgramID() {
     return current_program_id;
+}
+
+u32 PerTitleEnv(const char* name) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return 0;
+    }
+    const u64 program_id = current_program_id;
+    u32 fallback = 0;
+    std::string_view list{value};
+    while (!list.empty()) {
+        const size_t comma = list.find(',');
+        const std::string entry{list.substr(0, comma)};
+        list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+        const size_t colon = entry.find(':');
+        if (colon == std::string::npos) {
+            fallback = static_cast<u32>(std::strtoul(entry.c_str(), nullptr, 10));
+            continue;
+        }
+        const u64 title = std::strtoull(entry.substr(0, colon).c_str(), nullptr, 16);
+        if (title == program_id) {
+            return static_cast<u32>(std::strtoul(entry.c_str() + colon + 1, nullptr, 10));
+        }
+    }
+    return fallback;
 }
 
 static bool current_program_is_switch2 = false;

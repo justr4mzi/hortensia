@@ -156,6 +156,11 @@ public:
     void TiledCacheBarrier() override;
     void FlushCommands() override;
     void TickFrame() override;
+
+    /// True while EDEN_NX2_FRAMESKIP drops the current frame's present.
+    [[nodiscard]] bool FramePresentSkipped() const noexcept {
+        return frame_present_skipped;
+    }
     bool AccelerateConditionalRendering() override;
     bool HasDrawTransformFeedback() override;
     bool AccelerateSurfaceCopy(const Tegra::Engines::Fermi2D::Surface& src,
@@ -379,6 +384,15 @@ private:
         std::array<f32, 280 * 12> bones{};
     } oot_actor, oot_previous_actor;
     u64 render_trace_frame = 0;
+    /// EDEN_NX2_FRAMESKIP=<n> (2 to 4): one frame in n is drawn, the others only run their
+    /// compute work, copies and queries.
+    /// EDEN_NX2_FRAMESKIP_PARTS picks what a dropped frame skips: any of draws, clears and
+    /// present, comma separated (all three by default).
+    bool frame_draws_skipped{};
+    bool frame_clears_skipped{};
+    bool frame_present_skipped{};
+    u64 frameskip_dropped_draws = 0;
+    u32 frameskip_logged_interval = 0;
     u32 render_trace_draws = 0;
     u32 render_trace_clears = 0;
     bool pending_native_work{};

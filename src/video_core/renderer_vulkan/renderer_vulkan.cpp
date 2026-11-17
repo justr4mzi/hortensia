@@ -228,6 +228,12 @@ try
         turbo_mode.emplace(instance, dld);
         scheduler.RegisterOnSubmit([this] { turbo_mode->QueueSubmitted(); });
     }
+    if (rasterizer.FramePresentSkipped()) {
+        // The screen keeps the last frame shown.
+        gpu.RendererFrameEndNotify();
+        rasterizer.TickFrame();
+        return;
+    }
 
 #ifdef HAS_RESHADE
     VideoCore::FxChain::Instance().LoadFromSettings();

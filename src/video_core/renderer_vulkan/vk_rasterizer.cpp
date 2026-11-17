@@ -1059,6 +1059,14 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         Profile::Scope scope{Profile::Zone::PipelineLookup};
         return pipeline_cache.CurrentGraphicsPipeline();
     }()};
+    // A skipped frame still runs draws whose shaders store to memory or that capture transform
+    // feedback: the game reads what they write (Mario Tennis Fever panicked in its menu).
+    if (pipeline && frame_draws_skipped && !pipeline->WritesMemory() &&
+        maxwell3d->regs.transform_feedback_enabled == 0) {
+        submitted = true;
+        ++frameskip_dropped_draws;
+        return;
+    }
     if (!pipeline) {
         report_failure("no pipeline");
         TraceRenderState(is_indexed, "no-pipeline", nullptr);
@@ -2051,6 +2059,10 @@ void RasterizerVulkan::CollectIndirectTrace() {
 }
 
 void RasterizerVulkan::DrawTexture() {
+    if (frame_draws_skipped) {
+        ++frameskip_dropped_draws;
+        return;
+    }
 
     SCOPE_EXIT {
         gpu.TickWork();
@@ -2182,6 +2194,9 @@ bool RasterizerVulkan::ClearVolumeSlices(const Framebuffer* framebuffer, u32 fir
 
 void RasterizerVulkan::Clear(u32 layer_count) {
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Clear};
+    if (frame_clears_skipped) {
+        return;
+    }
     if (Tegra::Engines::g_nx2_trace_draws_after_upscale > 0) {
         const auto& regs = maxwell3d->regs;
         LOG_INFO(HW_GPU, "after upscale: clear rt0 {:#x} {}x{} fmt {:#x} surface {:#x} colour {} {} {} {}",
@@ -3953,6 +3968,34 @@ void RasterizerVulkan::TickFrame() {
         trace_sample_frame = trace_frame < 4 || trace_rate.Ready(now);
     }
     ComputePipeline::TickUpscalerTrace();
+    // Read again each frame: on Android one process runs every game launched.
+    const u32 frameskip_interval =
+        std::min<u32>(Settings::PerTitleEnv("EDEN_NX2_FRAMESKIP"), 4);
+    if (frameskip_interval != std::exchange(frameskip_logged_interval, frameskip_interval)) {
+        LOG_WARNING(Render_Vulkan, "Frameskip: drawing one frame in {}",
+                    std::max<u32>(frameskip_interval, 1));
+    }
+    static const auto frameskip_parts = [] {
+        const char* value = std::getenv("EDEN_NX2_FRAMESKIP_PARTS");
+        const std::string_view parts = value != nullptr ? value : "draws,clears,present";
+        const std::array<bool, 3> skipped{parts.find("draws") != std::string_view::npos,
+                                          parts.find("clears") != std::string_view::npos,
+                                          parts.find("present") != std::string_view::npos};
+        LOG_WARNING(Render_Vulkan, "Frameskip parts: draws {} clears {} present {}", skipped[0],
+                    skipped[1], skipped[2]);
+        return skipped;
+    }();
+    frame_draws_skipped = frame_clears_skipped = frame_present_skipped = false;
+    if (frameskip_interval > 1) {
+        const bool dropped = render_trace_frame % frameskip_interval != 0;
+        frame_draws_skipped = dropped && frameskip_parts[0];
+        frame_clears_skipped = dropped && frameskip_parts[1];
+        frame_present_skipped = dropped && frameskip_parts[2];
+        if (render_trace_frame % 600 == 0) {
+            LOG_INFO(Render_Vulkan, "Frameskip: {} draws dropped over the last 600 frames",
+                     std::exchange(frameskip_dropped_draws, 0));
+        }
+    }
     draw_counter = 0;
     pending_native_work = false;
     pipeline_cache.TickFrame();
