@@ -13,6 +13,10 @@
 #include <optional>
 #include <utility>
 
+#if defined(_M_X64) || defined(__x86_64__)
+#include <immintrin.h>
+#endif
+
 #include "common/assert.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -204,9 +208,22 @@ struct GPU::Impl {
     /// Returns once the request of `fence` ran, or once the GPU threads stopped for good
     /// (NotifyShutdown): then it never runs.
     void WaitForSyncOperation(const u64 fence) {
+        if (current_sync_fence.load(std::memory_order_acquire) >= fence || sync_requests_dropped) {
+            return;
+        }
+        for (int i = 0; i < 200; ++i) {
+#if defined(_M_X64) || defined(__x86_64__)
+            _mm_pause();
+#else
+            std::this_thread::yield();
+#endif
+            if (current_sync_fence.load(std::memory_order_acquire) >= fence || sync_requests_dropped) {
+                return;
+            }
+        }
         std::unique_lock lck{sync_request_mutex};
         sync_request_cv.wait(lck, [this, fence] {
-            return CurrentSyncRequestFence() >= fence || sync_requests_dropped;
+            return current_sync_fence.load(std::memory_order_acquire) >= fence || sync_requests_dropped;
         });
     }
 
