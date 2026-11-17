@@ -21,6 +21,7 @@ class System;
 namespace AudioCore::Sink {
 
 constexpr char auto_device_name[] = "auto";
+constexpr char no_input_device_name[] = "none";
 
 /**
  * This class is an interface for an audio sink, holds multiple output streams and is responsible

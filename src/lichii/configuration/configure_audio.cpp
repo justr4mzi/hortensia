@@ -295,6 +295,8 @@ void ConfigureAudio::UpdateAudioDevices(int sink_index) {
     if (input_device_combo_box) {
         input_device_combo_box->clear();
         input_device_combo_box->addItem(QString::fromUtf8(AudioCore::Sink::auto_device_name));
+        input_device_combo_box->addItem(
+            QString::fromUtf8(AudioCore::Sink::no_input_device_name));
         for (const auto& device : AudioCore::Sink::GetDeviceListForSink(sink_id, true)) {
             input_device_combo_box->addItem(QString::fromStdString(device));
         }
