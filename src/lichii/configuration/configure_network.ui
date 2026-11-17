@@ -45,7 +45,7 @@
         <item row="3" column="0" colspan="2">
          <widget class="QCheckBox" name="lan_play">
           <property name="toolTip">
-           <string>Plays local wireless games with other Lichii instances or ldn_mitm consoles on the same network, without a room. If you are in a room when a game starts local play, the room is used instead.</string>
+           <string>Plays local wireless games with other Hortensia instances or ldn_mitm consoles on the same network, without a room. If you are in a room when a game starts local play, the room is used instead.</string>
           </property>
           <property name="text">
            <string>LAN play</string>
@@ -130,7 +130,7 @@
         <item row="5" column="0" colspan="3">
          <widget class="QCheckBox" name="redirect_loopback_only">
           <property name="toolTip">
-           <string>Other host names don't resolve, and games can reach only this PC and the server address. Games get an id token Lichii makes for the current user instead of their Nextendo one. Multiplayer rooms are not affected.</string>
+           <string>Other host names don't resolve, and games can reach only this PC and the server address. Games get an id token Hortensia makes for the current user instead of their Nextendo one. Multiplayer rooms are not affected.</string>
           </property>
           <property name="text">
            <string>Block all other network access</string>

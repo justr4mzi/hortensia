@@ -62,11 +62,12 @@ enum class Theme {
     MidnightBlue,
     MidnightBlueColorful,
     LichiiDark,
+    Hortensia,
 };
 
 static constexpr Theme default_theme{Theme::LichiiDark};
 
-using Themes = std::array<std::pair<const char*, const char*>, 7>;
+using Themes = std::array<std::pair<const char*, const char*>, 8>;
 extern const Themes themes;
 
 struct GameDir {

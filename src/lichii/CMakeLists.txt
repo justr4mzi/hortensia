@@ -259,10 +259,10 @@ add_executable(lichii
     game/carousel.h game/carousel.cpp
 )
 
-set_target_properties(lichii PROPERTIES OUTPUT_NAME "lichii")
+set_target_properties(lichii PROPERTIES OUTPUT_NAME "hortensia")
 
 # Shipped next to the executable: the NX2 switches a GUI launch cannot set another way. Read at
-# startup (LoadNx2Switches in main.cpp); a user copy in %APPDATA%\lichii overrides it.
+# startup (LoadNx2Switches in main.cpp); a user copy in %APPDATA%\hortensia overrides it.
 add_custom_command(TARGET lichii POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${PROJECT_SOURCE_DIR}/dist/nx2_switches.txt" "$<TARGET_FILE_DIR:lichii>/nx2_switches.txt"
@@ -387,12 +387,12 @@ target_sources(lichii
 if (APPLE)
     target_sources(lichii PRIVATE util/macos_sleep.cpp util/macos_sleep.h)
 
-    # Use the supplied Lichii artwork for all macOS generators.
+    # Use the supplied Hortensia artwork for all macOS generators.
     set(_dist "${CMAKE_SOURCE_DIR}/dist")
-    set(_icons "${_dist}/lichii.icns")
+    set(_icons "${_dist}/hortensia.icns")
     if (CMAKE_GENERATOR MATCHES "Xcode")
         set_target_properties(lichii PROPERTIES
-            MACOSX_BUNDLE_ICON_FILE lichii.icns
+            MACOSX_BUNDLE_ICON_FILE hortensia.icns
             # Also force xcode to manage signing for us.
             XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED ON
             XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED ON)

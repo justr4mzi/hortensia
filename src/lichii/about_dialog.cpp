@@ -27,13 +27,13 @@ AboutDialog::AboutDialog(QWidget* parent)
 
     ui->setupUi(this);
     // Try and request the icon from Qt theme (Linux?)
-    const QIcon lichii_logo = QIcon::fromTheme(QStringLiteral("io.github.zortos293.lichii"),
-                                           QIcon(QStringLiteral(":/img/lichii.ico")));
+    const QIcon lichii_logo = QIcon::fromTheme(QStringLiteral("io.github.justr4mzi.hortensia"),
+                                           QIcon(QStringLiteral(":/img/hortensia.ico")));
     if (!lichii_logo.isNull()) {
         ui->labelLogo->setPixmap(lichii_logo.pixmap(112));
     }
-    ui->labelLichii->setPixmap(QIcon(QStringLiteral(":/img/lichii_wordmark.png")).pixmap(113, 48));
-    ui->labelLichii->setAccessibleName(QStringLiteral("Lichii"));
+    ui->labelLichii->setPixmap(QIcon(QStringLiteral(":/img/hortensia_wordmark.png")).pixmap(160, 48));
+    ui->labelLichii->setAccessibleName(QStringLiteral("Hortensia"));
     ui->verticalLayout_3->setContentsMargins(32, 28, 32, 20);
     ui->horizontalLayout->setSpacing(32);
     ui->verticalLayout->setSpacing(10);

@@ -37,7 +37,7 @@ static const UISettings::Shortcut* DefaultHotkey(const QStandardItem& action) {
 static QString HotkeyDisplayName(const QString& action) {
     // Keep the stored shortcut key compatible with existing configurations.
     if (action == QStringLiteral("Exit Eglantine")) {
-        return QCoreApplication::translate("Hotkeys", "Exit Lichii");
+        return QCoreApplication::translate("Hotkeys", "Exit Hortensia");
     }
     return QCoreApplication::translate("Hotkeys", qPrintable(action));
 }

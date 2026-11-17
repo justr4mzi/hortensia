@@ -6,7 +6,7 @@ on:
       publish_release:
         description: Publish the binaries as a GitHub release
         type: boolean
-        default: true
+        default: false
       nsight_aftermath:
         description: Build Windows with Nsight Aftermath GPU crash dumps (test builds only, no NVIDIA files shipped)
         type: boolean
@@ -59,7 +59,7 @@ jobs:
           exit 1
 
       - name: Prepare release tag
-        if: github.event_name == 'push' || inputs.publish_release
+        if: inputs.publish_release == true
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -471,9 +471,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x build/release/bin/lichii
-          test -x build/release/bin/eden-cli
-          strip build/release/bin/lichii build/release/bin/eden-cli
+          test -x build/release/bin/hortensia
+          test -x build/release/bin/hortensia-cli
+          strip build/release/bin/hortensia build/release/bin/hortensia-cli
           tools="$RUNNER_TEMP/linuxdeploy"
           mkdir -p "$tools"
           arch=$(uname -m)   # aarch64 or x86_64
@@ -482,9 +482,9 @@ jobs:
           curl -fsSL -o "$tools/linuxdeploy-plugin-qt-$arch.AppImage" \
           https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$arch.AppImage
           chmod +x "$tools"/*.AppImage
-          # The desktop file names its icon io.github.zortos293.lichii.
-          icon="$RUNNER_TEMP/io.github.zortos293.lichii.png"
-          cp dist/lichii.png "$icon"
+          # The desktop file names its icon io.github.justr4mzi.hortensia.
+          icon="$RUNNER_TEMP/io.github.justr4mzi.hortensia.png"
+          cp dist/hortensia.png "$icon"
           export APPIMAGE_EXTRACT_AND_RUN=1
           export QMAKE="$QT_ROOT_DIR/bin/qmake"
           # Include Wayland platform plugins and their graphics/shell integrations.
@@ -492,7 +492,7 @@ jobs:
           export EXTRA_PLATFORM_PLUGINS='libqwayland-egl.so;libqwayland-generic.so'
           # Embedded in the AppImage metadata; matches the release tag (build-N) plus the commit.
           export LDAI_VERSION="build-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
-          export LDAI_OUTPUT="lichii-${GITHUB_SHA}-${{ matrix.platform }}.AppImage"
+          export LDAI_OUTPUT="hortensia-${GITHUB_SHA}-${{ matrix.platform }}.AppImage"
           export OUTPUT="$LDAI_OUTPUT"
           export ARCH="$arch"
           mkdir -p AppDir/usr/bin AppDir/usr/share/licenses
@@ -505,44 +505,44 @@ jobs:
             fsr4_library=(--library "$RUNNER_TEMP/fsr4-vk/$fsr4")
           fi
           "$tools/linuxdeploy-$arch.AppImage" --appdir AppDir \
-            --executable build/release/bin/lichii \
-            --executable build/release/bin/eden-cli \
+            --executable build/release/bin/hortensia \
+            --executable build/release/bin/hortensia-cli \
             "${fsr4_library[@]}" \
             --exclude-library 'libvulkan.so*' \
-            --desktop-file dist/io.github.zortos293.lichii.desktop \
+            --desktop-file dist/io.github.justr4mzi.hortensia.desktop \
             --icon-file "$icon" \
             --plugin qt \
             --output appimage
           test -s "$LDAI_OUTPUT"
           ls -la "$LDAI_OUTPUT"
           test -f AppDir/usr/bin/qt.conf
-          mv AppDir lichii
-          ln -s usr/bin/lichii lichii/lichii
-          ln -s usr/bin/eden-cli lichii/eden-cli
-          tar -czf "lichii-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" lichii
-          ls -la "lichii-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz"
-          if tar -tzf "lichii-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" | grep '/libvulkan\.so'; then
+          mv AppDir hortensia
+          ln -s usr/bin/hortensia hortensia/hortensia
+          ln -s usr/bin/hortensia-cli hortensia/hortensia-cli
+          tar -czf "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" hortensia
+          ls -la "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz"
+          if tar -tzf "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" | grep '/libvulkan\.so'; then
             echo "::error::The package bundles the Vulkan loader"
             exit 1
           fi
           # Both x86-64 packages must carry fsr4-vk and its licences.
           if [ "$arch" = x86_64 ]; then
-            test "$(tar -tzf "lichii-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" |
-              grep -cFx -e "lichii/usr/lib/$fsr4" -e lichii/usr/share/licenses/fsr4-vk/LICENSE \
-                -e lichii/usr/share/licenses/fsr4-vk/AMD-FidelityFX-SDK-license.md)" = 3
+            test "$(tar -tzf "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" |
+              grep -cFx -e "hortensia/usr/lib/$fsr4" -e hortensia/usr/share/licenses/fsr4-vk/LICENSE \
+                -e hortensia/usr/share/licenses/fsr4-vk/AMD-FidelityFX-SDK-license.md)" = 3
             extract="$RUNNER_TEMP/appimage-check"
             mkdir -p "$extract"
             (cd "$extract" &&
               "$GITHUB_WORKSPACE/$LDAI_OUTPUT" --appimage-extract "usr/lib/$fsr4" > /dev/null)
-            cmp "$extract/squashfs-root/usr/lib/$fsr4" "lichii/usr/lib/$fsr4"
-            nm -D --defined-only "lichii/usr/lib/$fsr4" | grep -w ffxCreateContext
+            cmp "$extract/squashfs-root/usr/lib/$fsr4" "hortensia/usr/lib/$fsr4"
+            nm -D --defined-only "hortensia/usr/lib/$fsr4" | grep -w ffxCreateContext
           fi
 
       - name: Package Windows binary
         if: startsWith(matrix.platform, 'windows')
         shell: pwsh
         run: |
-          foreach ($exe in 'lichii.exe', 'eden-cli.exe') {
+          foreach ($exe in 'hortensia.exe', 'hortensia-cli.exe') {
             if (-not (Test-Path "build/release/bin/$exe")) {
               throw "build/release/bin/$exe was not produced"
             }
@@ -550,7 +550,7 @@ jobs:
           # Symbols ship as their own artifact, not in the release zip.
           New-Item -ItemType Directory -Force build/release/symbols | Out-Null
           Move-Item build/release/bin/*.pdb build/release/symbols/
-          windeployqt --release --no-translations build/release/bin/lichii.exe
+          windeployqt --release --no-translations build/release/bin/hortensia.exe
           if (Get-ChildItem -Recurse build/release/bin -Filter 'GFSDK_*') {
             throw 'build/release/bin holds Nsight Aftermath files, which must not ship'
           }
@@ -564,12 +564,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app=build/release/bin/lichii.app
-          test -x "$app/Contents/MacOS/lichii"
-          test -x build/release/bin/eden-cli
-          cp build/release/bin/eden-cli "$app/Contents/MacOS/eden-cli"
+          app=build/release/bin/hortensia.app
+          test -x "$app/Contents/MacOS/hortensia"
+          test -x build/release/bin/hortensia-cli
+          cp build/release/bin/hortensia-cli "$app/Contents/MacOS/hortensia-cli"
           "$(brew --prefix qt@6)/bin/macdeployqt" "$app" \
-            -executable="$app/Contents/MacOS/eden-cli" -libpath="$(brew --prefix)/lib" \
+            -executable="$app/Contents/MacOS/hortensia-cli" -libpath="$(brew --prefix)/lib" \
             -always-overwrite -verbose=1
           # Qt's virtual keyboard input plugin pulls in the QML stack, which the emulator doesn't use.
           rm -f "$app/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin.dylib"
@@ -583,7 +583,7 @@ jobs:
               done
           done
           # Libraries that load their dependencies through @rpath find them in the bundle.
-          for program in lichii eden-cli; do
+          for program in hortensia hortensia-cli; do
             install_name_tool -add_rpath @executable_path/../Frameworks \
               "$app/Contents/MacOS/$program" 2> /dev/null
           done
@@ -611,19 +611,19 @@ jobs:
           codesign --force --deep --sign - "$app"
           if [ -f dist/eglantine.entitlements ]; then
             codesign --force --sign - --entitlements dist/eglantine.entitlements \
-              "$app/Contents/MacOS/eden-cli"
+              "$app/Contents/MacOS/hortensia-cli"
             codesign --force --sign - --entitlements dist/eglantine.entitlements "$app"
           fi
           codesign --verify --deep --strict "$app"
-          ditto -c -k --keepParent "$app" "lichii-${GITHUB_SHA}-${{ matrix.platform }}.zip"
-          ls -la "lichii-${GITHUB_SHA}-${{ matrix.platform }}.zip"
-          # Also ship a .dmg (drag lichii.app onto Applications).
+          ditto -c -k --keepParent "$app" "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.zip"
+          ls -la "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.zip"
+          # Also ship a .dmg (drag hortensia.app onto Applications).
           dmgdir=$(mktemp -d)
-          ditto "$app" "$dmgdir/lichii.app"
+          ditto "$app" "$dmgdir/hortensia.app"
           ln -s /Applications "$dmgdir/Applications"
-          hdiutil create -volname "Lichii" -srcfolder "$dmgdir" -ov -format UDZO \
-            "lichii-${GITHUB_SHA}-${{ matrix.platform }}.dmg"
-          ls -la "lichii-${GITHUB_SHA}-${{ matrix.platform }}.dmg"
+          hdiutil create -volname "Hortensia" -srcfolder "$dmgdir" -ov -format UDZO \
+            "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.dmg"
+          ls -la "hortensia-${GITHUB_SHA}-${{ matrix.platform }}.dmg"
 
       # The artifact is the bin folder itself: GitHub zips artifacts on download, and uploading a
       # zip gave a zip inside a zip. The release job zips it once for the release.
@@ -631,7 +631,7 @@ jobs:
         if: startsWith(matrix.platform, 'windows')
         uses: actions/upload-artifact@v7
         with:
-          name: lichii-${{ matrix.platform }}${{ inputs.nsight_aftermath && '-aftermath' || '' }}-${{ github.sha }}
+          name: hortensia-${{ matrix.platform }}${{ inputs.nsight_aftermath && '-aftermath' || '' }}-${{ github.sha }}
           path: build/release/bin/
           if-no-files-found: error
           retention-days: 7
@@ -650,10 +650,10 @@ jobs:
         if: startsWith(matrix.platform, 'linux')
         uses: actions/upload-artifact@v7
         with:
-          name: lichii-${{ matrix.platform }}-${{ github.sha }}
+          name: hortensia-${{ matrix.platform }}-${{ github.sha }}
           path: |
-            lichii-${{ github.sha }}-${{ matrix.platform }}.tar.gz
-            lichii-${{ github.sha }}-${{ matrix.platform }}.AppImage
+            hortensia-${{ github.sha }}-${{ matrix.platform }}.tar.gz
+            hortensia-${{ github.sha }}-${{ matrix.platform }}.AppImage
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -663,10 +663,10 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         uses: actions/upload-artifact@v7
         with:
-          name: lichii-${{ matrix.platform }}-${{ github.sha }}
+          name: hortensia-${{ matrix.platform }}-${{ github.sha }}
           path: |
-            lichii-${{ github.sha }}-${{ matrix.platform }}.zip
-            lichii-${{ github.sha }}-${{ matrix.platform }}.dmg
+            hortensia-${{ github.sha }}-${{ matrix.platform }}.zip
+            hortensia-${{ github.sha }}-${{ matrix.platform }}.dmg
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -677,7 +677,7 @@ jobs:
   release:
     name: Publish release
     needs: build
-    if: github.event_name == 'push' || inputs.publish_release
+    if: inputs.publish_release == true
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -685,7 +685,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v7
         with:
-          pattern: lichii-*-${{ github.sha }}
+          pattern: hortensia-*-${{ github.sha }}
           path: artifacts
 
       - name: Package release files
@@ -777,7 +777,7 @@ jobs:
 
           ## macOS
 
-          $(row "arm64 (Apple Silicon)" "$(link zip lichii-macos-arm64.zip)" "" "macOS 15 or newer. Not notarized: right-click and choose Open the first time, or run \`xattr -dr com.apple.quarantine lichii.app\`. \`eden-cli\` is inside the app, in \`Contents/MacOS\`" | table)
+          $(row "arm64 (Apple Silicon)" "$(link zip lichii-macos-arm64.zip)" "" "macOS 15 or newer. Not notarized: right-click and choose Open the first time, or run \`xattr -dr com.apple.quarantine hortensia.app\`. \`eden-cli\` is inside the app, in \`Contents/MacOS\`" | table)
 
           ${pgo_note}
           EOF
@@ -786,7 +786,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --prerelease \
-            --title "Lichii ${GITHUB_REF_NAME} build ${GITHUB_RUN_NUMBER} (${GITHUB_SHA::7})" \
+            --title "Hortensia ${GITHUB_REF_NAME} build ${GITHUB_RUN_NUMBER} (${GITHUB_SHA::7})" \
             --notes-file notes.md
 
       # LICHII_BUILD_TAG is baked into every binary as build-<run number>, and the update checker

@@ -411,7 +411,7 @@ bool WriteNextendoProfile(Service::Account::ProfileManager& manager, const Commo
     QImage image;
     if (!image.loadFromData(reinterpret_cast<const uchar*>(pull.avatar->data()),
                             static_cast<int>(pull.avatar->size()))) {
-        LOG_WARNING(Frontend, "nextendo.network sent a profile picture Lichii can't read");
+        LOG_WARNING(Frontend, "nextendo.network sent a profile picture Hortensia can't read");
         return true;
     }
     constexpr int size = 256;
@@ -527,14 +527,14 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                 case Common::Nextendo::SignOutReason::None:
                     return;
                 case Common::Nextendo::SignOutReason::SessionExpired:
-                    why = tr("Your Nextendo session expired, so Lichii signed you out.");
+                    why = tr("Your Nextendo session expired, so Hortensia signed you out.");
                     break;
                 case Common::Nextendo::SignOutReason::SessionRevoked:
-                    why = tr("Your session was ended on nextendo.network, so Lichii signed you "
+                    why = tr("Your session was ended on nextendo.network, so Hortensia signed you "
                              "out.");
                     break;
                 case Common::Nextendo::SignOutReason::MissingScope:
-                    why = tr("Your Nextendo sign-in didn't allow online play, so Lichii signed "
+                    why = tr("Your Nextendo sign-in didn't allow online play, so Hortensia signed "
                              "you out.");
                     break;
                 }
@@ -715,7 +715,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     if (!orphans.empty()) {
         const auto answer = QMessageBox::question(
             this, tr("Nextendo Sign-ins"),
-            tr("Lichii found Nextendo sign-ins for %n profile(s) this NAND doesn't have. Profiles "
+            tr("Hortensia found Nextendo sign-ins for %n profile(s) this NAND doesn't have. Profiles "
                "deleted in an older build left theirs behind.\n\nRemove and sign out those "
                "sign-ins? Keep them if the profiles are in another NAND folder.",
                "", static_cast<int>(orphans.size())));
@@ -2222,7 +2222,7 @@ bool MainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPar
         case Core::SystemResultStatus::ErrorMemoryAllocation:
             QMessageBox::critical(
                 this, tr("Not enough memory to start the game"),
-                tr("Lichii could not allocate the game's memory. Close other applications and "
+                tr("Hortensia could not allocate the game's memory. Close other applications and "
                    "check that your system has enough available memory and paging-file space, "
                    "then try again."));
             break;
@@ -2371,7 +2371,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     if (close_pending) {
         return;
     }
-    LOG_INFO(Frontend, "Lichii starting...");
+    LOG_INFO(Frontend, "Hortensia starting...");
     report_session.reset();
     game_list->SetReportableProgramId(0);
 
@@ -2533,7 +2533,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         }
         session.mods = CompatibilityReporting::SummarizeEnabledAddons(mods);
         session.updates = CompatibilityReporting::SummarizeEnabledAddons(updates);
-        session.build = QStringLiteral("Lichii %1 (%2)")
+        session.build = QStringLiteral("Hortensia %1 (%2)")
                             .arg(QString::fromUtf8(Common::g_build_version),
                                  QString::fromUtf8(Common::g_scm_rev).left(12));
 #ifdef ARCHITECTURE_x86_64
@@ -5591,7 +5591,7 @@ void MainWindow::OnEmulatorUpdateAvailable() {
             QMessageBox::information(
                 this, title,
                 tr("This is a test or development build (%1) without a published release tag, so "
-                   "Lichii cannot compare it with published releases. Download a release from "
+                   "Hortensia cannot compare it with published releases. Download a release from "
                    "GitHub to get updates.")
                     .arg(QString::fromUtf8(Common::g_build_version)));
             break;
@@ -5615,7 +5615,7 @@ void MainWindow::OnEmulatorUpdateAvailable() {
     }
     if (result.failure == UpdateChecker::Failure::RateLimited) {
         statusBar()->showMessage(
-            tr("Could not check for updates: GitHub rate limit reached. Lichii will try again at "
+            tr("Could not check for updates: GitHub rate limit reached. Hortensia will try again at "
                "the next start."),
             15000);
         return;
@@ -6194,7 +6194,7 @@ void MainWindow::OnCheckGraphicsBackend() {
         UISettings::values.gui_force_x11.SetValue(true);
         GraphicsBackend::SetForceX11(true);
         QMessageBox::information(this, tr("Restart Required"),
-                                 tr("Restart Lichii to apply the X11 backend."));
+                                 tr("Restart Hortensia to apply the X11 backend."));
     }
 }
 #endif
@@ -6321,8 +6321,8 @@ bool MainWindow::ConfirmClose() {
         UISettings::values.confirm_before_stopping.GetValue() == ConfirmStop::Ask_Based_On_Game)
         return true;
 
-    const auto text = tr("Are you sure you want to close Lichii?");
-    return question(this, tr("Lichii"), text);
+    const auto text = tr("Are you sure you want to close Hortensia?");
+    return question(this, tr("Hortensia"), text);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -6428,7 +6428,7 @@ bool MainWindow::ConfirmChangeGame() {
 
     // Use custom question to link controller navigation
     return question(
-        this, tr("Lichii"),
+        this, tr("Hortensia"),
         tr("Are you sure you want to stop the emulation? Any unsaved progress will be lost."),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
 }
@@ -6437,10 +6437,10 @@ bool MainWindow::ConfirmForceLockedExit() {
     if (QtCommon::emu_thread == nullptr)
         return true;
 
-    const auto text = tr("The currently running application has requested Lichii to not exit.\n\n"
+    const auto text = tr("The currently running application has requested Hortensia to not exit.\n\n"
                          "Would you like to bypass this and exit anyway?");
 
-    return question(this, tr("Lichii"), text);
+    return question(this, tr("Hortensia"), text);
 }
 
 void MainWindow::RequestGameExit() {
@@ -6474,31 +6474,31 @@ static void AdjustLinkColor() {
 // without one: item view text, disabled text, links and the native parts of dialogs.
 static QPalette LichiiPalette() {
     QPalette palette;
-    const QColor window(0x17, 0x18, 0x1b);
-    const QColor surface(0x20, 0x21, 0x25);
-    const QColor text(0xec, 0xec, 0xef);
-    const QColor disabled(0x55, 0x57, 0x5d);
-    const QColor accent(0xf0, 0x38, 0x6b);
+    const QColor window(0x17, 0x13, 0x24);
+    const QColor surface(0x21, 0x1a, 0x34);
+    const QColor text(0xf1, 0xed, 0xfb);
+    const QColor disabled(0x5d, 0x52, 0x78);
+    const QColor accent(0x7c, 0x68, 0xee);
     palette.setColor(QPalette::Window, window);
     palette.setColor(QPalette::WindowText, text);
     palette.setColor(QPalette::Base, window);
-    palette.setColor(QPalette::AlternateBase, QColor(0x1b, 0x1c, 0x20));
-    palette.setColor(QPalette::ToolTipBase, QColor(0x23, 0x24, 0x29));
+    palette.setColor(QPalette::AlternateBase, QColor(0x1b, 0x16, 0x2a));
+    palette.setColor(QPalette::ToolTipBase, QColor(0x26, 0x1e, 0x3c));
     palette.setColor(QPalette::ToolTipText, text);
-    palette.setColor(QPalette::PlaceholderText, QColor(0x6f, 0x71, 0x78));
+    palette.setColor(QPalette::PlaceholderText, QColor(0x7f, 0x74, 0x9c));
     palette.setColor(QPalette::Text, text);
     palette.setColor(QPalette::Button, surface);
     palette.setColor(QPalette::ButtonText, text);
     palette.setColor(QPalette::BrightText, Qt::white);
-    palette.setColor(QPalette::Light, QColor(0x34, 0x36, 0x3c));
-    palette.setColor(QPalette::Midlight, QColor(0x2a, 0x2c, 0x31));
-    palette.setColor(QPalette::Mid, QColor(0x23, 0x24, 0x29));
-    palette.setColor(QPalette::Dark, QColor(0x14, 0x15, 0x18));
+    palette.setColor(QPalette::Light, QColor(0x43, 0x35, 0x66));
+    palette.setColor(QPalette::Midlight, QColor(0x31, 0x26, 0x4c));
+    palette.setColor(QPalette::Mid, QColor(0x26, 0x1e, 0x3c));
+    palette.setColor(QPalette::Dark, QColor(0x14, 0x10, 0x20));
     palette.setColor(QPalette::Shadow, Qt::black);
     palette.setColor(QPalette::Highlight, accent);
     palette.setColor(QPalette::HighlightedText, Qt::white);
-    palette.setColor(QPalette::Link, QColor(0xf4, 0x5a, 0x85));
-    palette.setColor(QPalette::LinkVisited, QColor(0xd4, 0x2c, 0x5a));
+    palette.setColor(QPalette::Link, QColor(0x96, 0x85, 0xf6));
+    palette.setColor(QPalette::LinkVisited, QColor(0x65, 0x50, 0xdc));
     palette.setColor(QPalette::Disabled, QPalette::WindowText, disabled);
     palette.setColor(QPalette::Disabled, QPalette::Text, disabled);
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabled);

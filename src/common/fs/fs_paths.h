@@ -5,9 +5,12 @@
 
 #pragma once
 
-// Lichii data directories
+// Hortensia data directories
 
-#define EDEN_DIR "lichii"
+#define EDEN_DIR "hortensia"
+#define LICHII_DIR "lichii"
+#define BOUQUET_DIR "bouquet"
+#define EGLANTINE_DIR "eglantine"
 #define EDEN_LEGACY_DIR "eden"
 #define PORTABLE_DIR "user"
 
@@ -41,6 +44,6 @@
 #define RYUJINX_DIR "Ryujinx"
 
 // Lichii-specific files
-#define LOG_FILE "eden_log.txt"
+#define LOG_FILE "hortensia_log.txt"
 #define LOSSLESS_DLL_FILE "Lossless.dll"
 #define LOSSLESS_CACHE_FILE "lsfg_spirv.cache"

@@ -39,6 +39,18 @@ enum class EdenPath {
 
 // migration/compat dirs
 enum EmuPath {
+    LichiiDir,
+    LichiiConfigDir,
+    LichiiCacheDir,
+
+    BouquetDir,
+    BouquetConfigDir,
+    BouquetCacheDir,
+
+    EglantineDir,
+    EglantineConfigDir,
+    EglantineCacheDir,
+
     LegacyEdenDir,
     LegacyEdenConfigDir,
     LegacyEdenCacheDir,

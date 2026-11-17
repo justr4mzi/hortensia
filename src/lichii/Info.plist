@@ -17,17 +17,17 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <key>CFBundleGetInfoString</key>
     <string></string>
     <key>CFBundleIconFile</key>
-    <string>lichii.icns</string>
+    <string>hortensia.icns</string>
     <key>CFBundleIconName</key>
-    <string>lichii</string>
+    <string>hortensia</string>
     <key>CFBundleIdentifier</key>
-    <string>io.github.zortos293.lichii</string> <!-- May be required by 3rd party ext -->
+    <string>io.github.justr4mzi.hortensia</string> <!-- May be required by 3rd party ext -->
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleLongVersionString</key>
     <string></string>
     <key>CFBundleName</key>
-    <string>lichii</string>
+    <string>hortensia</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

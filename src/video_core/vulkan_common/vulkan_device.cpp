@@ -1269,7 +1269,7 @@ void Device::ReportLoss() const {
         Common::Log::Flush();
         std::this_thread::sleep_for(std::chrono::seconds{60});
     }
-    LOG_CRITICAL(Render_Vulkan, "Closing Lichii: the GPU driver lost the Vulkan device");
+    LOG_CRITICAL(Render_Vulkan, "Closing Hortensia: the GPU driver lost the Vulkan device");
     Common::Log::Flush();
 #ifdef _WIN32
     // Skips DLL detach, which runs the GPU driver's teardown on the lost device.

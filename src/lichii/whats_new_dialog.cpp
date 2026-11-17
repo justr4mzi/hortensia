@@ -50,7 +50,7 @@ QWidget* Item(const QString& icon, const QString& title, const QString& text) {
 
 WhatsNewDialog::WhatsNewDialog(QWidget* parent) : QDialog(parent) {
     setObjectName(QStringLiteral("WhatsNewDialog"));
-    setWindowTitle(tr("What's New in Lichii"));
+    setWindowTitle(tr("What's New in Hortensia"));
 
     auto* const root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -65,11 +65,11 @@ WhatsNewDialog::WhatsNewDialog(QWidget* parent) : QDialog(parent) {
     header->setSpacing(14);
     header->setContentsMargins(0, 0, 0, 10);
     auto* const logo = new QLabel;
-    logo->setPixmap(QIcon(QStringLiteral(":/icons/default/256x256/lichii.png")).pixmap(44));
+    logo->setPixmap(QIcon(QStringLiteral(":/icons/default/256x256/hortensia.png")).pixmap(44));
     header->addWidget(logo, 0, Qt::AlignTop);
     auto* const titles = new QVBoxLayout;
     titles->setSpacing(3);
-    auto* const title = new QLabel(tr("Lichii has a new look"));
+    auto* const title = new QLabel(tr("Hortensia has a new look"));
     title->setObjectName(QStringLiteral("WhatsNewTitle"));
     QFont title_font = title->font();
     title_font.setBold(true);
@@ -84,8 +84,8 @@ WhatsNewDialog::WhatsNewDialog(QWidget* parent) : QDialog(parent) {
     header->addLayout(titles, 1);
     body->addLayout(header);
 
-    body->addWidget(Item(QStringLiteral("wand"), tr("Lichii Dark theme"),
-                         tr("A darker theme with the Lichii pink accent. The old themes are still "
+    body->addWidget(Item(QStringLiteral("wand"), tr("Hortensia Dark theme"),
+                         tr("A darker theme with the Hortensia violet and hydrangea accent. The old themes are still "
                             "in Configure > General > UI.")));
     body->addWidget(Item(QStringLiteral("sliders"), tr("Settings that fit your screen"),
                          tr("Configure and game Properties open at a size that fits your screen, "
@@ -98,7 +98,7 @@ WhatsNewDialog::WhatsNewDialog(QWidget* parent) : QDialog(parent) {
     body->addWidget(Item(QStringLiteral("gamepad"), tr("Same places as before"),
                          tr("Configure is in Emulation > Configure (Ctrl+,). Right-click a game "
                             "and choose Properties for its own settings. Help > What's New in "
-                            "Lichii shows this again.")));
+                            "Hortensia shows this again.")));
     auto* const scroll = new QScrollArea;
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
