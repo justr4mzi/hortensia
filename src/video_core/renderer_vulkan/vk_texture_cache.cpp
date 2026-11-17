@@ -3063,6 +3063,10 @@ u64 TextureCacheRuntime::GetDeviceHeapMemoryBudget() const {
     return device.GetDeviceHeapMemoryBudget();
 }
 
+bool TextureCacheRuntime::IsIntegrated() const noexcept {
+    return device.IsIntegrated();
+}
+
 u64 TextureCacheRuntime::GetDeviceMemorySlack() const {
     return device.GetDeviceMemorySlack();
 }

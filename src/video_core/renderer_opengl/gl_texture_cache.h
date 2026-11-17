@@ -74,6 +74,10 @@ public:
 
     void Finish();
 
+    [[nodiscard]] bool IsIntegrated() const noexcept {
+        return false;
+    }
+
     void FlushDeferredClear() {}
 
     StagingBufferMap UploadStagingBuffer(size_t size, bool deferred = false);
