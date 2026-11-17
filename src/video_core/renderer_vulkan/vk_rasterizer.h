@@ -6,6 +6,7 @@
 #pragma once
 
 #include <array>
+#include <unordered_map>
 #include <chrono>
 #include <optional>
 #include <string_view>
@@ -399,6 +400,18 @@ private:
     std::chrono::steady_clock::time_point frameskip_last_tick{};
     bool frameskip_previous_dropped{};
     u64 frameskip_dropped_frames = 0;
+    /// Frame each render target (address, size and format) was last drawn to. A dropped frame
+    /// only drops work on targets drawn the frame before: a target drawn once (a texture the
+    /// game renders when it loads it) is always drawn.
+    struct FrameskipTarget {
+        u64 frame;
+        bool drawn_frame_before;
+    };
+    std::unordered_map<u64, FrameskipTarget> frameskip_targets;
+    bool frameskip_active{};
+    /// Records the bound render targets as drawn this frame; true when all of them were drawn
+    /// the frame before too.
+    bool FrameskipTargetsRepeat();
     u32 render_trace_draws = 0;
     u32 render_trace_clears = 0;
     bool pending_native_work{};

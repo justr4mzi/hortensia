@@ -1061,7 +1061,8 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
     }()};
     // A skipped frame still runs draws whose shaders store to memory or that capture transform
     // feedback: the game reads what they write (Mario Tennis Fever panicked in its menu).
-    if (pipeline && frame_draws_skipped && !pipeline->WritesMemory() &&
+    const bool targets_repeat = pipeline && frameskip_active && FrameskipTargetsRepeat();
+    if (pipeline && frame_draws_skipped && targets_repeat && !pipeline->WritesMemory() &&
         maxwell3d->regs.transform_feedback_enabled == 0) {
         submitted = true;
         ++frameskip_dropped_draws;
@@ -2059,7 +2060,7 @@ void RasterizerVulkan::CollectIndirectTrace() {
 }
 
 void RasterizerVulkan::DrawTexture() {
-    if (frame_draws_skipped) {
+    if (frameskip_active && FrameskipTargetsRepeat() && frame_draws_skipped) {
         ++frameskip_dropped_draws;
         return;
     }
@@ -2194,7 +2195,7 @@ bool RasterizerVulkan::ClearVolumeSlices(const Framebuffer* framebuffer, u32 fir
 
 void RasterizerVulkan::Clear(u32 layer_count) {
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Clear};
-    if (frame_clears_skipped) {
+    if (frameskip_active && FrameskipTargetsRepeat() && frame_clears_skipped) {
         return;
     }
     if (Tegra::Engines::g_nx2_trace_draws_after_upscale > 0) {
@@ -3997,6 +3998,12 @@ void RasterizerVulkan::TickFrame() {
         dropped = !frameskip_previous_dropped && frame_time > late;
     }
     frameskip_previous_dropped = dropped;
+    frameskip_active = frameskip_interval > 1 || frameskip_auto_fps != 0;
+    if (render_trace_frame % 600 == 0) {
+        std::erase_if(frameskip_targets, [this](const auto& target) {
+            return target.second.frame + 600 < render_trace_frame;
+        });
+    }
     frameskip_dropped_frames += dropped ? 1 : 0;
     frame_draws_skipped = dropped && frameskip_parts[0];
     frame_clears_skipped = dropped && frameskip_parts[1];
@@ -4022,6 +4029,39 @@ void RasterizerVulkan::TickFrame() {
         std::scoped_lock lock{buffer_cache.mutex};
         buffer_cache.TickFrame();
     }
+}
+
+bool RasterizerVulkan::FrameskipTargetsRepeat() {
+    const auto& regs = maxwell3d->regs;
+    const auto key = [](u64 address, u32 width, u32 height, u32 format) {
+        return address ^ (u64{width} << 40) ^ (u64{height} << 52) ^ (u64{format} << 32);
+    };
+    bool repeat = true;
+    const auto note = [&](u64 target) {
+        const auto [it, inserted] =
+            frameskip_targets.try_emplace(target, FrameskipTarget{render_trace_frame, false});
+        if (!inserted && it->second.frame != render_trace_frame) {
+            it->second.drawn_frame_before = it->second.frame + 1 == render_trace_frame;
+            it->second.frame = render_trace_frame;
+        }
+        repeat = repeat && it->second.drawn_frame_before;
+    };
+    bool any = false;
+    for (u32 index = 0; index < regs.rt_control.count && index < Maxwell::NumRenderTargets;
+         ++index) {
+        const auto& rt = regs.rt[regs.rt_control.Map(index)];
+        if (rt.Address() == 0 || rt.format == Tegra::RenderTargetFormat::NONE) {
+            continue;
+        }
+        any = true;
+        note(key(rt.Address(), rt.width, rt.height, static_cast<u32>(rt.format)));
+    }
+    if (regs.zeta_enable && regs.zeta.Address() != 0) {
+        any = true;
+        note(key(regs.zeta.Address(), regs.zeta_size.width, regs.zeta_size.height,
+                 0x8000'0000U | static_cast<u32>(regs.zeta.format)));
+    }
+    return any && repeat;
 }
 
 bool RasterizerVulkan::AccelerateConditionalRendering() {
