@@ -18,6 +18,7 @@
 #include "video_core/engines/maxwell_dma.h"
 #include "video_core/guest_memory.h"
 #include "video_core/memory_manager.h"
+#include "video_core/nx2.h"
 #include "video_core/nx2_trace_dst.h"
 #include "video_core/renderer_base.h"
 #include "video_core/textures/decoders.h"
