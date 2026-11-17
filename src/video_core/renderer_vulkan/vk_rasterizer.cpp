@@ -3465,6 +3465,11 @@ void RasterizerVulkan::TrackOcarinaCamera() {
         return;
     }
     const auto refuse = [&](const char* reason, f32 width, f32 height) {
+        if (oot_camera_refusal && oot_camera_refusal->frame == render_trace_frame &&
+            u64{color.size.width} * color.size.height <
+                u64{oot_camera_refusal->target_width} * oot_camera_refusal->target_height) {
+            return;
+        }
         oot_camera_refusal = OcarinaCameraRefusal{render_trace_frame, reason, width, height,
                                                   color.size.width, color.size.height};
     };

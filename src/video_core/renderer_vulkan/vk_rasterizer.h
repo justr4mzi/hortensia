@@ -325,7 +325,7 @@ private:
 
     u32 draw_counter = 0;
     std::optional<u64> oot_camera_sample_frame;
-    /// Why the last scene-target draw with a camera buffer gave no camera.
+    /// Why this frame's largest scene-target draw with a camera buffer gave no camera.
     struct OcarinaCameraRefusal {
         u64 frame{};
         const char* reason{};
