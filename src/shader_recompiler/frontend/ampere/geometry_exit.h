@@ -172,6 +172,11 @@ GeometryExitEnvelope AnalyzeGeometryExit(const Code& code) {
             read_sources(true);
             write_register(bits(index, 16, 8));
             write_predicate(bits(index, 81, 3));
+        } else if (opcode == 0x819) {
+            // SHF with an immediate shift reads the low and high words in a/c, writes Rd.
+            read_register(bits(index, 24, 8));
+            read_register(bits(index, 64, 8));
+            write_register(bits(index, 16, 8));
         } else if (opcode == 0x321) {
             // ALD: loads 1-4 components into Rd.. from the vertex in b, indexed by a unless RZ.
             read_register(bits(index, 24, 8));
