@@ -15,6 +15,7 @@
 #include "audio_core/sink/sink.h"
 #include "audio_core/sink/sink_stream.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_event.h"
@@ -229,9 +230,16 @@ Result SysmixOutput::Open(u32 sample_type, u32 channels, u32 rate, u32 frames, u
                  memory.Read32Acquire(p.buffer + WriteOffset, write) && read < slots &&
                  write < slots,
              ResultInvalidAddressInfo);
-    p.host = p.sink.AcquireSinkStream(p.system, channels, "sysmix-" + std::to_string(p.id),
-                                      p.input_stream ? AudioCore::Sink::StreamType::In
-                                                     : AudioCore::Sink::StreamType::Sysmix);
+    if (p.input_stream &&
+        Settings::values.audio_input_device_id.GetValue() == AudioCore::Sink::no_input_device_name) {
+        LOG_INFO(Service_Audio, "sysmix stream {}: input device is none, capturing silence", p.id);
+        p.silent_input = std::make_unique<AudioCore::Sink::SilentInputStream>(p.system, channels);
+        p.host = p.silent_input.get();
+    } else {
+        p.host = p.sink.AcquireSinkStream(p.system, channels, "sysmix-" + std::to_string(p.id),
+                                          p.input_stream ? AudioCore::Sink::StreamType::In
+                                                         : AudioCore::Sink::StreamType::Sysmix);
+    }
     if (p.input_stream && (!p.host || !p.host->IsReady())) {
         p.UseSilentInput(channels);
     }
