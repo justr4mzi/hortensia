@@ -98,11 +98,6 @@ public:
     /// pointer to its semaphore word) for the next session's GPU thread.
     ~Puller();
 
-    Puller() = default;
-    /// Leaves the semaphore waiters, so a channel torn down mid-wait leaves no slot (and no host
-    /// pointer to its semaphore word) for the next session's GPU thread.
-    ~Puller();
-
     [[nodiscard]] bool HasPendingAcquire() const {
         return pending_acquire.has_value();
     }
