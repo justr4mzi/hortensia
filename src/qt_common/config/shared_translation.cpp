@@ -290,7 +290,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Most GPUs lack support for ASTC textures and must decompress to an"
               "intermediate format: RGBA8.\n"
               "BC1/BC3: The intermediate format will be recompressed to BC1 or BC3 format,\n"
-              " saving VRAM but degrading image quality."));
+              " saving VRAM but degrading image quality.\n"
+              "On Vulkan, BC1 compresses only textures without alpha to BC1 and keeps the "
+              "others in BC3."));
     INSERT(Settings, frame_pacing_mode, tr("Frame Pacing Mode (Vulkan only)"),
            tr("Controls how the emulator manages frame pacing to reduce stuttering and make the "
               "frame rate smoother and more consistent."));

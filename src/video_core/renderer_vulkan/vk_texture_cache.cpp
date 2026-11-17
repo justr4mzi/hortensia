@@ -1309,6 +1309,16 @@ void UseBc3ForSwitch2OnSmallCards(const Device& device) {
                 memory >> 20);
     Settings::SetAstcRecompressionOverride(Settings::AstcRecompression::Bc3);
 }
+
+// BC1 for every ASTC image turns alpha into a 1-bit cutout (punch-through, black texels where the
+// alpha holds mask data: dark faces, banding in OoT). The BC3 path already sends the images its
+// opaque scan clears to BC1 and keeps the others in BC3, so the BC1 setting runs that.
+void UseOpaqueScanForBc1(const Device& device) {
+    if (!device.IsOptimalAstcSupported() &&
+        Settings::GetAstcRecompression() == Settings::AstcRecompression::Bc1) {
+        Settings::SetAstcRecompressionOverride(Settings::AstcRecompression::Bc3);
+    }
+}
 } // Anonymous namespace
 
 TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& scheduler_,
@@ -1325,6 +1335,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
       resolution{Settings::values.resolution_info} {
     // Before anything below reads astc_recompression (passes, view formats).
     UseBc3ForSwitch2OnSmallCards(device);
+    UseOpaqueScanForBc1(device);
     // Huge ASTC arrays always decode on the GPU (IsHugeAstcArray), whatever the decode setting.
     if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu ||
         !device.IsOptimalAstcSupported()) {
