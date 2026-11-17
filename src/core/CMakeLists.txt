@@ -1206,6 +1206,7 @@ add_library(core STATIC
     loader/nsp.h
     loader/nup.cpp
     loader/nup.h
+    loader/oot_icon_data.h
     loader/nx.cpp
     loader/nx.h
     loader/xci.cpp

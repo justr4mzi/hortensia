@@ -5,6 +5,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fmt/format.h>
+#include "common/fs/file.h"
+#include "common/fs/path_util.h"
+#include "core/loader/oot_icon_data.h"
 
 #include "common/logging.h"
 #include "common/string_util.h"
@@ -199,6 +204,43 @@ AppLoader_NUP::AppLoader_NUP(FileSys::VirtualFile file_)
             icon_file = std::make_shared<FileSys::VectorVfsFile>(
                 meta.localized_icons.front().second, "icon.dat");
         }
+    }
+    if (icon_file == nullptr && file != nullptr) {
+        const std::string full_path = file->GetFullPath();
+        if (!full_path.empty()) {
+            const std::filesystem::path archive_path(Common::FS::ToU8String(full_path));
+            const auto dir = archive_path.parent_path();
+            const std::string stem = Common::FS::PathToUTF8String(archive_path.stem());
+            const std::string tid_hex = fmt::format("{:016X}", base_title_id);
+            const std::string tid_lower = fmt::format("{:016x}", base_title_id);
+            for (const auto& base : {stem, tid_hex, tid_lower, std::string{"icon"}}) {
+                if (base.empty() || icon_file != nullptr) {
+                    continue;
+                }
+                for (const char* ext : {".jpg", ".jpeg", ".png"}) {
+                    const auto candidate = dir / Common::FS::ToU8String(base + ext);
+                    std::error_code ec;
+                    if (!std::filesystem::is_regular_file(candidate, ec)) {
+                        continue;
+                    }
+                    Common::FS::IOFile img_file{candidate, Common::FS::FileAccessMode::Read,
+                                                Common::FS::FileType::BinaryFile};
+                    const u64 sz = img_file.GetSize();
+                    if (img_file.IsOpen() && sz > 0 && sz <= 8 * 1024 * 1024) {
+                        std::vector<u8> bytes(static_cast<std::size_t>(sz));
+                        if (img_file.ReadSpan(std::span<u8>{bytes}) == bytes.size()) {
+                            icon_file = std::make_shared<FileSys::VectorVfsFile>(
+                                std::move(bytes), "icon.dat");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (icon_file == nullptr && base_title_id == 0x0400486024DEC000ULL) {
+        std::vector<u8> bytes(kOcarinaFallbackIcon.begin(), kOcarinaFallbackIcon.end());
+        icon_file = std::make_shared<FileSys::VectorVfsFile>(std::move(bytes), "icon.dat");
     }
 }
 
