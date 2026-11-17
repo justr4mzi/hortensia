@@ -274,6 +274,13 @@ try
                 {"pipeline_binary", device.IsKhrPipelineBinarySupported()},
             },
     };
+    // AMD's Windows driver crashes (integer divide by zero in amdvlk64.dll) on the sparse images
+    // that lazily backed Switch 2 regions lead to, while Mario Kart World loads its map. Back those
+    // regions whole there, as before; EDEN_NX2_SPARSE_LAZY=1 still forces lazy backing.
+    if (device.GetDriverID() == VK_DRIVER_ID_AMD_PROPRIETARY) {
+        Tegra::g_nx2_sparse_lazy_supported = false;
+        LOG_INFO(Render_Vulkan, "AMD proprietary driver: Switch 2 sparse regions are backed whole");
+    }
     Report();
 } catch (const vk::Exception& exception) {
     LOG_ERROR(Render_Vulkan, "Vulkan initialization failed with error: {}", exception.what());
