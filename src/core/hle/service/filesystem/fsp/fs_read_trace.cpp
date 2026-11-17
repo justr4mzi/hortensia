@@ -109,11 +109,19 @@ void NoteLoadRead(u64 bytes) {
     // its textures and render targets arrive; play reads under 2 MiB/s. With RAM full those
     // ~250 GPU allocations waited for the kernel to swap out what they needed (Castle Town entry:
     // 2.2-3.8 s frozen). Asking the kernel to reclaim cold memory as the reads start halved that
-    // (1.0-2.2 s in five runs). EDEN_NX2_PRE_RECLAIM_MIB sets the amount (default 1536, 0: off);
-    // at most once per 30 s, and only while less than 2.5 GiB is available.
+    // (0.9-1.3 s). Reclaiming a fixed 1.5 GB at every burst was too much in play (8 times in
+    // 10 minutes, often with 0.6-1.4 GB already free): memory still in use went to swap and came
+    // back at up to 15,000 pages/s, with short audio stutters in Kakariko. So it reclaims only up
+    // to EDEN_NX2_PRE_RECLAIM_TARGET_MIB available (default 2048), at most
+    // EDEN_NX2_PRE_RECLAIM_MIB at once (default 1536, 0: off), nothing under 256 MiB, at most
+    // once a minute, for bursts of 16 MiB or more within a second.
     static const u64 reclaim_mib = [] {
         const char* value = std::getenv("EDEN_NX2_PRE_RECLAIM_MIB");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : u64{1536};
+    }();
+    static const u64 target_mib = [] {
+        const char* value = std::getenv("EDEN_NX2_PRE_RECLAIM_TARGET_MIB");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : u64{2048};
     }();
 #if !defined(__linux__)
     static_cast<void>(bytes);
@@ -133,21 +141,23 @@ void NoteLoadRead(u64 bytes) {
         window_bytes = 0;
     }
     window_bytes += bytes;
-    if (window_bytes < (u64{12} << 20)) {
+    if (window_bytes < (u64{16} << 20)) {
         return;
     }
     window_bytes = 0;
-    if (last_request != Clock::time_point{} && now - last_request < std::chrono::seconds{30}) {
+    if (last_request != Clock::time_point{} && now - last_request < std::chrono::seconds{60}) {
         return;
     }
-    const u64 available = AvailableMemory();
-    if (available >= (u64{5} << 29)) {
+    const u64 available_mib = AvailableMemory() >> 20;
+    const u64 wanted = target_mib > available_mib ? target_mib - available_mib : 0;
+    const u64 amount = (std::min)(wanted, reclaim_mib);
+    if (amount < 256) {
         return;
     }
     last_request = now;
-    LOG_INFO(Service_FS, "Area load: 12+ MiB of guest reads in under 1 s with {} MiB available",
-             available >> 20);
-    RequestReclaim(reclaim_mib);
+    LOG_INFO(Service_FS, "Area load: 16+ MiB of guest reads in under 1 s with {} MiB available",
+             available_mib);
+    RequestReclaim(amount);
 #endif
 }
 
