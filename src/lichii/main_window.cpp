@@ -5896,7 +5896,7 @@ void MainWindow::UpdateStatusBar() {
     UpdateFrameGenButton();
 
     res_scale_label->setVisible(true);
-    emu_speed_label->setVisible(!Settings::values.use_multi_core.GetValue());
+    emu_speed_label->setVisible(true);
     game_fps_label->setVisible(true);
     emu_frametime_label->setVisible(true);
     firmware_label->setVisible(false);
