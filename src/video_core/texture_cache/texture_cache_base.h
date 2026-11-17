@@ -200,6 +200,7 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     u64 spill_log_bytes{};        ///< Spilled since the last spill log line
     u32 spill_log_collects{};     ///< Forced collects since the last spill log line
     std::chrono::steady_clock::time_point spill_log_time{};
+    u64 tc_depth_upload_skips{}; ///< New large depth images not filled from guest memory
     u64 astc_opaque_images{};
     u64 astc_alpha_images{};
     Common::ScratchBuffer<u8> astc_scan_buffer;
