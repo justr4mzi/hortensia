@@ -2508,9 +2508,12 @@ void PipelineCache::EvictUnusedPipelines() {
         }
         evicted_hashes.insert(it->first.Hash());
         evicted_pointer_slots.Remember(it->first.Hash(), it->second->MappedPointers());
-        KeptGraphicsStages kept = it->second->TakeKeptStages();
-        const u64 bytes = kept.Bytes();
-        kept_stages.Add(it->first, std::move(kept), bytes);
+        // A failed build kept no SPIR-V: used again, its key is translated again.
+        if (!it->second->Failed()) {
+            KeptGraphicsStages kept = it->second->TakeKeptStages();
+            const u64 bytes = kept.Bytes();
+            kept_stages.Add(it->first, std::move(kept), bytes);
+        }
         evicted_pipelines.emplace_back(tick, std::move(it->second));
         graphics_cache.erase(it);
     }
