@@ -77,6 +77,8 @@ public:
     /// has neither.
     bool ReadKept(DAddr address, void* dest_pointer, size_t size);
     bool WriteKept(DAddr address, const void* src_pointer, size_t size);
+    /// Whether every page of [address, +size) is mapped or kept, so a write there lands.
+    bool IsBacked(DAddr address, size_t size);
 
     void TrackContinuityImpl(DAddr address, VAddr virtual_address, size_t size, Asid asid);
     void TrackContinuity(DAddr address, VAddr virtual_address, size_t size, Asid asid) {

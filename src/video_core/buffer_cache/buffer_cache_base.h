@@ -952,6 +952,7 @@ private:
         u64 leaps{};
         u64 collected{};
         u64 collected_bytes{};
+        u64 kept_unbacked{};
         u32 large_logged{};
         std::chrono::steady_clock::time_point last{};
     } create_trace;

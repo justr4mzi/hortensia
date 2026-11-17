@@ -95,8 +95,18 @@ void BufferCache<P>::RunGarbageCollector(bool aggressive_gc) {
         // textures) with fixed headroom, so on an 8 GB GPU the collector ran every frame once a
         // title 1 course was loaded, and the downloads were ~2.7% of the GPU thread.
         const Buffer& buffer = slot_buffers[buffer_id];
-        if (!aggressive_gc && gpu_modified_ranges.Intersects(buffer.CpuAddr(), buffer.SizeBytes())) {
-            return false;
+        if (gpu_modified_ranges.Intersects(buffer.CpuAddr(), buffer.SizeBytes())) {
+            if (!aggressive_gc) {
+                return false;
+            }
+            // Its download would land nowhere (a Switch 2 sparse range without memory) and the
+            // buffer made again would read zeros: it stays.
+            if (!device_memory.IsBacked(buffer.CpuAddr(), buffer.SizeBytes())) {
+                if (create_trace.enabled) {
+                    ++create_trace.kept_unbacked;
+                }
+                return false;
+            }
         }
         evicted.push_back(buffer_id);
         return false;
@@ -138,12 +148,13 @@ void BufferCache<P>::TickFrame() {
             trace.last = now;
             LOG_INFO(HW_GPU,
                      "Buffer trace: {} MiB in buffers; in 10 s {} created ({} MiB), {} joined into "
-                     "them ({} MiB copied), {} stream leaps, {} collected ({} MiB)",
+                     "them ({} MiB copied), {} stream leaps, {} collected ({} MiB), {} GPU-written "
+                     "kept for unbacked device memory",
                      buffer_bytes >> 20, trace.creates, trace.created_bytes >> 20, trace.joins,
                      trace.joined_bytes >> 20, trace.leaps, trace.collected,
-                     trace.collected_bytes >> 20);
+                     trace.collected_bytes >> 20, trace.kept_unbacked);
             trace.creates = trace.created_bytes = trace.joins = trace.joined_bytes = trace.leaps =
-                trace.collected = trace.collected_bytes = 0;
+                trace.collected = trace.collected_bytes = trace.kept_unbacked = 0;
         }
     }
     if (const GeometryStats& stats = geometry_stats; frame_tick % 600 == 0 && stats.syncs != 0) {

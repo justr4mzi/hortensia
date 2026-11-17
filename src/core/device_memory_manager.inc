@@ -620,6 +620,23 @@ bool DeviceMemoryManager<Traits>::WriteKept(DAddr address, const void* src_point
 }
 
 template <typename Traits>
+bool DeviceMemoryManager<Traits>::IsBacked(DAddr address, size_t size) {
+    bool backed = true;
+    WalkBlock(
+        address, size,
+        [&](size_t, DAddr page_address) {
+            if (!backed || kept_count.load(std::memory_order_acquire) == 0) {
+                backed = false;
+                return;
+            }
+            std::scoped_lock lk(kept_mutex);
+            backed = kept_pages.contains(page_address >> Memory::LICHII_PAGEBITS);
+        },
+        [](size_t, u8*) {}, [](size_t) {});
+    return backed;
+}
+
+template <typename Traits>
 void DeviceMemoryManager<Traits>::WalkBlock(DAddr addr, std::size_t size, auto on_unmapped, auto on_memory, auto increment) {
     std::size_t remaining_size = size;
     std::size_t page_index = addr >> Memory::LICHII_PAGEBITS;
