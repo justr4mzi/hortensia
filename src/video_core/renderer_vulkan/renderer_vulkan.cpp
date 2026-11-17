@@ -22,6 +22,7 @@
 #include "core/frontend/graphics_context.h"
 #include "video_core/capture.h"
 #include "video_core/gpu.h"
+#include "video_core/nx2.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/present.h"
 #include "video_core/render_trace.h"
@@ -228,12 +229,6 @@ try
         turbo_mode.emplace(instance, dld);
         scheduler.RegisterOnSubmit([this] { turbo_mode->QueueSubmitted(); });
     }
-    if (rasterizer.FramePresentSkipped()) {
-        // The screen keeps the last frame shown.
-        gpu.RendererFrameEndNotify();
-        rasterizer.TickFrame();
-        return;
-    }
 
 #ifdef HAS_RESHADE
     VideoCore::FxChain::Instance().LoadFromSettings();
@@ -310,6 +305,12 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     RenderAppletCaptureLayer(framebuffers);
 
     if (!render_window.IsShown()) {
+        return;
+    }
+    if (rasterizer.FramePresentSkipped()) {
+        // The screen keeps the last frame shown.
+        gpu.RendererFrameEndNotify();
+        rasterizer.TickFrame();
         return;
     }
 
