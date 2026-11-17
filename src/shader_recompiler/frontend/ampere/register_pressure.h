@@ -52,6 +52,7 @@ inline RegisterPressure PrepareRegisterPressure(const Instruction& input, u32 re
         operand(24);
         operand(32);
         break;
+    case 0x803: // P2R: Rd and the merge source Ra
     case 0x807:
     case 0x808:
     case 0x923:
@@ -139,6 +140,7 @@ inline RegisterPressure PrepareRegisterPressure(const Instruction& input, u32 re
         break;
     case 0xb05:
     case 0xd05:
+    case 0xc45: // I2FP with a uniform source
         operand(16);
         break;
     case 0x59f:
@@ -243,6 +245,10 @@ inline RegisterPressure PrepareRegisterPressure(const Instruction& input, u32 re
         operand(24);
         break;
     }
+    case 0xb82: // LDC indexed: Rd (a pair when 64-bit) and the index Ra
+        operand(16, input.Bits(73, 3) == 5 ? 2 : 1);
+        operand(24);
+        break;
     case 0x381:
     case 0x386:
     case 0x981:
