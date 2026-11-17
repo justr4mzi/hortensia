@@ -3993,11 +3993,12 @@ void RasterizerVulkan::TickFrame() {
     if (frameskip_interval > 1) {
         dropped = render_trace_frame % frameskip_interval != 0;
     } else if (frameskip_auto_fps != 0) {
-        // A drawn frame that took 5 % longer than the target rate lets the next one go undrawn.
+        // A drawn frame that took 20 % longer than the target rate lets the next one go undrawn
+        // (with 5 %, timing noise alone dropped one frame in ten of a game holding 60 fps).
         // A frame that follows a dropped one is timed from that frame's early end and looks
         // late: timing it made every other frame dropped (Pokopia on a PC holding 60 fps showed
         // 28), so only a frame timed from a drawn one counts.
-        const std::chrono::nanoseconds late{1'050'000'000LL / frameskip_auto_fps};
+        const std::chrono::nanoseconds late{1'200'000'000LL / frameskip_auto_fps};
         dropped = !frameskip_previous_dropped && !frameskip_timed_from_dropped &&
                   frame_time > late;
     }
