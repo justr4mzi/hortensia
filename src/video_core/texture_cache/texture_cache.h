@@ -223,7 +223,10 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
     const auto Configure = [&](bool allow_aggressive) {
-        const u64 budget = runtime.GetDeviceMemoryBudget();
+        u64 budget = 0;
+        if constexpr (requires { runtime.GetDeviceMemoryBudget(); }) {
+            budget = runtime.GetDeviceMemoryBudget();
+        }
         const double usage_pct = budget > 0 ? (static_cast<double>(total_used_memory) / static_cast<double>(budget)) : 0.0;
 
         // Emergency trigger: usage above 85% of budget or out of memory
