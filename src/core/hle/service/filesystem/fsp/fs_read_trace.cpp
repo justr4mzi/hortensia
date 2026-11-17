@@ -5,7 +5,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
 
 #include "common/logging.h"
@@ -36,7 +44,112 @@ double MiB(u64 bytes) {
     return static_cast<double>(bytes) / (1024.0 * 1024.0);
 }
 
+/// Available memory from /proc/meminfo in bytes, or ~0 when unreadable.
+u64 AvailableMemory() {
+    std::ifstream meminfo{"/proc/meminfo"};
+    std::string key;
+    u64 kib = 0;
+    std::string unit;
+    while (meminfo >> key >> kib >> unit) {
+        if (key == "MemAvailable:") {
+            return kib << 10;
+        }
+    }
+    return ~u64{0};
+}
+
+/// Asks the kernel to reclaim `mib` from this process's cgroup (memory.reclaim): directly when
+/// the cgroup lets this process write it (a native run in its own scope), otherwise through the
+/// launcher's helper (inside a container the cgroup file belongs to the container's root), which
+/// watches $XDG_RUNTIME_DIR/lichii-bc250-reclaim and writes the container scope's file. Blocks
+/// for as long as the kernel takes (seconds), so it runs on a thread of its own.
+void RequestReclaim(u64 mib) {
+    std::thread{[mib] {
+        const std::string amount = std::to_string(mib) + "M";
+        std::string cgroup;
+        if (std::ifstream self{"/proc/self/cgroup"}; self) {
+            std::string line;
+            while (std::getline(self, line)) {
+                if (line.rfind("0::", 0) == 0) {
+                    cgroup = line.substr(3);
+                }
+            }
+        }
+        if (!cgroup.empty() && cgroup != "/") {
+            const std::string path = "/sys/fs/cgroup" + cgroup + "/memory.reclaim";
+            if (std::FILE* file = std::fopen(path.c_str(), "w")) {
+                const auto start = Clock::now();
+                std::fputs(amount.c_str(), file);
+                std::fclose(file);
+                LOG_INFO(Service_FS, "Area load: reclaimed up to {} from {} in {:.1f} s", amount,
+                         cgroup, std::chrono::duration<double>(Clock::now() - start).count());
+                return;
+            }
+        }
+        const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
+        if (runtime_dir == nullptr) {
+            LOG_INFO(Service_FS, "Area load: no cgroup to reclaim from and no XDG_RUNTIME_DIR");
+            return;
+        }
+        const std::string request = std::string{runtime_dir} + "/lichii-bc250-reclaim";
+        if (std::FILE* file = std::fopen(request.c_str(), "w")) {
+            std::fputs(amount.c_str(), file);
+            std::fclose(file);
+            LOG_INFO(Service_FS, "Area load: asked the launcher to reclaim {}", amount);
+        } else {
+            LOG_INFO(Service_FS, "Area load: could not write {}: {}", request, std::strerror(errno));
+        }
+    }}.detach();
+}
+
 } // namespace
+
+void NoteLoadRead(u64 bytes) {
+    // An area load reads the next area's files at 20-50 MiB/s for a few seconds, 2-5 s before
+    // its textures and render targets arrive; play reads under 2 MiB/s. With RAM full those
+    // ~250 GPU allocations waited for the kernel to swap out what they needed (Castle Town entry:
+    // 2.2-3.8 s frozen). Asking the kernel to reclaim cold memory as the reads start halved that
+    // (1.0-2.2 s in five runs). EDEN_NX2_PRE_RECLAIM_MIB sets the amount (default 1536, 0: off);
+    // at most once per 30 s, and only while less than 2.5 GiB is available.
+    static const u64 reclaim_mib = [] {
+        const char* value = std::getenv("EDEN_NX2_PRE_RECLAIM_MIB");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : u64{1536};
+    }();
+#if !defined(__linux__)
+    static_cast<void>(bytes);
+    return;
+#else
+    if (reclaim_mib == 0) {
+        return;
+    }
+    static std::mutex mutex;
+    static Clock::time_point window_start{};
+    static u64 window_bytes = 0;
+    static Clock::time_point last_request{};
+    std::scoped_lock lock{mutex};
+    const auto now = Clock::now();
+    if (now - window_start > std::chrono::seconds{1}) {
+        window_start = now;
+        window_bytes = 0;
+    }
+    window_bytes += bytes;
+    if (window_bytes < (u64{12} << 20)) {
+        return;
+    }
+    window_bytes = 0;
+    if (last_request != Clock::time_point{} && now - last_request < std::chrono::seconds{30}) {
+        return;
+    }
+    const u64 available = AvailableMemory();
+    if (available >= (u64{5} << 29)) {
+        return;
+    }
+    last_request = now;
+    LOG_INFO(Service_FS, "Area load: 12+ MiB of guest reads in under 1 s with {} MiB available",
+             available >> 20);
+    RequestReclaim(reclaim_mib);
+#endif
+}
 
 void RecordRead(ReadTraceSource source, u64 bytes, Clock::duration elapsed) {
     auto& s = stats[static_cast<std::size_t>(source)];
