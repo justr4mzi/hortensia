@@ -23,6 +23,7 @@
 #include "video_core/buffer_cache/buffer_cache_base.h"
 #include "video_core/buffer_cache/compute_write_grid.h"
 #include "video_core/buffer_cache/multi_range_refresh.h"
+#include "video_core/buffer_cache/storage_buffer_size.h"
 #include "video_core/buffer_cache/uniform_stream_reuse.h"
 #include "video_core/gpu_split.h"
 #include "video_core/guest_memory.h"
@@ -1892,10 +1893,13 @@ bool BufferCache<P>::BindGraphicsStorageBuffer(size_t stage, size_t ssbo_index, 
         }
         ssbo_addr = holder + indirect_offset;
     }
+    // NVN graphics descriptors carry a size; bare native pointers and tables do not.
+    const bool native_pointer = (maxwell3d->GetNativeMacroEngine().native_turing ||
+                                 indirect_offset != ~0U) &&
+                                !IsNvnGraphicsStorageDescriptor(stage, cbuf_index, cbuf_offset,
+                                                                indirect_offset);
     channel_state->storage_buffers[stage][ssbo_index] =
-        StorageBufferBinding(ssbo_addr, cbuf_index, is_written,
-                             maxwell3d->GetNativeMacroEngine().native_turing ||
-                                 indirect_offset != ~0U,
+        StorageBufferBinding(ssbo_addr, cbuf_index, is_written, native_pointer,
                              indirect_offset != ~0U);
     if (indirect_offset != ~0U) {
         TraceTablePointer(false, stage, ssbo_index, cbuf_index, cbuf_offset, indirect_offset, holder,
