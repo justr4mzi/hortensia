@@ -249,6 +249,16 @@ inline RegisterPressure PrepareRegisterPressure(const Instruction& input, u32 re
         operand(16, input.Bits(73, 3) == 5 ? 2 : 1);
         operand(24);
         break;
+    case 0xf60: { // TEX with a uniform handle, as case 0xf60 of the lowering packs it.
+        const u32 channels = static_cast<u32>(std::popcount(input.Bits(72, 4)));
+        const bool lod = input.Bits(87, 3) >= 2, planar = input.Bits(61, 3) == 1;
+        operand(16, std::min(channels, 2U)); // without a second destination channels 3-4 drop
+        operand(24, !planar || lod || input.Bits(78, 1) ? 2 : 1);
+        operand(32, !planar && lod ? 2 : 1);
+        if (channels > 2)
+            operand(64, channels - 2);
+        break;
+    }
     case 0x381:
     case 0x386:
     case 0x981:
