@@ -69,78 +69,108 @@ void CacheWriter::Run(std::stop_token stop) {
     Common::SetCurrentThreadName("ShaderCacheWriter");
     std::unique_lock lock{mutex};
     while (!stop.stop_requested()) {
-        const auto now = Clock::now();
-        if (queued_records != 0) {
-            const auto due = std::max(retry_at, draining != 0
-                                                    ? now
-                                                    : std::min(last_queued + options.idle,
-                                                               first_queued + options.interval));
-            if (now >= due) {
-                WriteQueued(lock);
+        try {
+            const auto now = Clock::now();
+            if (queued_records != 0) {
+                const auto due = std::max(retry_at, draining != 0
+                                                        ? now
+                                                        : std::min(last_queued + options.idle,
+                                                                   first_queued + options.interval));
+                if (now >= due) {
+                    WriteQueued(lock);
+                    continue;
+                }
+                const u64 seen = events;
+                work_cv.wait_until(lock, stop, due, [&] { return events != seen; });
+                continue;
+            }
+            if (compact) {
+                compact = false;
+                writing = true;
+                const CompactLimit limit = std::exchange(compact_limit, {});
+                lock.unlock();
+                const WriteResult result = CompactLog(file, limit);
+                lock.lock();
+                writing = false;
+                if (result == WriteResult::Written) {
+                    ++stats.compactions;
+                }
+                drained_cv.notify_all();
                 continue;
             }
             const u64 seen = events;
-            work_cv.wait_until(lock, stop, due, [&] { return events != seen; });
-            continue;
-        }
-        if (compact) {
-            compact = false;
-            writing = true;
-            const CompactLimit limit = std::exchange(compact_limit, {});
-            lock.unlock();
-            const WriteResult result = CompactLog(file, limit);
-            lock.lock();
-            writing = false;
-            if (result == WriteResult::Written) {
-                ++stats.compactions;
+            work_cv.wait(lock, stop, [&] { return events != seen; });
+        } catch (const std::bad_alloc& e) {
+            LOG_WARNING(Common_Filesystem, "ShaderCacheWriter caught out-of-memory: {}", e.what());
+            if (!lock.owns_lock()) {
+                lock.lock();
             }
+            writing = false;
+            queued.clear();
+            queued_records = 0;
             drained_cv.notify_all();
-            continue;
+        } catch (const std::exception& e) {
+            LOG_WARNING(Common_Filesystem, "ShaderCacheWriter caught exception: {}", e.what());
+            if (!lock.owns_lock()) {
+                lock.lock();
+            }
+            writing = false;
+            queued.clear();
+            queued_records = 0;
+            drained_cv.notify_all();
         }
-        const u64 seen = events;
-        work_cv.wait(lock, stop, [&] { return events != seen; });
     }
 }
 
 void CacheWriter::WriteQueued(std::unique_lock<std::mutex>& lock) {
-    std::vector<u8> batch = std::exchange(queued, {});
-    const u64 count = std::exchange(queued_records, 0);
-    const auto first = first_queued;
-    writing = true;
-    lock.unlock();
+    try {
+        std::vector<u8> batch = std::exchange(queued, {});
+        const u64 count = std::exchange(queued_records, 0);
+        const auto first = first_queued;
+        writing = true;
+        lock.unlock();
 
-    WriteResult result;
-    const auto give_up = Clock::now() + options.lock_wait;
-    while ((result = AppendToLog(file, batch)) == WriteResult::Busy && Clock::now() < give_up) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{2});
-    }
-
-    lock.lock();
-    writing = false;
-    switch (result) {
-    case WriteResult::Written:
-        stats.written_records += count;
-        stats.written_bytes += batch.size();
-        break;
-    case WriteResult::Busy:
-    case WriteResult::Failed:
-    case WriteResult::Exists:
-        // Ahead of the records queued meanwhile, so that later records stay later
-        ++(result == WriteResult::Busy ? stats.busy : stats.failed);
-        batch.insert(batch.end(), queued.begin(), queued.end());
-        queued = std::move(batch);
-        queued_records += count;
-        first_queued = first;
-        retry_at = Clock::now() + options.retry;
-        break;
-    case WriteResult::OtherVersion:
-        if (stats.dropped == 0) {
-            LOG_ERROR(Common_Filesystem,
-                      "Not writing to shader cache {}: another format version made it",
-                      Common::FS::PathToUTF8String(file));
+        WriteResult result;
+        const auto give_up = Clock::now() + options.lock_wait;
+        while ((result = AppendToLog(file, batch)) == WriteResult::Busy && Clock::now() < give_up) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{2});
         }
-        stats.dropped += count;
-        break;
+
+        lock.lock();
+        writing = false;
+        switch (result) {
+        case WriteResult::Written:
+            stats.written_records += count;
+            stats.written_bytes += batch.size();
+            break;
+        case WriteResult::Busy:
+        case WriteResult::Failed:
+        case WriteResult::Exists:
+            // Ahead of the records queued meanwhile, so that later records stay later
+            ++(result == WriteResult::Busy ? stats.busy : stats.failed);
+            batch.insert(batch.end(), queued.begin(), queued.end());
+            queued = std::move(batch);
+            queued_records += count;
+            first_queued = first;
+            retry_at = Clock::now() + options.retry;
+            break;
+        case WriteResult::OtherVersion:
+            if (stats.dropped == 0) {
+                LOG_ERROR(Common_Filesystem,
+                          "Not writing to shader cache {}: another format version made it",
+                          Common::FS::PathToUTF8String(file));
+            }
+            stats.dropped += count;
+            break;
+        }
+    } catch (const std::exception& e) {
+        LOG_WARNING(Common_Filesystem, "ShaderCacheWriter::WriteQueued caught exception: {}", e.what());
+        if (!lock.owns_lock()) {
+            lock.lock();
+        }
+        writing = false;
+        queued.clear();
+        queued_records = 0;
     }
     drained_cv.notify_all();
 }

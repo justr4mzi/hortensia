@@ -223,10 +223,29 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
     const auto Configure = [&](bool allow_aggressive) {
-        high_priority_mode = out_of_memory || total_used_memory >= expected_memory;
-        aggressive_mode =
-            allow_aggressive && (out_of_memory || total_used_memory >= critical_memory);
-        mode_age = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
+        const u64 budget = runtime.GetDeviceMemoryBudget();
+        const double usage_pct = budget > 0 ? (static_cast<double>(total_used_memory) / static_cast<double>(budget)) : 0.0;
+
+        // Emergency trigger: usage above 85% of budget or out of memory
+        const bool emergency_mode = out_of_memory || usage_pct >= 0.85;
+        // High priority: usage above 75% or exceeding expected threshold
+        high_priority_mode = emergency_mode || usage_pct >= 0.75 || total_used_memory >= expected_memory;
+        aggressive_mode = allow_aggressive && (emergency_mode || total_used_memory >= critical_memory);
+
+        if (emergency_mode) {
+            // Emergency: rapid eviction of cold images to avoid driver OOM
+            mode_age = 15ULL;
+            num_iterations = 128;
+        } else if (high_priority_mode) {
+            // Moderate pressure: steady eviction of stale assets, avoiding thrashing in turns
+            mode_age = 60ULL;
+            num_iterations = 32;
+        } else {
+            // Normal operation (<75%): relaxed retention, zero thrashing in track curves
+            mode_age = 90ULL;
+            num_iterations = 16;
+        }
+
         // EDEN_NX2_TC_MIN_AGE=<frames>: keep images used more recently while there is room
         // (thrash tests).
         static const u64 min_age = [] {
@@ -235,7 +254,6 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         }();
         ticks_to_destroy =
             EvictionAge(mode_age, min_age, total_used_memory, retention_limit, out_of_memory);
-        num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
     // GPU-written images that overlap others without fitting them (BadOverlap) were dropped
     // without a download, their pages marked stale. The Duskbloods renders its characters'

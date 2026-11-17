@@ -356,6 +356,7 @@ add_library(video_core STATIC
     shader_warm/shader_archives.h
     shader_warm/shader_warm_builder.cpp
     shader_warm/shader_warm_builder.h
+    vram_target.h
     shader_warm/warm_records.cpp
     shader_warm/warm_records.h
     smaa_area_tex.h
