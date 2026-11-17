@@ -148,4 +148,9 @@ std::variant<std::vector<AddrInfo>, GetAddrInfoError> GetAddressInfo(
     const std::string& host, const std::optional<std::string>& service,
     Domain family = Domain::INET);
 
+/// Whether the resolver answers Nintendo's servers itself instead of looking them up (see
+/// sfdnsres): nothing that needs them can connect, so titles have no internet even though the LAN
+/// works. NIFM reports that state to titles.
+bool AreNintendoServersBlocked();
+
 } // namespace Network

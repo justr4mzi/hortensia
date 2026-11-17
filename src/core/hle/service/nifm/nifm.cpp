@@ -81,6 +81,17 @@ static bool IsNetworkAvailable() {
     return Network::GetHostIPv4Address().has_value() && !Settings::values.airplane_mode.GetValue();
 }
 
+// Whether a title's internet request is accepted. A joined room is the emulated LAN, whose sockets
+// only reach room members, so LAN games (e.g. Mario Kart World LAN Play) get theirs accepted even
+// though Nintendo's servers are blocked. Without a room there is no internet at all, and reporting
+// that is what makes a title show its offline UI instead of starting a transfer that never ends.
+static bool IsInternetRequestAccepted() {
+    if (Network::GetRoomIPv4Address()) {
+        return true;
+    }
+    return !Network::AreNintendoServersBlocked() && IsNetworkAvailable();
+}
+
 // This is nn::nifm::RequestState
 enum class RequestState : u32 {
     NotSubmitted = 1,
@@ -479,7 +490,7 @@ private:
 
         std::scoped_lock lk{state_lock};
         const auto result = [this] {
-            const auto has_connection = IsNetworkAvailable();
+            const auto has_connection = IsInternetRequestAccepted();
             switch (state) {
             case RequestState::NotSubmitted:
                 return has_connection ? ResultSuccess : ResultNetworkCommunicationDisabled;
@@ -1051,11 +1062,11 @@ void IGeneralService::IsEthernetCommunicationEnabled(HLERequestContext& ctx) {
 }
 
 void IGeneralService::IsAnyInternetRequestAccepted(HLERequestContext& ctx) {
-    LOG_ERROR(Service_NIFM, "(STUBBED) called");
+    LOG_WARNING(Service_NIFM, "called, accepted={}", IsInternetRequestAccepted());
 
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    if (IsNetworkAvailable()) {
+    if (IsInternetRequestAccepted()) {
         rb.Push<u8>(1);
     } else {
         rb.Push<u8>(0);
