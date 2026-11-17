@@ -14,6 +14,7 @@
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/shader_info.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
+#include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/types.h"
@@ -276,6 +277,28 @@ public:
             .pSetLayouts = bindings.empty() ? nullptr : &descriptor_set_layout,
             .pushConstantRangeCount = 1,
             .pPushConstantRanges = &range,
+        });
+    }
+
+    /// The set and pipeline layouts from the cache, made on the first pipeline with these
+    /// bindings, set flags and push constant range.
+    const PipelineLayoutCache::Entry& GetLayouts(PipelineLayoutCache& cache,
+                                                 bool use_push_descriptor,
+                                                 bool use_descriptor_buffer = false) const {
+        std::vector<u32> key{static_cast<u32>(use_push_descriptor) |
+                             static_cast<u32>(use_descriptor_buffer) << 1 |
+                             static_cast<u32>(is_compute) << 2 | static_cast<u32>(uses_mesh) << 3 |
+                             static_cast<u32>(mesh_emulation) << 4};
+        key.reserve(1 + bindings.size() * 4);
+        for (const VkDescriptorSetLayoutBinding& entry : bindings) {
+            key.insert(key.end(), {entry.binding, static_cast<u32>(entry.descriptorType),
+                                   entry.descriptorCount, entry.stageFlags});
+        }
+        return cache.Get(std::move(key), [&] {
+            PipelineLayoutCache::Entry entry;
+            entry.set = CreateDescriptorSetLayout(use_push_descriptor, use_descriptor_buffer);
+            entry.pipeline = CreatePipelineLayout(*entry.set);
+            return entry;
         });
     }
 

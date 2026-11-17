@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <map>
+#include <mutex>
 #include <shared_mutex>
 #include <span>
 #include <vector>
@@ -65,6 +67,36 @@ private:
     std::vector<vk::DescriptorSets> sets;
 };
 
+/// Descriptor set and pipeline layouts shared by every pipeline with the same bindings. They live
+/// until the device goes; pipelines only hold their handles (one layout per pipeline cost ~28 KiB
+/// of driver memory each, with ~90% duplicates in Ocarina of Time).
+class PipelineLayoutCache {
+public:
+    struct Entry {
+        vk::DescriptorSetLayout set;
+        vk::PipelineLayout pipeline;
+    };
+
+    template <typename Make>
+    const Entry& Get(std::vector<u32> key, Make&& make) {
+        std::scoped_lock lock{mutex};
+        const auto [it, fresh] = entries.try_emplace(std::move(key));
+        if (fresh) {
+            try {
+                it->second = make();
+            } catch (...) {
+                entries.erase(it);
+                throw;
+            }
+        }
+        return it->second;
+    }
+
+private:
+    std::mutex mutex;
+    std::map<std::vector<u32>, Entry> entries;
+};
+
 class DescriptorPool {
 public:
     explicit DescriptorPool(const Device& device, Scheduler& scheduler);
@@ -77,7 +109,12 @@ public:
     DescriptorAllocator Allocator(const Device& device, Scheduler& scheduler, VkDescriptorSetLayout layout, const Shader::Info& info, bool update_after_bind);
     DescriptorAllocator Allocator(const Device& device, Scheduler& scheduler, VkDescriptorSetLayout layout, const DescriptorBankInfo& info);
 
+    PipelineLayoutCache& LayoutCache() noexcept {
+        return layout_cache;
+    }
+
 private:
+    PipelineLayoutCache layout_cache;
     DescriptorBank& Bank(const Device& device, const DescriptorBankInfo& reqs);
     std::shared_mutex banks_mutex;
     std::vector<DescriptorBankInfo> bank_infos;
