@@ -3170,7 +3170,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         if (defer_emission) {
             deferred_runtime_infos[stage_index] = runtime_info;
             if (VideoCommon::Nx2Perf::Verify()) {
-                reference_spirv[stage_index] = EmitSPIRV(profile, runtime_info, program, binding);
+                reference_spirv[stage_index] = EmitPipelineShader(
+                    profile, runtime_info, program, binding, key.unique_hashes[index]);
             }
         } else {
             const auto begin = std::chrono::steady_clock::now();
