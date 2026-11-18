@@ -44,6 +44,7 @@ double MiB(u64 bytes) {
     return static_cast<double>(bytes) / (1024.0 * 1024.0);
 }
 
+#if defined(__linux__)
 /// Available memory from /proc/meminfo in bytes, or ~0 when unreadable.
 u64 AvailableMemory() {
     std::ifstream meminfo{"/proc/meminfo"};
@@ -101,10 +102,15 @@ void RequestReclaim(u64 mib) {
         }
     }}.detach();
 }
+#endif
 
 } // namespace
 
 void NoteLoadRead(u64 bytes) {
+#if !defined(__linux__)
+    static_cast<void>(bytes);
+    return;
+#else
     // An area load reads the next area's files at 20-50 MiB/s for a few seconds, 2-5 s before
     // its textures and render targets arrive; play reads under 2 MiB/s. With RAM full those
     // ~250 GPU allocations waited for the kernel to swap out what they needed (Castle Town entry:
@@ -123,10 +129,6 @@ void NoteLoadRead(u64 bytes) {
         const char* value = std::getenv("EDEN_NX2_PRE_RECLAIM_TARGET_MIB");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : u64{2048};
     }();
-#if !defined(__linux__)
-    static_cast<void>(bytes);
-    return;
-#else
     if (reclaim_mib == 0) {
         return;
     }
